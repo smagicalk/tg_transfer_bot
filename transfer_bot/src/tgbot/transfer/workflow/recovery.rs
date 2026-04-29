@@ -118,6 +118,8 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
         message_count = bundle.messages.len(),
         "recovery job marked running"
     );
-    let _ = store::ensure_items_for_bundle(job.id, &bundle.messages).await?;
+    // 恢复时以重新 spider 到的链接内容为准，并同步修正旧 item/file_cache 引用：
+    // 新出现的消息会新增，消失的旧消息会 obsolete，文件变化的消息会迁移 file_key。
+    store::reconcile_items_for_bundle(job.id, &bundle, super::file_delete_delay_hours()).await?;
     run_job_inner(job, bundle.messages, client_id).await
 }

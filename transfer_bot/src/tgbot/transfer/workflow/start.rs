@@ -1,7 +1,7 @@
 // 转存启动阶段：
-// - 优先复用 source_link + target_chat_id 的历史成功结果
-// - 命中活跃任务时返回当前状态
-// - 否则抓取源消息、创建任务和子项
+// - source_link + target_chat_id 是业务查重维度，用来复用成功任务和阻止重复活跃任务。
+// - request_chat_id + request_message_id 是请求幂等维度，只兜底处理 TDLib/网络重复投递同一条命令。
+// - 两层语义不能混用：前者决定“是不是同一个转存”，后者决定“这条命令是否已经处理过”。
 
 use crate::db;
 
@@ -33,19 +33,25 @@ pub(super) async fn build_transfer_start(
     let _guard =
         acquire_source_target_create_guard(plan.source_link.clone(), plan.target_chat_id).await;
 
-    // 新去重语义：按 source_link + target_chat_id 判断是否已转存完成。
+    // 业务查重第一层：
+    // 同一个源链接转到同一个目标 chat，如果已经成功完成，直接返回历史结果。
+    // 这里不看 request_message_id，因为不同命令重复转存同一链接时也应复用成功结果。
     if let Some(old) =
         store::find_success_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
-        && let Some(link) = old.result_message_link
     {
         tracing::info!(
             job_id = old.id,
             target_chat_id = plan.target_chat_id,
             "reuse successful transfer result"
         );
-        return Ok(TransferStart::Outcome(TransferOutcome::Reused { link }));
+        return Ok(TransferStart::Outcome(TransferOutcome::Reused {
+            link: old.result_message_link,
+        }));
     }
 
+    // 业务查重第二层：
+    // 同一个源链接转到同一个目标 chat，如果已有活跃任务，不能再创建新任务。
+    // 这一步能处理“用户发送两条相同命令但 message_id 不同”的情况。
     if let Some(old) =
         store::find_active_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
     {
@@ -58,6 +64,11 @@ pub(super) async fn build_transfer_start(
         return Ok(active_job_start(old, &plan));
     }
 
+    // 请求级幂等兜底：
+    // TDLib/网络波动可能导致同一条命令 update 被重复投递，此时 request_chat_id
+    // 和 request_message_id 完全相同。即使上面的 source-target 查不到 active/success
+    // （例如第一次处理已失败/取消），也不能让同一条命令再次创建新 job。
+    // 这一步不是业务查重；业务查重只由 source_link + target_chat_id 决定。
     if let Some(old) =
         store::find_job_by_request(plan.request_chat_id, plan.request_message_id).await?
     {
@@ -86,7 +97,8 @@ fn active_job_start(old: db::transfer_job::Model, plan: &TransferPlan) -> Transf
     } else if old.request_chat_id != plan.request_chat_id
         || old.request_message_id != plan.request_message_id
     {
-        // 只有同一请求消息命中的 active 任务才继续走恢复，其他请求直接提示进行中。
+        // 不同请求命中同一个 source-target 活跃任务时，只提示“已有任务在跑”，不重复派发执行器。
+        // 同一请求命中 active 任务则可能是重复 update，需要走 Resume 兜底恢复。
         TransferStart::Outcome(TransferOutcome::Running { job_id: old.id })
     } else {
         TransferStart::Resume(old)
@@ -95,9 +107,11 @@ fn active_job_start(old: db::transfer_job::Model, plan: &TransferPlan) -> Transf
 
 /// 将同一请求已存在的任务转换为下一步动作。
 async fn request_job_start(old: db::transfer_job::Model) -> anyhow::Result<TransferStart> {
-    // 请求幂等：
-    // - 已完成任务（success/failed/partial）直接跳过
-    // - 未完成任务（pending/running）走恢复执行
+    // 同一条命令重复投递时按已有任务状态返回确定结果：
+    // - pending/running：恢复执行，避免上次后台任务已丢失。
+    // - paused/cancelling/cancelled：返回状态，不重新创建。
+    // - success 且有结果链接：返回结果。
+    // - failed/partial 且无结果链接：报错，不让同一条命令自动重试成新 job。
     if matches!(
         old.status.as_str(),
         store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING

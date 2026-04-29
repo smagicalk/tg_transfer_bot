@@ -27,6 +27,10 @@ pub struct Model {
     pub retry_count: i32,
     /// 子项错误信息（失败时记录）。
     pub error_message: Option<String>,
+    /// 文件引用是否已经释放。
+    ///
+    /// 恢复对齐可能提前释放消失或文件变化的子项引用，最终完成/取消时用该字段避免重复扣减。
+    pub file_ref_released: bool,
     /// 创建时间。
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     /// 最后更新时间。

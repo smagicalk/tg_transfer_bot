@@ -176,26 +176,13 @@ fn test_build_downloads_keyboard_current_page_is_copy_button() {
 fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
     let now = store::now_utc8();
     store::JobProgressSnapshot {
-        job: crate::db::transfer_job::Model {
+        job: store::JobProgressJob {
             id: 1,
-            request_chat_id: 100,
-            request_message_id: 200,
-            source_link: "https://t.me/c/1/2".to_owned(),
-            source_chat_id: 1,
-            source_message_id: 2,
-            source_album_id: 0,
             target_chat_id: 300,
-            result_message_id: None,
-            result_message_link: None,
             status: status.to_owned(),
             total_items: 1,
-            done_items: 0,
-            failed_items: 0,
-            retry_count: 0,
-            last_error: None,
             created_at: now,
             updated_at: now,
-            finished_at: None,
         },
         pending_count: 0,
         preparing_count: 0,

@@ -4,6 +4,8 @@ pub use sea_orm_migration::prelude::*;
 
 // 当前唯一迁移：初始化任务/子项/文件缓存表。
 mod m20220101_000001_create_table;
+// transfer_item 文件引用释放标记，用于恢复对齐和引用计数幂等。
+mod m20260429_000001_add_transfer_item_file_ref_released;
 
 // Migrator 是 SeaORM 约定的迁移注册器。
 pub struct Migrator;
@@ -12,6 +14,9 @@ pub struct Migrator;
 impl MigratorTrait for Migrator {
     // 迁移执行顺序由此 Vec 的顺序决定。
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m20220101_000001_create_table::Migration)]
+        vec![
+            Box::new(m20220101_000001_create_table::Migration),
+            Box::new(m20260429_000001_add_transfer_item_file_ref_released::Migration),
+        ]
     }
 }

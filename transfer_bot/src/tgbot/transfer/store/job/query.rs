@@ -5,6 +5,7 @@ use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
 use sea_orm::QueryFilter;
 use sea_orm::QueryOrder;
+use sea_orm::QuerySelect;
 
 use crate::db;
 
@@ -76,8 +77,12 @@ pub(in crate::tgbot::transfer) async fn get_job_status(
     job_id: i64,
 ) -> anyhow::Result<Option<String>> {
     let db_conn = db::get_db().await?;
-    Ok(db::transfer_job::Entity::find_by_id(job_id)
+    // 控制流程只需要 status，按列投影避免把 transfer_job 全字段读出来。
+    Ok(db::transfer_job::Entity::find()
+        .select_only()
+        .column(db::transfer_job::Column::Status)
+        .filter(db::transfer_job::Column::Id.eq(job_id))
+        .into_tuple::<String>()
         .one(db_conn)
-        .await?
-        .map(|job| job.status))
+        .await?)
 }

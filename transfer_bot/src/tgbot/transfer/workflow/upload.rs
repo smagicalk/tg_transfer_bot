@@ -122,28 +122,42 @@ pub(super) fn fallback_result_message_link(chat_id: i64, message_id: i64) -> Str
 }
 
 /// 校验多条消息是否可以按 album 发送。
+///
+/// 这一步只做 TDLib album 组合规则的前置检查，不负责真正上传：
+/// - 单条消息不会走 album，直接允许，由上层使用 `send_message`。
+/// - 多条纯文本不能组成 album，因为 `send_message_album` 不支持文本项。
+/// - 多条语音不能组成 album，因为 voice note 不能放进 Telegram album。
+/// - document album 必须全部都是 document，不能和 photo/video/audio 混合。
+/// - audio album 必须全部都是 audio，不能和 photo/video/document 混合。
+/// - photo 和 video 可以混合组成 album，所以不需要额外拦截。
 pub(super) fn validate_album_kinds(kinds: &[UploadKind]) -> anyhow::Result<()> {
+    // 单条内容由上层走 send_message，不需要受 album 规则限制。
     if kinds.len() <= 1 {
         return Ok(());
     }
 
+    // Telegram album 不能包含纯文本项；文本转存需要走单条消息发送。
     if kinds.iter().any(|k| matches!(k, UploadKind::Text)) {
         anyhow::bail!("album upload doesn't support text item");
     }
 
+    // voice note 不支持放入 album；多条语音不能用 send_message_album 合并发送。
     if kinds.iter().any(|k| matches!(k, UploadKind::Voice)) {
         anyhow::bail!("album upload doesn't support voice note item");
     }
 
+    // document album 必须是纯 document 组，混入图片/视频/音频会被 TDLib 拒绝。
     let has_document = kinds.iter().any(|k| matches!(k, UploadKind::Document));
     if has_document && !kinds.iter().all(|k| matches!(k, UploadKind::Document)) {
         anyhow::bail!("document album requires all items to be document");
     }
 
+    // audio album 必须是纯 audio 组，不能和其他媒体类型混合。
     let has_audio = kinds.iter().any(|k| matches!(k, UploadKind::Audio));
     if has_audio && !kinds.iter().all(|k| matches!(k, UploadKind::Audio)) {
         anyhow::bail!("audio album requires all items to be audio");
     }
 
+    // 剩余组合当前允许，主要是 photo/video 混合 album。
     Ok(())
 }

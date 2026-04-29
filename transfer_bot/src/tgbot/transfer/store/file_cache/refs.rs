@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+use sea_orm::sea_query::Expr;
+use sea_orm::{ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Statement};
 
-#[cfg(test)]
 use crate::db;
 
 use super::super::item::list_items_by_job_on_conn;
@@ -39,10 +39,12 @@ where
 {
     let items = list_items_by_job_on_conn(conn, job_id).await?;
     let mut refs: HashMap<String, i32> = HashMap::new();
+    let mut released_item_ids = Vec::new();
     for item in items {
-        if is_text_file_key(&item.file_key) {
+        if item.file_ref_released || is_text_file_key(&item.file_key) {
             continue;
         }
+        released_item_ids.push(item.id);
         *refs.entry(item.file_key).or_insert(0) += 1;
     }
 
@@ -50,11 +52,24 @@ where
         return Ok(());
     }
 
-    release_file_ref_counts_on_conn(conn, refs, delay_hours).await
+    release_file_ref_counts_on_conn(conn, refs, delay_hours).await?;
+    db::transfer_item::Entity::update_many()
+        .col_expr(
+            db::transfer_item::Column::FileRefReleased,
+            Expr::value(true),
+        )
+        .col_expr(
+            db::transfer_item::Column::UpdatedAt,
+            Expr::value(now_utc8()),
+        )
+        .filter(db::transfer_item::Column::Id.is_in(released_item_ids))
+        .exec(conn)
+        .await?;
+    Ok(())
 }
 
 /// 在指定连接/事务内按 file_key 批量扣减引用计数。
-async fn release_file_ref_counts_on_conn<C>(
+pub(in crate::tgbot::transfer::store) async fn release_file_ref_counts_on_conn<C>(
     conn: &C,
     refs: HashMap<String, i32>,
     delay_hours: i64,

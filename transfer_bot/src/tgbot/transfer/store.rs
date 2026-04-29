@@ -18,7 +18,9 @@ pub(super) use file_cache::{
     mark_file_cache_delete_failed, mark_file_cache_downloading, mark_file_cache_failed,
     mark_file_cache_ready,
 };
-pub(super) use item::{ensure_items_for_bundle, list_items_by_job, set_item_status};
+pub(super) use item::{
+    ensure_items_for_bundle, list_items_by_job, reconcile_items_for_bundle, set_item_status,
+};
 #[cfg(test)]
 pub(super) use job::finish_uploaded_job;
 pub(super) use job::{
@@ -27,11 +29,9 @@ pub(super) use job::{
     list_recoverable_jobs, mark_job_running, pause_job, request_cancel_job, wake_job,
 };
 pub(super) use progress::{
-    find_active_job_by_source_target, find_success_job_by_source_target, get_job_progress_snapshot,
-    list_recent_job_snapshots,
+    find_active_job_by_source_target, find_active_job_id_by_source_target,
+    find_success_job_by_source_target, get_job_progress_snapshot, list_recent_job_snapshots,
 };
-
-use crate::db;
 
 /// 主任务状态：等待后台执行。
 pub(super) const JOB_STATUS_PENDING: &str = "pending";
@@ -66,6 +66,8 @@ pub(super) const ITEM_STATUS_SUCCESS: &str = "success";
 pub(super) const ITEM_STATUS_FAILED: &str = "failed";
 /// 子项状态：已被用户停止。
 pub(super) const ITEM_STATUS_CANCELLED: &str = "cancelled";
+/// 子项状态：恢复对齐后源相册中已不存在，不再参与后续下载/上传。
+pub(super) const ITEM_STATUS_OBSOLETE: &str = "obsolete";
 
 /// file_cache 状态：等待首次下载或重新引用。
 const FILE_CACHE_STATUS_PENDING: &str = "pending";
@@ -84,12 +86,42 @@ const FILE_CACHE_DELETING_RETRY_LIMIT: usize = 20;
 /// 引用文件时遇到 GC 正在删除，每轮等待毫秒数。
 const FILE_CACHE_DELETING_RETRY_DELAY_MS: u64 = 50;
 
+/// 已成功转存任务的最小查询结果。
+///
+/// lookup 和启动查重只需要任务 ID 与结果链接，不需要读取 transfer_job 全字段。
+#[derive(Debug, Clone)]
+pub(super) struct SuccessfulJobResult {
+    /// 已成功任务 ID，用于日志定位。
+    pub id: i64,
+    /// 上传结果入口链接。
+    pub result_message_link: String,
+}
+
+/// 进度快照内的主任务展示字段。
+///
+/// `/downloads` 与单任务进度面板只展示这些字段，单独建轻量结构可以避免查询整行 transfer_job。
+#[derive(Debug, Clone)]
+pub(super) struct JobProgressJob {
+    /// 主键任务 ID。
+    pub id: i64,
+    /// 当前任务状态。
+    pub status: String,
+    /// 任务总条目数。
+    pub total_items: i32,
+    /// 目标转存 chat_id。
+    pub target_chat_id: i64,
+    /// 创建时间，用于列表排序。
+    pub created_at: chrono::DateTime<chrono::FixedOffset>,
+    /// 最后更新时间，用于页面展示。
+    pub updated_at: chrono::DateTime<chrono::FixedOffset>,
+}
+
 /// 单个转存任务的进度快照。
 /// 用于 `/downloads` 命令汇总展示。
 #[derive(Debug, Clone)]
 pub(super) struct JobProgressSnapshot {
-    /// 主任务记录。
-    pub job: db::transfer_job::Model,
+    /// 主任务展示字段。
+    pub job: JobProgressJob,
     /// 尚未开始处理的子项数。
     pub pending_count: i32,
     /// 正在准备（通常是下载/构建上传内容）的子项数。

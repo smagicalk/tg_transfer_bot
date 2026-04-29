@@ -34,8 +34,8 @@ pub async fn lookup_command(
 
     if let Some(job) =
         store::find_success_job_by_source_target(&source_link, target_chat_id).await?
-        && let Some(link) = job.result_message_link
     {
+        let link = job.result_message_link;
         tracing::info!(
             request_chat_id,
             target_chat_id,

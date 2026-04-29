@@ -9,7 +9,9 @@ mod status;
 
 #[cfg(test)]
 pub(in crate::tgbot::transfer) use refs::{acquire_file_ref, release_job_file_refs};
-pub(super) use refs::{release_job_file_refs_on_conn, try_acquire_file_ref_on_conn};
+pub(super) use refs::{
+    release_file_ref_counts_on_conn, release_job_file_refs_on_conn, try_acquire_file_ref_on_conn,
+};
 
 pub(in crate::tgbot::transfer) use gc::{
     claim_file_cache_for_delete, delete_file_cache, list_due_file_cache,
