@@ -1,0 +1,32 @@
+{
+  "tdlib_config": {
+    "use_test_dc": false,
+    "database_directory": "tg/db",
+    "files_directory": "tg/file",
+    "database_encryption_key": "replace_me_with_local_secret",
+    "use_file_database": true,
+    "use_chat_info_database": true,
+    "use_message_database": true,
+    "use_secret_chats": false,
+    "api_id": 0,
+    "api_hash": "replace_me_with_tdlib_api_hash",
+    "system_language_code": "zh-hans",
+    "device_model": "transfer_bot",
+    "system_version": "1.8.62",
+    "application_version": "0.0.1"
+  },
+  "admin_ids": [
+    123456789
+  ],
+  "target_map": {
+    "0": -1001234567890
+  },
+  "transfer_config": {
+    "job_concurrency": 2,
+    "file_delete_delay_hours": 2,
+    "file_gc_interval_seconds": 60
+  },
+  "login_info": {
+    "type": "OCR"
+  }
+}

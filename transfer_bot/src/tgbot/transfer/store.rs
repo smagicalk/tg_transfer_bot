@@ -1,0 +1,151 @@
+// 转存数据访问模块（数据库读写）：
+// - 任务主表与子项状态管理
+// - file_cache 引用计数与删除队列管理
+// - 启动恢复任务扫描
+
+mod file_cache;
+mod item;
+mod job;
+mod progress;
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+pub(super) use file_cache::{acquire_file_ref, release_job_file_refs};
+pub(super) use file_cache::{
+    claim_file_cache_for_delete, delete_file_cache, list_due_file_cache,
+    mark_file_cache_delete_failed, mark_file_cache_downloading, mark_file_cache_failed,
+    mark_file_cache_ready,
+};
+pub(super) use item::{ensure_items_for_bundle, list_items_by_job, set_item_status};
+#[cfg(test)]
+pub(super) use job::finish_uploaded_job;
+pub(super) use job::{
+    cancel_job_now, create_job, find_job_by_request, finish_job, finish_job_with_item_statuses,
+    finish_uploaded_job_with_item_statuses, get_job_status, list_cancelling_jobs,
+    list_recoverable_jobs, mark_job_running, pause_job, request_cancel_job, wake_job,
+};
+pub(super) use progress::{
+    find_active_job_by_source_target, find_success_job_by_source_target, get_job_progress_snapshot,
+    list_recent_job_snapshots,
+};
+
+use crate::db;
+
+/// 主任务状态：等待后台执行。
+pub(super) const JOB_STATUS_PENDING: &str = "pending";
+/// 主任务状态：后台正在执行。
+pub(super) const JOB_STATUS_RUNNING: &str = "running";
+/// 主任务状态：用户手动暂停。
+pub(super) const JOB_STATUS_PAUSED: &str = "paused";
+/// 主任务状态：用户已请求停止，等待后台任务在安全点收尾。
+pub(super) const JOB_STATUS_CANCELLING: &str = "cancelling";
+/// 主任务状态：内部取消收尾中，已有执行者正在释放文件引用。
+pub(super) const JOB_STATUS_CANCEL_FINALIZING: &str = "cancel_finalizing";
+/// 主任务状态：用户停止完成。
+pub(super) const JOB_STATUS_CANCELLED: &str = "cancelled";
+/// 主任务状态：全部成功。
+pub(super) const JOB_STATUS_SUCCESS: &str = "success";
+/// 主任务状态：全部失败。
+pub(super) const JOB_STATUS_FAILED: &str = "failed";
+/// 主任务状态：部分成功、部分失败。
+pub(super) const JOB_STATUS_PARTIAL: &str = "partial";
+
+/// 子项状态：等待处理。
+pub(super) const ITEM_STATUS_PENDING: &str = "pending";
+/// 子项状态：正在准备上传内容，媒体通常处于下载或构造 InputMessageContent 阶段。
+pub(super) const ITEM_STATUS_PREPARING: &str = "preparing";
+/// 子项状态：已准备完成，等待整批上传。
+pub(super) const ITEM_STATUS_PREPARED: &str = "prepared";
+/// 子项状态：正在上传。
+pub(super) const ITEM_STATUS_UPLOADING: &str = "uploading";
+/// 子项状态：已成功上传。
+pub(super) const ITEM_STATUS_SUCCESS: &str = "success";
+/// 子项状态：准备或上传失败。
+pub(super) const ITEM_STATUS_FAILED: &str = "failed";
+/// 子项状态：已被用户停止。
+pub(super) const ITEM_STATUS_CANCELLED: &str = "cancelled";
+
+/// file_cache 状态：等待首次下载或重新引用。
+const FILE_CACHE_STATUS_PENDING: &str = "pending";
+/// file_cache 状态：TDLib 正在下载。
+pub(super) const FILE_CACHE_STATUS_DOWNLOADING: &str = "downloading";
+/// file_cache 状态：本地文件已可用于上传。
+const FILE_CACHE_STATUS_READY: &str = "ready";
+/// file_cache 状态：下载或准备失败。
+const FILE_CACHE_STATUS_FAILED: &str = "failed";
+/// file_cache 状态：GC 已认领，正在删除本地文件。
+const FILE_CACHE_STATUS_DELETING: &str = "deleting";
+/// file_cache 状态：删除失败，后续 GC 会重试或新任务重新引用。
+const FILE_CACHE_STATUS_DELETE_FAILED: &str = "delete_failed";
+/// 引用文件时遇到 GC 正在删除，最多等待的轮数。
+const FILE_CACHE_DELETING_RETRY_LIMIT: usize = 20;
+/// 引用文件时遇到 GC 正在删除，每轮等待毫秒数。
+const FILE_CACHE_DELETING_RETRY_DELAY_MS: u64 = 50;
+
+/// 单个转存任务的进度快照。
+/// 用于 `/downloads` 命令汇总展示。
+#[derive(Debug, Clone)]
+pub(super) struct JobProgressSnapshot {
+    /// 主任务记录。
+    pub job: db::transfer_job::Model,
+    /// 尚未开始处理的子项数。
+    pub pending_count: i32,
+    /// 正在准备（通常是下载/构建上传内容）的子项数。
+    pub preparing_count: i32,
+    /// 已准备完成、等待整批上传的子项数。
+    pub prepared_count: i32,
+    /// 正在上传的子项数。
+    pub uploading_count: i32,
+    /// 已成功完成的子项数。
+    pub success_count: i32,
+    /// 已失败的子项数。
+    pub failed_count: i32,
+    /// 已取消的子项数。
+    pub cancelled_count: i32,
+    /// 当前存在实时下载进度的文件数。
+    pub active_download_files: i32,
+    /// 当前活跃下载已下载总字节数。
+    pub active_downloaded_bytes: i64,
+    /// 当前活跃下载总字节数。
+    pub active_download_total_bytes: i64,
+    /// 是否存在总大小未知的活跃下载。
+    pub has_unknown_download_total: bool,
+}
+
+/// 主任务完成摘要。
+///
+/// finish 相关函数统一使用该结构传递终态字段，避免参数列表继续膨胀。
+pub(super) struct FinishJobSummary {
+    /// 最终成功子项数。
+    pub ok_count: i32,
+    /// 最终失败子项数。
+    pub fail_count: i32,
+    /// 最后一次错误信息。
+    pub last_error: Option<String>,
+    /// 上传结果入口消息 ID。
+    pub result_message_id: Option<i64>,
+    /// 上传结果入口链接。
+    pub result_message_link: Option<String>,
+    /// 文件引用释放后的延迟删除小时数。
+    pub delay_hours: i64,
+}
+
+/// 判断任务是否已经处于终态。
+pub(super) fn is_finished_job_status(status: &str) -> bool {
+    matches!(
+        status,
+        JOB_STATUS_SUCCESS | JOB_STATUS_FAILED | JOB_STATUS_PARTIAL | JOB_STATUS_CANCELLED
+    )
+}
+
+/// 判断是否是文本占位 file_key。
+fn is_text_file_key(file_key: &str) -> bool {
+    file_key.starts_with("text:")
+}
+
+/// 统一生成 UTC+8 时间戳。
+pub(super) fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
+    chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+}

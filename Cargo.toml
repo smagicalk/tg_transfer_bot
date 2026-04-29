@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "transfer_bot",
+    "tdlib_rs",
+    "migration"
+]
+resolver = "2"
+
+[workspace.dependencies]
+tdlib-rs = { path = "tdlib_rs", version = "1.3.0" }
