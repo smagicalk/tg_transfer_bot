@@ -153,9 +153,16 @@ fn primary_file_from_message(message: &tdlib_rs::types::Message) -> Option<tdlib
 async fn ensure_local_file(file_id: i32, client_id: i32) -> anyhow::Result<tdlib_rs::types::File> {
     let mut current = get_file_by_id(file_id, client_id).await?;
     if current.local.is_downloading_completed && !current.local.path.is_empty() {
+        tracing::debug!(file_id, "tdlib file already available locally");
         return Ok(current);
     }
 
+    tracing::debug!(
+        file_id,
+        size = current.size,
+        expected_size = current.expected_size,
+        "tdlib file download started"
+    );
     let downloaded = tdlib_rs::functions::download_file(current.id, 32, 0, 0, true, client_id)
         .await
         .map_err(|e| anyhow::Error::new(TdError(e)))?;
@@ -163,6 +170,11 @@ async fn ensure_local_file(file_id: i32, client_id: i32) -> anyhow::Result<tdlib
     current = file_after_download;
 
     if current.local.is_downloading_completed && !current.local.path.is_empty() {
+        tracing::debug!(
+            file_id,
+            downloaded_size = current.local.downloaded_size,
+            "tdlib file download completed"
+        );
         return Ok(current);
     }
 

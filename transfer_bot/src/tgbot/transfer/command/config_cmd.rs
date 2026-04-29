@@ -79,6 +79,8 @@ async fn update_transfer_config(key: &str, value: &str) -> anyhow::Result<String
 
     config::save_runtime_bot_config(&bot_config).await?;
     crate::tgbot::transfer::update_runtime_config(bot_config.transfer_config.clone());
+    // 这里只允许修改非敏感运行参数，因此 key/value 可以安全记录，便于追踪运行时变更。
+    tracing::info!(key, value, "transfer runtime config updated");
 
     Ok(format_transfer_config_text(
         &format!("配置已更新：{} = {}", key, value),

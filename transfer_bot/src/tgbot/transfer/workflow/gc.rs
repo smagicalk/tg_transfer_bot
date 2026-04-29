@@ -24,6 +24,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyh
     if due_rows.is_empty() {
         return Ok(());
     }
+    tracing::info!(due_count = due_rows.len(), "file gc found due cache rows");
 
     for row in due_rows {
         // 删除前先原子认领，避免扫描到期记录后又被新任务重新引用。
@@ -64,6 +65,11 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyh
         }
 
         store::delete_file_cache(&row.file_key).await?;
+        tracing::info!(
+            file_key = %row.file_key,
+            td_file_id = row.td_file_id,
+            "file cache deleted"
+        );
     }
 
     Ok(())

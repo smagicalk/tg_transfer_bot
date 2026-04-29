@@ -85,6 +85,15 @@ pub(super) async fn spider_message(
         messages.sort_by_key(|m| m.id);
     }
 
+    // 源链接本身可能指向私有聊天，日志只记录解析后的 chat/message/album 定位。
+    tracing::info!(
+        source_chat_id = anchor.chat_id,
+        source_message_id = anchor.id,
+        source_album_id = anchor.media_album_id,
+        message_count = messages.len(),
+        "source message bundle resolved"
+    );
+
     Ok(TransferBundle {
         source_chat_id: anchor.chat_id,
         source_message_id: anchor.id,

@@ -26,6 +26,8 @@ pub async fn lookup_command(
 
     let source_link = text[1].to_string();
     let target_chat_id = resolve_target_chat_id(&text, &config, request_chat_id)?;
+    // 源链接可能来自私有聊天，日志只记录请求 chat 与目标 chat。
+    tracing::info!(request_chat_id, target_chat_id, "lookup command started");
     let lookup_command = build_lookup_command(&source_link, target_chat_id, CommandStyle::Short);
     let transfer_command =
         build_transfer_command(&source_link, target_chat_id, CommandStyle::Short);
@@ -34,6 +36,12 @@ pub async fn lookup_command(
         store::find_success_job_by_source_target(&source_link, target_chat_id).await?
         && let Some(link) = job.result_message_link
     {
+        tracing::info!(
+            request_chat_id,
+            target_chat_id,
+            job_id = job.id,
+            "lookup command hit success job"
+        );
         return send::ReplyPanel::markdown(format!(
             "*已找到历史转存结果*\n源链接：`{}`\n目标 chat：`{}`\n结果消息：[打开转存消息]({})",
             source_link, target_chat_id, link
@@ -58,6 +66,13 @@ pub async fn lookup_command(
 
     if let Some(job) = store::find_active_job_by_source_target(&source_link, target_chat_id).await?
     {
+        tracing::info!(
+            request_chat_id,
+            target_chat_id,
+            job_id = job.id,
+            status = %job.status,
+            "lookup command hit active job"
+        );
         return send::ReplyPanel::markdown(format!(
             "*找到进行中的任务*\n源链接：`{}`\n目标 chat：`{}`\njob_id：`{}`\n建议：使用 `/d run` 或 `/d all` 查看进度。",
             source_link, target_chat_id, job.id
@@ -88,6 +103,7 @@ pub async fn lookup_command(
         .await;
     }
 
+    tracing::info!(request_chat_id, target_chat_id, "lookup command missed");
     send::ReplyPanel::markdown(format!(
         "*未找到历史转存结果*\n源链接：`{}`\n目标 chat：`{}`\n可直接执行下面的转存命令重新发起任务。",
         source_link, target_chat_id

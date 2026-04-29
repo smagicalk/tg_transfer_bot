@@ -26,6 +26,12 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
     tokio::spawn(async move {
         let source_link = plan.source_link.clone();
         let target_chat_id = plan.target_chat_id;
+        tracing::info!(
+            notify_chat_id,
+            target_chat_id,
+            progress_message_id,
+            "transfer background task queued"
+        );
         let progress_done = Arc::new(AtomicBool::new(false));
         let progress_handle = progress_message_id.map(|message_id| {
             let progress_plan = plan.clone();
@@ -42,6 +48,11 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
             })
         });
         let _permit = acquire_transfer_slot().await;
+        tracing::info!(
+            notify_chat_id,
+            target_chat_id,
+            "transfer background task acquired concurrency slot"
+        );
 
         let result = workflow::transfer(plan, client_id).await;
         let mut should_send_separate_result = progress_message_id.is_none();
@@ -69,9 +80,25 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
         }
 
         if !should_send_separate_result {
+            if let Err(err) = &result {
+                tracing::error!(
+                    notify_chat_id,
+                    target_chat_id,
+                    error = %err,
+                    "transfer background task finished with error"
+                );
+            } else {
+                tracing::info!(
+                    notify_chat_id,
+                    target_chat_id,
+                    "transfer background task finished"
+                );
+            }
             return;
         }
 
+        // result 会被发送函数消费；先保存错误摘要，避免为了日志克隆完整结果。
+        let result_error = result.as_ref().err().map(|err| format!("{:#}", err));
         let send_result = send_transfer_outcome(
             &source_link,
             target_chat_id,
@@ -83,6 +110,19 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
 
         if let Err(err) = send_result {
             tracing::error!("send transfer outcome failed: {:#}", err);
+        } else if let Some(err) = result_error {
+            tracing::error!(
+                notify_chat_id,
+                target_chat_id,
+                error = %err,
+                "transfer background task finished with error"
+            );
+        } else {
+            tracing::info!(
+                notify_chat_id,
+                target_chat_id,
+                "transfer background task finished"
+            );
         }
     });
 }
@@ -98,9 +138,23 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
         let job_id = job.id;
         let source_link = job.source_link.clone();
         let target_chat_id = job.target_chat_id;
+        tracing::info!(
+            job_id,
+            notify_chat_id,
+            target_chat_id,
+            "recovery job queued"
+        );
         let _permit = acquire_transfer_slot().await;
+        tracing::info!(
+            job_id,
+            notify_chat_id,
+            target_chat_id,
+            "recovery job acquired concurrency slot"
+        );
 
         let result = workflow::resume_one_job(job, client_id).await;
+        // result 会被发送函数消费；先保存错误摘要，避免为了日志克隆完整结果。
+        let result_error = result.as_ref().err().map(|err| format!("{:#}", err));
         let send_result = send_recovery_outcome(
             job_id,
             &source_link,
@@ -113,6 +167,21 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
 
         if let Err(err) = send_result {
             tracing::error!("send recovery outcome failed: {:#}", err);
+        } else if let Some(err) = result_error {
+            tracing::error!(
+                job_id,
+                notify_chat_id,
+                target_chat_id,
+                error = %err,
+                "recovery job finished with error"
+            );
+        } else {
+            tracing::info!(
+                job_id,
+                notify_chat_id,
+                target_chat_id,
+                "recovery job finished"
+            );
         }
     });
 }

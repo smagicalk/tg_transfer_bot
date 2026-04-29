@@ -12,12 +12,13 @@ pub async fn handle_authorization(
 ) -> anyhow::Result<()> {
     match config.client_id {
         None => {
-            tracing::error!("Client ID not set");
+            tracing::error!("tdlib authorization received before client_id initialized");
             anyhow::bail!("Client ID not set");
         }
         Some(client_id) => match authorization_state {
             // 初始化 TDLib 参数。
             AuthorizationState::WaitTdlibParameters => {
+                tracing::info!(client_id, "setting tdlib parameters");
                 tokio::fs::create_dir_all(&config.tdlib_config.files_directory).await?;
                 tokio::fs::create_dir_all(&config.tdlib_config.database_directory).await?;
 
@@ -45,6 +46,7 @@ pub async fn handle_authorization(
             // 进入手机 / Token / OCR 登录分支。
             AuthorizationState::WaitPhoneNumber => match &config.login_info {
                 LoginInfo::Phone(phone) => {
+                    tracing::info!(client_id, "submitting phone login request");
                     let phone_number_authentication_settings =
                         tdlib_rs::types::PhoneNumberAuthenticationSettings {
                             allow_flash_call: false,
@@ -65,11 +67,13 @@ pub async fn handle_authorization(
                     .map_err(|e| anyhow::Error::new(TdError(e)))
                 }
                 LoginInfo::Token(token) => {
+                    tracing::info!(client_id, "submitting bot token login request");
                     tdlib_rs::functions::check_authentication_bot_token(token.clone(), client_id)
                         .await
                         .map_err(|e| anyhow::Error::new(TdError(e)))
                 }
                 LoginInfo::Ocr => {
+                    tracing::info!(client_id, "requesting qr login");
                     tdlib_rs::functions::request_qr_code_authentication(vec![], client_id)
                         .await
                         .map_err(|e| anyhow::Error::new(TdError(e)))
@@ -90,6 +94,7 @@ pub async fn handle_authorization(
             // 输入短信验证码。
             AuthorizationState::WaitCode(authorization_state_wait_code) => {
                 let phone_number = authorization_state_wait_code.code_info.phone_number.clone();
+                tracing::info!(client_id, "waiting for phone login code");
                 let code_result =
                     inquire::Text::new(format!("请输入 {} 的验证码", phone_number).as_str())
                         .with_placeholder("验证码")
@@ -108,6 +113,7 @@ pub async fn handle_authorization(
             AuthorizationState::WaitOtherDeviceConfirmation(
                 authorization_state_wait_other_device_confirmation,
             ) => {
+                tracing::info!(client_id, "qr login confirmation requested");
                 let link = authorization_state_wait_other_device_confirmation.link;
                 let code = qrcode::QrCode::with_error_correction_level(
                     link.as_bytes(),
@@ -118,10 +124,9 @@ pub async fn handle_authorization(
                     .quiet_zone(true)
                     .build();
 
-                println!("#############################################");
+                println!("请使用 Telegram 扫描下面的登录二维码：");
                 println!("{}", qr);
-                println!("link {}", link);
-                println!("#############################################");
+                println!("如果二维码无法识别，可在可信环境打开临时链接：{}", link);
                 Ok(())
             }
 
@@ -131,6 +136,7 @@ pub async fn handle_authorization(
 
             // 输入二次密码。
             AuthorizationState::WaitPassword(authorization_state_wait_password) => {
+                tracing::info!(client_id, "waiting for two-factor password");
                 let password = inquire::Password::new(
                     authorization_state_wait_password.password_hint.as_str(),
                 )
@@ -145,11 +151,13 @@ pub async fn handle_authorization(
 
             // 登录完成。
             AuthorizationState::Ready => {
-                match &config.login_info {
-                    LoginInfo::Phone(phone) => tracing::info!("phone {} login success", phone),
-                    LoginInfo::Token(token) => tracing::info!("token {} login success", token),
-                    LoginInfo::Ocr => tracing::info!("ocr {} login success", client_id),
-                }
+                let login_mode = match &config.login_info {
+                    LoginInfo::Phone(_) => "phone",
+                    LoginInfo::Token(_) => "token",
+                    LoginInfo::Ocr => "ocr",
+                };
+                // 登录凭证属于敏感信息，日志只记录登录方式，不记录手机号或 token。
+                tracing::info!(client_id, login_mode, "tdlib authorization ready");
                 // 登录完成后启动转存后台任务：
                 // 1) 恢复未完成任务
                 // 2) 启动文件延迟删除队列
@@ -159,15 +167,15 @@ pub async fn handle_authorization(
 
             // 生命周期终止状态：直接退出进程。
             AuthorizationState::LoggingOut => {
-                tracing::info!("logging out success");
+                tracing::info!(client_id, "tdlib logging out");
                 exit(0)
             }
             AuthorizationState::Closing => {
-                tracing::info!("closing success");
+                tracing::info!(client_id, "tdlib closing");
                 exit(0)
             }
             AuthorizationState::Closed => {
-                tracing::info!("closed success");
+                tracing::info!(client_id, "tdlib closed");
                 exit(0)
             }
         },

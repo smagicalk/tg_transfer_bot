@@ -36,10 +36,12 @@ where
             .lock()
             .expect("inflight downloads mutex poisoned");
         if let Some(tx) = guard.get(&file_key) {
+            tracing::debug!(file_key = %file_key, "join inflight file download");
             SingleflightRole::Waiter(tx.subscribe())
         } else {
             let (tx, _rx) = tokio::sync::watch::channel(None);
             guard.insert(file_key.clone(), tx);
+            tracing::debug!(file_key = %file_key, "start inflight file download");
             SingleflightRole::Executor(InflightExecutionGuard::new(file_key.clone()))
         }
     };
@@ -50,6 +52,18 @@ where
         SingleflightRole::Executor(mut execute_guard) => {
             let result = task().await;
             let send_value = result.as_ref().map(|_| ()).map_err(|e| format!("{:#}", e));
+            if let Err(err) = &send_value {
+                tracing::warn!(
+                    file_key = %execute_guard.file_key,
+                    error = %err,
+                    "inflight file download failed"
+                );
+            } else {
+                tracing::debug!(
+                    file_key = %execute_guard.file_key,
+                    "inflight file download completed"
+                );
+            }
             execute_guard.finish(send_value);
             return result;
         }

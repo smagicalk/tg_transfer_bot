@@ -15,7 +15,13 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
 ) -> anyhow::Result<()> {
     // 上次退出前已经请求停止的任务，启动时先收敛为 cancelled 并释放引用。
     for job in store::list_cancelling_jobs().await? {
-        tracing::info!("finalize cancelling transfer job, job_id={}", job.id);
+        tracing::info!(
+            job_id = job.id,
+            request_chat_id = job.request_chat_id,
+            target_chat_id = job.target_chat_id,
+            status = %job.status,
+            "finalize cancelling transfer job after restart"
+        );
         store::cancel_job_now(
             job.id,
             "cancelled by user before restart",
@@ -30,9 +36,18 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
         return Ok(());
     }
 
-    tracing::info!("scheduling {} unfinished transfer jobs", jobs.len());
+    tracing::info!(
+        recoverable_count = jobs.len(),
+        "scheduling unfinished transfer jobs"
+    );
     for job in jobs {
-        tracing::info!("schedule recover job, job_id={}", job.id);
+        tracing::info!(
+            job_id = job.id,
+            request_chat_id = job.request_chat_id,
+            target_chat_id = job.target_chat_id,
+            status = %job.status,
+            "schedule recover job"
+        );
         super::super::spawn_recovery_job(job, client_id);
     }
     Ok(())
@@ -49,23 +64,60 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
     let _guard = match acquire_job_guard(job.id).await {
         Some(g) => g,
         None => {
-            tracing::info!("job already running in this process, job_id={}", job.id);
+            tracing::info!(
+                job_id = job.id,
+                request_chat_id = job.request_chat_id,
+                target_chat_id = job.target_chat_id,
+                "recovery skipped because job is already running"
+            );
             return Ok(TransferOutcome::Running { job_id: job.id });
         }
     };
 
     if let Some(outcome) = apply_job_control(job.id).await? {
+        tracing::info!(
+            job_id = job.id,
+            request_chat_id = job.request_chat_id,
+            target_chat_id = job.target_chat_id,
+            "recovery stopped by control before spider"
+        );
         return Ok(outcome);
     }
 
+    tracing::info!(
+        job_id = job.id,
+        request_chat_id = job.request_chat_id,
+        target_chat_id = job.target_chat_id,
+        "recovery spider started"
+    );
     let bundle = spider::spider_message(job.source_link.clone(), client_id).await?;
     if let Some(outcome) = apply_job_control(job.id).await? {
+        tracing::info!(
+            job_id = job.id,
+            request_chat_id = job.request_chat_id,
+            target_chat_id = job.target_chat_id,
+            "recovery stopped by control after spider"
+        );
         return Ok(outcome);
     }
 
     if !store::mark_job_running(job.id).await? {
+        tracing::info!(
+            job_id = job.id,
+            request_chat_id = job.request_chat_id,
+            target_chat_id = job.target_chat_id,
+            "recovery mark running skipped by control"
+        );
         return finish_skipped_by_control(job.id).await;
     }
+    tracing::info!(
+        job_id = job.id,
+        source_chat_id = bundle.source_chat_id,
+        source_message_id = bundle.source_message_id,
+        source_album_id = bundle.source_album_id,
+        message_count = bundle.messages.len(),
+        "recovery job marked running"
+    );
     let _ = store::ensure_items_for_bundle(job.id, &bundle.messages).await?;
     run_job_inner(job, bundle.messages, client_id).await
 }

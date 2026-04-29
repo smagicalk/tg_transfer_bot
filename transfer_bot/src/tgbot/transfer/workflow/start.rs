@@ -38,18 +38,36 @@ pub(super) async fn build_transfer_start(
         store::find_success_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
         && let Some(link) = old.result_message_link
     {
+        tracing::info!(
+            job_id = old.id,
+            target_chat_id = plan.target_chat_id,
+            "reuse successful transfer result"
+        );
         return Ok(TransferStart::Outcome(TransferOutcome::Reused { link }));
     }
 
     if let Some(old) =
         store::find_active_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
     {
+        tracing::info!(
+            job_id = old.id,
+            status = %old.status,
+            target_chat_id = plan.target_chat_id,
+            "matched active transfer job"
+        );
         return Ok(active_job_start(old, &plan));
     }
 
     if let Some(old) =
         store::find_job_by_request(plan.request_chat_id, plan.request_message_id).await?
     {
+        tracing::info!(
+            job_id = old.id,
+            status = %old.status,
+            request_chat_id = plan.request_chat_id,
+            request_message_id = plan.request_message_id,
+            "matched idempotent transfer request"
+        );
         return request_job_start(old).await;
     }
 
@@ -114,6 +132,17 @@ async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Res
 
     // 创建主任务并对齐子项；创建完成后释放 source-target 锁，实际执行由 job_id 锁保护。
     let job = store::create_job(&plan, &bundle).await?;
+    tracing::info!(
+        job_id = job.id,
+        request_chat_id = plan.request_chat_id,
+        request_message_id = plan.request_message_id,
+        source_chat_id = bundle.source_chat_id,
+        source_message_id = bundle.source_message_id,
+        source_album_id = bundle.source_album_id,
+        target_chat_id = plan.target_chat_id,
+        total_items = bundle.messages.len(),
+        "created transfer job"
+    );
     // 新任务从创建子项前就持有 job 锁，避免 `/j stop` 在子项写入前误判“无执行器”。
     match acquire_job_guard(job.id).await {
         Some(job_guard) => {

@@ -29,9 +29,11 @@ static TRANSFER_STARTUP_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new
 /// TDLib Ready 后触发转存子系统启动逻辑。
 pub fn on_client_ready(client_id: i32) {
     if TRANSFER_STARTUP_ONCE.set(()).is_err() {
+        tracing::debug!(client_id, "transfer background services already started");
         return;
     }
 
+    tracing::info!(client_id, "starting transfer background services");
     tokio::spawn(async move {
         if let Err(err) = workflow::recover_unfinished_jobs(client_id).await {
             tracing::error!("recover_unfinished_jobs failed: {:#}", err);

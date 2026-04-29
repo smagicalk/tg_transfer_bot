@@ -16,6 +16,12 @@ pub(super) async fn pause_job(
     client_id: i32,
 ) -> anyhow::Result<()> {
     let job = store::pause_job(job_id, request_chat_id).await?;
+    tracing::info!(
+        job_id = job.id,
+        request_chat_id,
+        status = %job.status,
+        "transfer job paused by command"
+    );
     send::ReplyPanel::markdown(format!(
         "*任务已暂停*\njob_id：`{}`\n当前状态：`{}`\n恢复后会从已有子项状态继续处理。",
         job.id, job.status
@@ -54,6 +60,13 @@ pub(super) async fn resume_job(
     if !is_running {
         super::super::super::spawn_recovery_job(job.clone(), client_id);
     }
+    tracing::info!(
+        job_id = job.id,
+        request_chat_id,
+        status = %job.status,
+        is_running,
+        "transfer job resumed by command"
+    );
 
     let title = if is_running {
         "任务已在执行中"
@@ -115,6 +128,13 @@ pub(super) async fn stop_job(
         )
         .await?
     };
+    tracing::info!(
+        job_id = job.id,
+        request_chat_id,
+        status = %job.status,
+        is_running,
+        "transfer job stopped by command"
+    );
 
     let title = if is_running {
         "任务已请求停止"

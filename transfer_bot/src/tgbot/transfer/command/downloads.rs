@@ -32,6 +32,13 @@ pub async fn downloads_command(
     client_id: i32,
 ) -> anyhow::Result<()> {
     let args = parse_downloads_args(&text)?;
+    tracing::info!(
+        request_chat_id,
+        filter = args.filter.command_value(),
+        limit = args.limit,
+        page = args.page,
+        "downloads command started"
+    );
     render_downloads_page(request_chat_id, args)
         .await?
         .panel
@@ -56,6 +63,14 @@ pub async fn downloads_callback_query(
         send::answer_callback_query(update.id, Some("分页参数无效"), client_id).await?;
         return Ok(());
     };
+    tracing::debug!(
+        chat_id = update.chat_id,
+        message_id = update.message_id,
+        filter = args.filter.command_value(),
+        limit = args.limit,
+        page = args.page,
+        "downloads callback page requested"
+    );
 
     let rendered = render_downloads_page(update.chat_id, args).await?;
     let (text, keyboard) = rendered.panel.into_markdown_parts()?;
@@ -98,6 +113,16 @@ async fn render_downloads_page(
     } else {
         filtered[start..end].to_vec()
     };
+    tracing::info!(
+        request_chat_id,
+        filter = normalized_args.filter.command_value(),
+        limit = normalized_args.limit,
+        page = normalized_args.page,
+        total,
+        total_pages,
+        page_items = page_items.len(),
+        "downloads page rendered"
+    );
     let text = format_downloads_text(&page_items, &normalized_args, total);
     let keyboard = build_downloads_keyboard(&normalized_args, total_pages);
 

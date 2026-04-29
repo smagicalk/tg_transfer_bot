@@ -35,7 +35,7 @@ pub async fn get_version(client_id: i32) -> anyhow::Result<()> {
     let version = tdlib_rs::functions::get_option("version".to_string(), client_id).await;
     match version {
         Ok(version) => {
-            tracing::info!("get version success, version={:#?}", version);
+            tracing::info!(version = ?version, "tdlib version loaded");
             Ok(())
         }
         Err(err) => anyhow::bail!("get_version failed, error={:?}", err),
@@ -58,7 +58,7 @@ pub async fn receive(config: std::sync::Arc<crate::config::BotConfig>) -> anyhow
                 tokio::spawn(async move {
                     let res = handle_update(msg_update, config.clone()).await;
                     if let Err(err) = res {
-                        tracing::error!("Received error: {}", err);
+                        tracing::error!(error = %err, "handle tdlib update failed");
                     }
                 });
             }
@@ -70,7 +70,7 @@ pub async fn receive(config: std::sync::Arc<crate::config::BotConfig>) -> anyhow
 // - AuthorizationState => 登录状态机
 // - NewMessage(text command) => 命令路由
 // - NewCallbackQuery => inline keyboard 回调
-// - File => 调试日志
+// - File => 进度快照
 pub async fn handle_update(
     update: Update,
     config: std::sync::Arc<crate::config::BotConfig>,
@@ -126,8 +126,17 @@ pub async fn handle_update(
 
             if text[0].starts_with("/") {
                 let client_id = client_id.ok_or_else(|| anyhow::anyhow!("not found client_id"))?;
+                let command = text[0];
+                // 只记录命令名和消息定位信息，不记录参数中的链接，避免日志暴露私有消息入口。
+                tracing::info!(
+                    command,
+                    chat_id,
+                    sender_id,
+                    message_id = message.id,
+                    "admin command received"
+                );
 
-                match text[0] {
+                match command {
                     // /help 命令入口。
                     // 返回机器人当前支持的命令说明。
                     "/help" | "/h" => {
@@ -166,7 +175,15 @@ pub async fn handle_update(
                     "/job" | "/j" => {
                         tgbot::transfer::job_command(text, chat_id, client_id).await?;
                     }
-                    _ => {}
+                    _ => {
+                        tracing::warn!(
+                            command,
+                            chat_id,
+                            sender_id,
+                            message_id = message.id,
+                            "unknown admin command"
+                        );
+                    }
                 }
             }
         }
@@ -187,15 +204,28 @@ pub async fn handle_update(
         let client_id = config
             .client_id
             .ok_or_else(|| anyhow::anyhow!("not found client_id"))?;
+        tracing::debug!(
+            chat_id = update_callback_query.chat_id,
+            sender_user_id = update_callback_query.sender_user_id,
+            "admin callback query received"
+        );
         tgbot::transfer::downloads_callback_query(update_callback_query, client_id).await?;
         return Ok(());
     }
 
-    // 文件更新目前仅记录调试日志。
+    // 文件更新只写入进度快照；完整 File 结构很大且包含本地路径，不直接打日志。
     if let Update::File(update_file) = update {
         // 将 TDLib 实时文件进度写入内存快照，供 `/downloads` 查询。
         queue::update_download_progress(&update_file.file);
-        tracing::debug!("\n{:?}", update_file);
+        tracing::trace!(
+            file_id = update_file.file.id,
+            downloaded_size = update_file.file.local.downloaded_size,
+            size = update_file.file.size,
+            expected_size = update_file.file.expected_size,
+            is_downloading_active = update_file.file.local.is_downloading_active,
+            is_downloading_completed = update_file.file.local.is_downloading_completed,
+            "tdlib file progress updated"
+        );
     }
 
     Ok(())

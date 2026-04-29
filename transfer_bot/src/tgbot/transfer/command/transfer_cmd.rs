@@ -30,6 +30,13 @@ pub async fn transfer_command(
         request_chat_id,
         request_message_id,
     };
+    // 日志只记录请求定位和目标 chat；源链接会回显给用户，但不写入日志文件。
+    tracing::info!(
+        request_chat_id,
+        request_message_id,
+        target_chat_id,
+        "transfer command accepted"
+    );
 
     // 先给用户一个即时反馈，避免长时间下载/上传期间命令看起来像“卡住了”。
     let lookup_command =

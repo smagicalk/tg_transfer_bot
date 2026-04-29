@@ -25,7 +25,18 @@ pub(super) async fn run_job_inner(
     messages: Vec<tdlib_rs::types::Message>,
     client_id: i32,
 ) -> anyhow::Result<TransferOutcome> {
+    tracing::info!(
+        job_id = job.id,
+        target_chat_id = job.target_chat_id,
+        message_count = messages.len(),
+        "transfer job execution started"
+    );
+
     if let Some(outcome) = apply_job_control(job.id).await? {
+        tracing::info!(
+            job_id = job.id,
+            "transfer job stopped by control before prepare"
+        );
         return Ok(outcome);
     }
 
@@ -48,6 +59,10 @@ pub(super) async fn run_job_inner(
     // 第一阶段：全部准备完成（下载与构建 InputMessageContent）。
     for msg in &messages {
         if let Some(outcome) = apply_job_control(job.id).await? {
+            tracing::info!(
+                job_id = job.id,
+                "transfer job stopped by control during prepare"
+            );
             return Ok(outcome);
         }
 
@@ -67,6 +82,11 @@ pub(super) async fn run_job_inner(
 
         store::set_item_status(item.id, ITEM_STATUS_PREPARING, None).await?;
         if let Some(outcome) = apply_job_control(job.id).await? {
+            tracing::info!(
+                job_id = job.id,
+                item_id = item.id,
+                "transfer job stopped by control before item prepare"
+            );
             return Ok(outcome);
         }
 
@@ -79,6 +99,13 @@ pub(super) async fn run_job_inner(
             .await;
             if let Err(err) = download_result {
                 let err_str = format!("{:#}", err);
+                tracing::warn!(
+                    job_id = job.id,
+                    item_id = item.id,
+                    file_key = %seed.file_key,
+                    error = %err_str,
+                    "prepare item download failed"
+                );
                 store::set_item_status(item.id, ITEM_STATUS_FAILED, Some(err_str.clone())).await?;
                 store::mark_file_cache_failed(&seed.file_key, err_str.clone()).await?;
                 prepare_fail_count += 1;
@@ -86,6 +113,11 @@ pub(super) async fn run_job_inner(
                 continue;
             }
             if let Some(outcome) = apply_job_control(job.id).await? {
+                tracing::info!(
+                    job_id = job.id,
+                    item_id = item.id,
+                    "transfer job stopped by control after download"
+                );
                 return Ok(outcome);
             }
         }
@@ -98,11 +130,23 @@ pub(super) async fn run_job_inner(
                 store::set_item_status(item.id, ITEM_STATUS_PREPARED, None).await?;
                 prepared.push((item.id, prepared_one));
                 if let Some(outcome) = apply_job_control(job.id).await? {
+                    tracing::info!(
+                        job_id = job.id,
+                        item_id = item.id,
+                        "transfer job stopped by control after item prepare"
+                    );
                     return Ok(outcome);
                 }
             }
             Err(err) => {
                 let err_str = format!("{:#}", err);
+                tracing::warn!(
+                    job_id = job.id,
+                    item_id = item.id,
+                    file_key = file_key.as_deref().unwrap_or("none"),
+                    error = %err_str,
+                    "prepare upload content failed"
+                );
                 store::set_item_status(item.id, ITEM_STATUS_FAILED, Some(err_str.clone())).await?;
                 if let Some(key) = file_key {
                     store::mark_file_cache_failed(&key, err_str.clone()).await?;
@@ -115,6 +159,12 @@ pub(super) async fn run_job_inner(
 
     // 准备失败时不进入上传阶段，直接结束任务并释放引用。
     if prepare_fail_count > 0 {
+        tracing::warn!(
+            job_id = job.id,
+            prepare_fail_count,
+            prepared_count = prepared.len(),
+            "transfer job prepare failed"
+        );
         let total_fail = base_failed + prepare_fail_count + (prepared.len() as i32);
         let item_updates = prepared
             .iter()
@@ -151,6 +201,11 @@ pub(super) async fn run_job_inner(
 
     // 若本轮无需再上传（例如恢复时所有子项已是 success），直接收敛任务状态。
     if prepared.is_empty() {
+        tracing::info!(
+            job_id = job.id,
+            ok_count = base_done,
+            "transfer job already has all items uploaded"
+        );
         let link = job
             .result_message_link
             .clone()
@@ -173,11 +228,21 @@ pub(super) async fn run_job_inner(
 
     // 第二阶段：所有项准备成功后再上传。
     if let Some(outcome) = apply_job_control(job.id).await? {
+        tracing::info!(
+            job_id = job.id,
+            "transfer job stopped by control before upload"
+        );
         return Ok(outcome);
     }
     for (item_id, _) in &prepared {
         store::set_item_status(*item_id, ITEM_STATUS_UPLOADING, None).await?;
     }
+    tracing::info!(
+        job_id = job.id,
+        target_chat_id = job.target_chat_id,
+        prepared_count = prepared.len(),
+        "transfer job upload started"
+    );
 
     let upload_result = upload_prepared(job.target_chat_id, &prepared, client_id).await;
     match upload_result {
@@ -210,10 +275,23 @@ pub(super) async fn run_job_inner(
             {
                 return finish_skipped_by_control(job.id).await;
             }
+            tracing::info!(
+                job_id = job.id,
+                target_chat_id = job.target_chat_id,
+                result_message_id = upload_result.result_message_id,
+                is_album = upload_result.is_album,
+                "transfer job completed"
+            );
             Ok(TransferOutcome::Completed { link: result_link })
         }
         Err(err) => {
             let err_str = format!("{:#}", err);
+            tracing::error!(
+                job_id = job.id,
+                target_chat_id = job.target_chat_id,
+                error = %err_str,
+                "transfer job upload failed"
+            );
             let item_updates = prepared
                 .iter()
                 .map(|(item_id, _)| {

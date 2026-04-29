@@ -15,7 +15,9 @@ static LOG_GUARD: once_cell::sync::OnceCell<tracing_appender::non_blocking::Work
 pub fn init_tracing() {
     // 从环境变量读取日志过滤规则；没有则使用默认规则。
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        tracing_subscriber::EnvFilter::new("debug,my_crate::db=debug,tokio=warn")
+        // 默认只输出业务关键流程，避免 SeaORM SQL 与 TDLib 进度更新刷屏。
+        // 需要排查细节时可通过 RUST_LOG 覆盖，例如：RUST_LOG=debug。
+        tracing_subscriber::EnvFilter::new("info,sea_orm=warn,sqlx=warn,tokio=warn")
     });
 
     // 滚动日志文件：单文件 10MB，保留 10 个历史文件。
@@ -76,7 +78,8 @@ pub fn init_tracing() {
 pub fn init_tracing() {
     // 测试环境下允许重复初始化（避免并行测试 panic）。
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        tracing_subscriber::EnvFilter::new("debug,my_crate::db=debug,tokio=warn")
+        // 测试默认不打印 SQL debug；失败时再用 RUST_LOG=debug 打开细节。
+        tracing_subscriber::EnvFilter::new("info,sea_orm=warn,sqlx=warn,tokio=warn")
     });
 
     let _ = tracing_subscriber::fmt()

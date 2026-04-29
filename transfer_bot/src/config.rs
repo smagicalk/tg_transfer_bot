@@ -173,7 +173,9 @@ mod tests {
             ..Default::default()
         };
         bot_config.target_map.entry(1234).or_insert(1234);
-        println!("{}", serde_json::to_string_pretty(&bot_config).unwrap());
+        let text = serde_json::to_string_pretty(&bot_config).unwrap();
+        assert!(text.contains("\"type\": \"PHONE\""));
+        assert!(text.contains("\"1234\": 1234"));
     }
 
     // 反序列化样例。
@@ -213,6 +215,7 @@ mod tests {
         }"#;
 
         let bot_config: BotConfig = serde_json::from_str(bot_config_str).unwrap();
-        println!("{:?}", bot_config);
+        assert_eq!(bot_config.target_map.get(&1234), Some(&1234));
+        assert_eq!(bot_config.transfer_config.job_concurrency, 2);
     }
 }
