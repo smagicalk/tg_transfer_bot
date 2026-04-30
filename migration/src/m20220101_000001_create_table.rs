@@ -151,6 +151,12 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new("error_message").string())
                     .col(
+                        ColumnDef::new("file_ref_released")
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .col(
                         ColumnDef::new("created_at")
                             .timestamp_with_time_zone()
                             .not_null(),
