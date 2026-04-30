@@ -3,11 +3,15 @@
 
 use crate::tgbot::transfer::{store, types};
 
+const CARD_DIVIDER: &str = "━━━━━━━━━━━━";
+
 /// 构造任务尚未入库时的等待文本。
 pub(super) fn format_transfer_waiting_text(plan: &types::TransferPlan) -> String {
     format!(
-        "*转存进度*\n源链接：`{}`\n目标 chat：`{}`\n状态：`waiting`\n正在排队或抓取源消息。",
-        plan.source_link, plan.target_chat_id
+        "*转存进度*\n状态：`waiting`\n目标：`{}`\n{}\n说明：正在排队或抓取源消息。\n源：`{}`",
+        plan.target_chat_id,
+        CARD_DIVIDER,
+        markdown_inline_code(&plan.source_link)
     )
 }
 
@@ -25,21 +29,19 @@ pub(super) fn format_transfer_progress_text(
     };
     let mut lines = vec![
         format!("*转存进度* `#{}`", snapshot.job.id),
-        format!("源链接：`{}`", source_link),
-        format!("目标 chat：`{}`", snapshot.job.target_chat_id),
+        format!("状态：`{}`", snapshot.job.status),
+        CARD_DIVIDER.to_owned(),
+        format!("进度：`{}/{} ({}%)`", finished, total, progress),
+        format!("目标：`{}`", snapshot.job.target_chat_id),
         format!(
-            "状态：`{}`  进度：`{}/{} ({}%)`",
-            snapshot.job.status, finished, total, progress
-        ),
-        format!(
-            "等待 `{}` | 下载中 `{}` | 已就绪 `{}` | 上传中 `{}`",
+            "阶段：等待 `{}` | 下载 `{}` | 就绪 `{}` | 上传 `{}`",
             snapshot.pending_count,
             snapshot.preparing_count,
             snapshot.prepared_count,
             snapshot.uploading_count
         ),
         format!(
-            "成功 `{}` | 失败 `{}` | 已停 `{}`",
+            "结果：成功 `{}` | 失败 `{}` | 已停 `{}`",
             snapshot.success_count, snapshot.failed_count, snapshot.cancelled_count
         ),
     ];
@@ -55,6 +57,7 @@ pub(super) fn format_transfer_progress_text(
         "更新：`{}`",
         snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S")
     ));
+    lines.push(format!("源：`{}`", markdown_inline_code(source_link)));
     lines.join("\n")
 }
 
@@ -65,9 +68,22 @@ pub(super) fn format_transfer_final_text(
     target_chat_id: i64,
     result_link: &str,
 ) -> String {
+    let result_line = if crate::tgbot::send::is_openable_url(result_link) {
+        "结果：`可打开，见下方按钮`".to_owned()
+    } else {
+        format!(
+            "结果：`已上传，但当前 chat 无可跳转公开链接`\n定位：`{}`",
+            markdown_inline_code(result_link)
+        )
+    };
+
     format!(
-        "*{}*\n源链接：`{}`\n目标 chat：`{}`\n结果消息：[打开转存消息]({})",
-        title, source_link, target_chat_id, result_link
+        "*{}*\n状态：`success`\n目标：`{}`\n{}\n{}\n源：`{}`",
+        title,
+        target_chat_id,
+        CARD_DIVIDER,
+        result_line,
+        markdown_inline_code(source_link)
     )
 }
 
@@ -80,8 +96,13 @@ pub(super) fn format_transfer_control_text(
     detail: &str,
 ) -> String {
     format!(
-        "*{}*\n源链接：`{}`\n目标 chat：`{}`\njob_id：`{}`\n{}",
-        title, source_link, target_chat_id, job_id, detail
+        "*{}*\njob：`#{}`\n目标：`{}`\n{}\n说明：{}\n源：`{}`",
+        title,
+        job_id,
+        target_chat_id,
+        CARD_DIVIDER,
+        detail,
+        markdown_inline_code(source_link)
     )
 }
 
@@ -92,10 +113,11 @@ pub(super) fn format_transfer_error_text(
     error: &str,
 ) -> String {
     format!(
-        "*转存失败*\n源链接：`{}`\n目标 chat：`{}`\n错误：`{}`",
-        source_link,
+        "*转存失败*\n状态：`failed`\n目标：`{}`\n{}\n错误：`{}`\n源：`{}`",
         target_chat_id,
-        markdown_inline_code(error)
+        CARD_DIVIDER,
+        markdown_inline_code(error),
+        markdown_inline_code(source_link)
     )
 }
 

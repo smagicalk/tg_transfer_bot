@@ -29,11 +29,13 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_detail_text(
 fn build_help_detail() -> String {
     [
         "*help*",
+        "用途：查看命令帮助。",
+        "━━━━━━━━━━━━",
+        "命令：",
         &short_and_long(
             format!("{} [command]", help_command_text(None, CommandStyle::Short)),
             format!("{} [command]", help_command_text(None, CommandStyle::Long)),
         ),
-        "查看命令帮助。",
         "",
         "示例：",
         &short_and_long(
@@ -52,11 +54,14 @@ fn build_help_detail() -> String {
 fn build_transfer_detail() -> String {
     [
         "*transfer*",
+        "用途：转存单条消息或相册链接。",
+        "说明：不传 target_chat_id 时按配置里的 target_map 解析。",
+        "━━━━━━━━━━━━",
+        "命令：",
         &short_and_long(
             transfer_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target_chat_id]"),
             transfer_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target_chat_id]"),
         ),
-        "转存单条消息或相册链接；不传 target_chat_id 时按配置里的 target_map 解析。",
         "",
         "示例：",
         &short_and_long(
@@ -75,11 +80,14 @@ fn build_transfer_detail() -> String {
 fn build_lookup_detail() -> String {
     [
         "*lookup*",
+        "用途：按源链接查询历史转存结果。",
+        "说明：命中成功任务时会返回目标消息入口或定位信息。",
+        "━━━━━━━━━━━━",
+        "命令：",
         &short_and_long(
             lookup_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target_chat_id]"),
             lookup_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target_chat_id]"),
         ),
-        "按源链接查询历史转存结果；若命中成功任务直接返回目标链接。",
         "",
         "示例：",
         &short_and_long(
@@ -98,6 +106,9 @@ fn build_lookup_detail() -> String {
 fn build_config_detail() -> String {
     [
         "*config*",
+        "用途：查看或修改可动态生效的运行配置。",
+        "━━━━━━━━━━━━",
+        "命令：",
         &short_and_long(
             format!(
                 "{} [show|set <key> <value>]",
@@ -108,7 +119,6 @@ fn build_config_detail() -> String {
                 command_root("config", CommandStyle::Long)
             ),
         ),
-        "查看当前可动态调整的运行配置。",
         "",
         &short_and_long(
             config_show_command(CommandStyle::Short),
@@ -128,7 +138,7 @@ fn build_config_detail() -> String {
         ),
         "修改并持久化某个可调配置，修改后立即生效。",
         "",
-        "支持字段：",
+        "可调字段：",
         "`job_concurrency`",
         "`file_delete_delay_hours`",
         "`file_gc_interval_seconds`",
@@ -158,6 +168,9 @@ fn build_config_detail() -> String {
 fn build_downloads_detail() -> String {
     [
         "*downloads*",
+        "用途：查看任务列表、状态和真实下载进度。",
+        "━━━━━━━━━━━━",
+        "命令：",
         &short_and_long(
             format!(
                 "{} [filter] [limit] [page]",
@@ -168,9 +181,8 @@ fn build_downloads_detail() -> String {
                 downloads_command(None, None, None, CommandStyle::Long)
             ),
         ),
-        "查看当前聊天最近的转存任务、状态和真实下载进度。",
         "",
-        "downloads 筛选：",
+        "筛选参数：",
         "`all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | cancel`",
         "",
         "示例：",
@@ -202,6 +214,9 @@ fn build_downloads_detail() -> String {
 fn build_job_detail() -> String {
     [
         "*job*",
+        "用途：手动控制转存任务。",
+        "━━━━━━━━━━━━",
+        "命令：",
         &short_and_long(
             format!(
                 "{} <pause|resume|stop> <job_id>",
@@ -212,7 +227,6 @@ fn build_job_detail() -> String {
                 command_root("job", CommandStyle::Long)
             ),
         ),
-        "手动控制转存任务。",
         "",
         "动作：",
         "`pause | p`：暂停任务，当前单次 TDLib 调用会在安全点停止。",

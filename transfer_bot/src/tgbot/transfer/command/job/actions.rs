@@ -23,17 +23,17 @@ pub(super) async fn pause_job(
         "transfer job paused by command"
     );
     send::ReplyPanel::markdown(format!(
-        "*任务已暂停*\njob_id：`{}`\n当前状态：`{}`\n恢复后会从已有子项状态继续处理。",
+        "*任务已暂停*\njob：`#{}`\n状态：`{}`\n━━━━━━━━━━━━\n说明：恢复后会从已有子项状态继续处理。",
         job.id, job.status
     ))
     .row(vec![
         send::build_copy_button(
-            "复制恢复命令",
+            "复制恢复",
             &build_job_command("r", job.id, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         send::build_copy_button(
-            "复制停止命令",
+            "复制停止",
             &build_job_command("s", job.id, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -80,17 +80,17 @@ pub(super) async fn resume_job(
     };
 
     send::ReplyPanel::markdown(format!(
-        "*{}*\njob_id：`{}`\n当前状态：`{}`\n{}",
+        "*{}*\njob：`#{}`\n状态：`{}`\n━━━━━━━━━━━━\n说明：{}",
         title, job.id, job.status, detail
     ))
     .row(vec![
         send::build_copy_button(
-            "复制暂停命令",
+            "复制暂停",
             &build_job_command("p", job.id, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         send::build_copy_button(
-            "复制停止命令",
+            "复制停止",
             &build_job_command("s", job.id, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -148,7 +148,7 @@ pub(super) async fn stop_job(
     };
 
     send::ReplyPanel::markdown(format!(
-        "*{}*\njob_id：`{}`\n当前状态：`{}`\n{}",
+        "*{}*\njob：`#{}`\n状态：`{}`\n━━━━━━━━━━━━\n说明：{}",
         title, job.id, job.status, detail
     ))
     .row(vec![

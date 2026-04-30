@@ -3,12 +3,17 @@
 
 mod content;
 mod raw;
+mod state;
 
 use super::buttons::build_inline_keyboard;
 use content::{build_copyable_formatted_text, build_plain_formatted_text, parse_markdown_text};
 use raw::{send_formatted_text_message, send_formatted_text_message_returning};
 
 pub use raw::{answer_callback_query, edit_markdown_message_with_inline_keyboard};
+pub use state::{
+    observe_message_send_failed, observe_message_send_succeeded, wait_for_sent_message,
+    wait_for_sent_message_id,
+};
 
 /// 向指定 chat 发送纯文本消息。
 pub async fn send_text_message(text: String, chat_id: i64, client_id: i32) -> anyhow::Result<()> {

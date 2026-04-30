@@ -92,17 +92,20 @@ async fn update_transfer_config(key: &str, value: &str) -> anyhow::Result<String
 fn format_transfer_config_text(title: &str, config: &config::TransferConfig) -> String {
     [
         format!("*{}*", title),
-        format!("`job_concurrency = {}`", config.job_concurrency),
+        "状态：`runtime-config`".to_owned(),
+        "━━━━━━━━━━━━".to_owned(),
+        format!("并发：`job_concurrency = {}`", config.job_concurrency),
         format!(
-            "`file_delete_delay_hours = {}`",
+            "删除延迟：`file_delete_delay_hours = {}` 小时",
             config.file_delete_delay_hours
         ),
         format!(
-            "`file_gc_interval_seconds = {}`",
+            "GC 间隔：`file_gc_interval_seconds = {}` 秒",
             config.file_gc_interval_seconds
         ),
         "".to_owned(),
-        "示例：".to_owned(),
+        "━━━━━━━━━━━━".to_owned(),
+        "示例命令：".to_owned(),
         short_and_long(
             config_show_command(CommandStyle::Short),
             config_show_command(CommandStyle::Long),

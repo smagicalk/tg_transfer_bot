@@ -15,7 +15,7 @@ pub(super) fn build_transfer_progress_keyboard(
     let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
     let mut rows = vec![vec![
         crate::tgbot::send::build_copy_button(
-            "复制查询命令",
+            "复制查询",
             &lookup_command,
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
@@ -29,12 +29,12 @@ pub(super) fn build_transfer_progress_keyboard(
     if let Some(job_id) = job_id {
         rows.push(vec![
             crate::tgbot::send::build_copy_button(
-                "复制暂停命令",
+                "复制暂停",
                 &build_job_command("p", job_id, CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             crate::tgbot::send::build_copy_button(
-                "复制停止命令",
+                "复制停止",
                 &build_job_command("s", job_id, CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
@@ -54,19 +54,31 @@ pub(super) fn build_transfer_result_keyboard(
     let retry_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Short);
     let mut first_row = Vec::new();
     if let Some(result_link) = result_link {
-        first_row.push(crate::tgbot::send::build_url_button(
-            "打开结果",
-            result_link,
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ));
+        // 只有 TDLib 返回的 HTTP(S) 链接才放“打开结果”按钮；客户端 deeplink 不稳定，
+        // 放到 URL 按钮里会造成点击无反应。
+        if crate::tgbot::send::is_openable_url(result_link) {
+            first_row.push(crate::tgbot::send::build_url_button(
+                "打开结果",
+                result_link,
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ));
+        }
         first_row.push(crate::tgbot::send::build_copy_button(
-            "复制结果链接",
+            if crate::tgbot::send::is_openable_url(result_link) {
+                "复制链接"
+            } else {
+                "复制定位"
+            },
             result_link,
-            tdlib_rs::enums::ButtonStyle::Default,
+            if crate::tgbot::send::is_openable_url(result_link) {
+                tdlib_rs::enums::ButtonStyle::Default
+            } else {
+                tdlib_rs::enums::ButtonStyle::Primary
+            },
         ));
     }
     first_row.push(crate::tgbot::send::build_copy_button(
-        "复制查询命令",
+        "复制查询",
         &lookup_command,
         tdlib_rs::enums::ButtonStyle::Default,
     ));
@@ -80,7 +92,7 @@ pub(super) fn build_transfer_result_keyboard(
         first_row,
         vec![
             crate::tgbot::send::build_copy_button(
-                "复制重转命令",
+                "复制重转",
                 &retry_command,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),

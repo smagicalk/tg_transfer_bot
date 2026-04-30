@@ -16,17 +16,20 @@ pub(in crate::tgbot::transfer) async fn send_paused_message(
     client_id: i32,
 ) -> anyhow::Result<()> {
     crate::tgbot::send::ReplyPanel::markdown(format!(
-        "*{}*\n源链接：`{}`\n目标 chat：`{}`\njob_id：`{}`\n可手动恢复或停止该任务。",
-        title, source_link, target_chat_id, job_id
+        "*{}*\n状态：`paused`\njob：`#{}`\n目标：`{}`\n━━━━━━━━━━━━\n说明：可手动恢复或停止该任务。\n源：`{}`",
+        title,
+        job_id,
+        target_chat_id,
+        markdown_inline_code(source_link)
     ))
     .row(vec![
         crate::tgbot::send::build_copy_button(
-            "复制恢复命令",
+            "复制恢复",
             &build_job_command("r", job_id, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制停止命令",
+            "复制停止",
             &build_job_command("s", job_id, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -50,8 +53,11 @@ pub(in crate::tgbot::transfer) async fn send_cancelling_message(
     client_id: i32,
 ) -> anyhow::Result<()> {
     crate::tgbot::send::ReplyPanel::markdown(format!(
-        "*{}*\n源链接：`{}`\n目标 chat：`{}`\njob_id：`{}`\n当前调用会在安全点收尾。",
-        title, source_link, target_chat_id, job_id
+        "*{}*\n状态：`cancelling`\njob：`#{}`\n目标：`{}`\n━━━━━━━━━━━━\n说明：当前调用会在安全点收尾。\n源：`{}`",
+        title,
+        job_id,
+        target_chat_id,
+        markdown_inline_code(source_link)
     ))
     .row(vec![
         crate::tgbot::send::build_copy_button(
@@ -79,8 +85,11 @@ pub(in crate::tgbot::transfer) async fn send_cancelled_message(
     client_id: i32,
 ) -> anyhow::Result<()> {
     crate::tgbot::send::ReplyPanel::markdown(format!(
-        "*{}*\n源链接：`{}`\n目标 chat：`{}`\njob_id：`{}`\n文件引用已释放，后续由删除队列清理。",
-        title, source_link, target_chat_id, job_id
+        "*{}*\n状态：`cancelled`\njob：`#{}`\n目标：`{}`\n━━━━━━━━━━━━\n说明：文件引用已释放，后续由删除队列清理。\n源：`{}`",
+        title,
+        job_id,
+        target_chat_id,
+        markdown_inline_code(source_link)
     ))
     .row(vec![
         crate::tgbot::send::build_copy_button(
@@ -110,8 +119,11 @@ pub(in crate::tgbot::transfer) async fn send_running_message(
     let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
     let transfer_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Short);
     crate::tgbot::send::ReplyPanel::markdown(format!(
-        "*{}*\n源链接：`{}`\n目标 chat：`{}`\njob_id：`{}`\n建议：使用 `/d run` 查看后台进度。",
-        title, source_link, target_chat_id, job_id
+        "*{}*\n状态：`running`\njob：`#{}`\n目标：`{}`\n━━━━━━━━━━━━\n建议：使用 `/d run` 查看后台进度。\n源：`{}`",
+        title,
+        job_id,
+        target_chat_id,
+        markdown_inline_code(source_link)
     ))
     .row(vec![
         crate::tgbot::send::build_copy_button(
@@ -125,16 +137,21 @@ pub(in crate::tgbot::transfer) async fn send_running_message(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制查询命令",
+            "复制查询",
             &lookup_command,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ])
     .row(vec![crate::tgbot::send::build_copy_button(
-        "复制重转命令",
+        "复制重转",
         &transfer_command,
         tdlib_rs::enums::ButtonStyle::Default,
     )])
     .send(notify_chat_id, client_id)
     .await
+}
+
+/// 转义 Markdown 行内代码里的反引号，避免用户输入链接破坏卡片格式。
+fn markdown_inline_code(text: &str) -> String {
+    text.replace('`', "'")
 }

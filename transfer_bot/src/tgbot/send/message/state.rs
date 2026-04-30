@@ -1,0 +1,313 @@
+// TDLib 发送消息 ID 对齐。
+//
+// sendMessage 可能先返回临时 message_id，真正发送成功后再通过
+// updateMessageSendSucceeded 给出最终 message_id。进度面板必须使用最终 ID，
+// 否则 editMessageText 会报 `Message not found`。
+
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::Duration;
+
+use tokio::sync::oneshot;
+
+type SendKey = (i64, i64);
+type SendResult = Result<tdlib_rs::types::Message, String>;
+
+/// 最多缓存多少条“先收到成功 update，后注册等待者”的消息。
+const COMPLETED_CACHE_LIMIT: usize = 256;
+/// 等待普通文本消息发送成功的时间。超时后仍返回临时消息，避免命令入口卡死。
+const SEND_SUCCEEDED_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+static SEND_STATE: LazyLock<Mutex<SendState>> = LazyLock::new(|| Mutex::new(SendState::default()));
+
+#[derive(Default)]
+struct SendState {
+    /// 临时消息键 -> 最终发送成功的消息。
+    completed: HashMap<SendKey, tdlib_rs::types::Message>,
+    /// 临时消息键 -> 正在等待最终发送结果的调用方。
+    waiters: HashMap<SendKey, Vec<oneshot::Sender<SendResult>>>,
+}
+
+/// 等待 TDLib 把临时 message_id 替换成最终 message_id。
+///
+/// 如果消息没有 sending_state，说明已经是最终消息，直接返回。
+pub async fn wait_for_sent_message(
+    message: tdlib_rs::types::Message,
+) -> anyhow::Result<tdlib_rs::types::Message> {
+    if message.sending_state.is_none() {
+        return Ok(message);
+    }
+
+    let key = (message.chat_id, message.id);
+    let rx = {
+        let mut state = SEND_STATE
+            .lock()
+            .expect("send message state mutex poisoned");
+        if let Some(final_message) = state.completed.get(&key) {
+            return Ok(final_message.clone());
+        }
+
+        let (tx, rx) = oneshot::channel();
+        state.waiters.entry(key).or_default().push(tx);
+        rx
+    };
+
+    match tokio::time::timeout(SEND_SUCCEEDED_WAIT_TIMEOUT, rx).await {
+        Ok(Ok(Ok(final_message))) => Ok(final_message),
+        Ok(Ok(Err(error))) => {
+            anyhow::bail!("message send failed after initial response: {}", error)
+        }
+        Ok(Err(_closed)) => {
+            tracing::warn!(
+                chat_id = message.chat_id,
+                temporary_message_id = message.id,
+                "message send waiter dropped, use temporary id"
+            );
+            Ok(message)
+        }
+        Err(_elapsed) => {
+            prune_closed_waiters(key);
+            tracing::warn!(
+                chat_id = message.chat_id,
+                temporary_message_id = message.id,
+                "wait message send succeeded timeout, use temporary id"
+            );
+            Ok(message)
+        }
+    }
+}
+
+/// 根据临时 message_id 等待最终 message_id。
+///
+/// 编辑消息遇到 `Message not found` 时使用这个兜底：如果之前用的是临时 ID，
+/// 这里会等到 `updateMessageSendSucceeded` 后返回最终 ID，再让调用方重试编辑。
+pub async fn wait_for_sent_message_id(
+    chat_id: i64,
+    temporary_message_id: i64,
+    timeout: Duration,
+) -> Option<i64> {
+    let key = (chat_id, temporary_message_id);
+    let rx = {
+        let mut state = SEND_STATE
+            .lock()
+            .expect("send message state mutex poisoned");
+        if let Some(final_message) = state.completed.get(&key) {
+            return Some(final_message.id);
+        }
+
+        let (tx, rx) = oneshot::channel();
+        state.waiters.entry(key).or_default().push(tx);
+        rx
+    };
+
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(Ok(final_message))) => Some(final_message.id),
+        Err(_elapsed) => {
+            prune_closed_waiters(key);
+            None
+        }
+        _ => None,
+    }
+}
+
+/// 记录 TDLib 发送成功 update，并唤醒等待该临时 ID 的任务。
+pub fn observe_message_send_succeeded(update: tdlib_rs::types::UpdateMessageSendSucceeded) {
+    let key = (update.message.chat_id, update.old_message_id);
+    let waiters = {
+        let mut state = SEND_STATE
+            .lock()
+            .expect("send message state mutex poisoned");
+        // 即使当前已有等待者，也缓存最终 ID。等待者可能已经因为超时被丢弃，
+        // 后续编辑进度消息时仍需要通过临时 ID 找回最终 ID。
+        state.completed.insert(key, update.message.clone());
+        trim_completed_cache(&mut state);
+        state.waiters.remove(&key)
+    };
+
+    if let Some(waiters) = waiters {
+        for waiter in waiters {
+            let _ = waiter.send(Ok(update.message.clone()));
+        }
+    }
+}
+
+/// 记录 TDLib 发送失败 update，并唤醒等待该临时 ID 的任务。
+pub fn observe_message_send_failed(update: tdlib_rs::types::UpdateMessageSendFailed) {
+    let key = (update.message.chat_id, update.old_message_id);
+    let waiters = {
+        let mut state = SEND_STATE
+            .lock()
+            .expect("send message state mutex poisoned");
+        state.waiters.remove(&key)
+    };
+
+    if let Some(waiters) = waiters {
+        let error = format!(
+            "code={}, message={}",
+            update.error.code, update.error.message
+        );
+        for waiter in waiters {
+            let _ = waiter.send(Err(error.clone()));
+        }
+    }
+}
+
+/// 防止极端竞态下 completed 缓存无界增长。
+fn trim_completed_cache(state: &mut SendState) {
+    while state.completed.len() > COMPLETED_CACHE_LIMIT {
+        let Some(key) = state.completed.keys().next().copied() else {
+            return;
+        };
+        state.completed.remove(&key);
+    }
+}
+
+/// 清理已经超时或取消的等待者，避免没有后续 TDLib update 时内存表持续增长。
+fn prune_closed_waiters(key: SendKey) {
+    let mut state = SEND_STATE
+        .lock()
+        .expect("send message state mutex poisoned");
+    let Some(waiters) = state.waiters.get_mut(&key) else {
+        return;
+    };
+    waiters.retain(|waiter| !waiter.is_closed());
+    if waiters.is_empty() {
+        state.waiters.remove(&key);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    use super::*;
+
+    static NEXT_CHAT_ID: AtomicI64 = AtomicI64::new(-900_000);
+
+    /// 每个测试使用独立 chat，避免全局发送状态缓存互相影响。
+    fn next_chat_id() -> i64 {
+        NEXT_CHAT_ID.fetch_sub(1, Ordering::SeqCst)
+    }
+
+    /// 构造最小可用的文本消息，测试只关心 chat_id、message_id 和 sending_state。
+    fn test_message(
+        chat_id: i64,
+        message_id: i64,
+        sending_state: Option<tdlib_rs::enums::MessageSendingState>,
+    ) -> tdlib_rs::types::Message {
+        tdlib_rs::types::Message {
+            id: message_id,
+            sender_id: tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
+                user_id: 1,
+            }),
+            chat_id,
+            sending_state,
+            scheduling_state: None,
+            is_outgoing: true,
+            is_pinned: false,
+            is_from_offline: false,
+            can_be_saved: true,
+            has_timestamped_media: false,
+            is_channel_post: false,
+            is_paid_star_suggested_post: false,
+            is_paid_ton_suggested_post: false,
+            contains_unread_mention: false,
+            date: 0,
+            edit_date: 0,
+            forward_info: None,
+            import_info: None,
+            interaction_info: None,
+            unread_reactions: vec![],
+            fact_check: None,
+            suggested_post_info: None,
+            reply_to: None,
+            topic_id: None,
+            self_destruct_type: None,
+            self_destruct_in: 0.0,
+            auto_delete_in: 0.0,
+            via_bot_user_id: 0,
+            sender_business_bot_user_id: 0,
+            sender_boost_count: 0,
+            sender_tag: String::new(),
+            paid_message_star_count: 0,
+            author_signature: String::new(),
+            media_album_id: 0,
+            effect_id: 0,
+            restriction_info: None,
+            summary_language_code: String::new(),
+            content: tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
+                text: tdlib_rs::types::FormattedText {
+                    text: "test".to_owned(),
+                    entities: vec![],
+                },
+                link_preview: None,
+                link_preview_options: None,
+            }),
+            reply_markup: None,
+        }
+    }
+
+    /// 构造 TDLib 发送中状态，用来模拟 sendMessage 返回临时 message_id。
+    fn pending_state() -> Option<tdlib_rs::enums::MessageSendingState> {
+        Some(tdlib_rs::enums::MessageSendingState::Pending(
+            tdlib_rs::types::MessageSendingStatePending { sending_id: 1 },
+        ))
+    }
+
+    #[tokio::test]
+    async fn test_completed_message_cache_is_not_consumed_by_first_waiter() {
+        let chat_id = next_chat_id();
+        let temporary_id = -10;
+        let final_id = 20;
+        let final_message = test_message(chat_id, final_id, None);
+
+        observe_message_send_succeeded(tdlib_rs::types::UpdateMessageSendSucceeded {
+            message: final_message,
+            old_message_id: temporary_id,
+        });
+
+        let resolved = wait_for_sent_message(test_message(chat_id, temporary_id, pending_state()))
+            .await
+            .expect("cached final message should resolve");
+        assert_eq!(resolved.id, final_id);
+
+        let resolved_id =
+            wait_for_sent_message_id(chat_id, temporary_id, Duration::from_millis(1)).await;
+        assert_eq!(resolved_id, Some(final_id));
+    }
+
+    #[tokio::test]
+    async fn test_success_update_after_waiter_timeout_keeps_final_message_id() {
+        let chat_id = next_chat_id();
+        let temporary_id = -11;
+        let final_id = 21;
+
+        let timed_out =
+            wait_for_sent_message_id(chat_id, temporary_id, Duration::from_millis(1)).await;
+        assert_eq!(timed_out, None);
+
+        observe_message_send_succeeded(tdlib_rs::types::UpdateMessageSendSucceeded {
+            message: test_message(chat_id, final_id, None),
+            old_message_id: temporary_id,
+        });
+
+        let resolved_id =
+            wait_for_sent_message_id(chat_id, temporary_id, Duration::from_millis(1)).await;
+        assert_eq!(resolved_id, Some(final_id));
+    }
+
+    #[tokio::test]
+    async fn test_timed_out_waiter_is_pruned_from_state() {
+        let chat_id = next_chat_id();
+        let temporary_id = -12;
+
+        let timed_out =
+            wait_for_sent_message_id(chat_id, temporary_id, Duration::from_millis(1)).await;
+        assert_eq!(timed_out, None);
+
+        let state = SEND_STATE
+            .lock()
+            .expect("send message state mutex poisoned");
+        assert!(!state.waiters.contains_key(&(chat_id, temporary_id)));
+    }
+}

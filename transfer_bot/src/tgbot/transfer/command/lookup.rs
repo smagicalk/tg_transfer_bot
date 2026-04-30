@@ -42,21 +42,44 @@ pub async fn lookup_command(
             job_id = job.id,
             "lookup command hit success job"
         );
-        return send::ReplyPanel::markdown(format!(
-            "*已找到历史转存结果*\n源链接：`{}`\n目标 chat：`{}`\n结果消息：[打开转存消息]({})",
-            source_link, target_chat_id, link
-        ))
-        .row(vec![
-            send::build_url_button("打开结果", &link, tdlib_rs::enums::ButtonStyle::Primary),
-            send::build_copy_button("复制结果链接", &link, tdlib_rs::enums::ButtonStyle::Default),
-            send::build_copy_button(
-                "复制查询命令",
-                &lookup_command,
-                tdlib_rs::enums::ButtonStyle::Default,
+        let mut result_row = Vec::new();
+        if send::is_openable_url(&link) {
+            result_row.push(send::build_url_button(
+                "打开结果",
+                &link,
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ));
+        }
+        result_row.push(send::build_copy_button(
+            if send::is_openable_url(&link) {
+                "复制链接"
+            } else {
+                "复制定位"
+            },
+            &link,
+            if send::is_openable_url(&link) {
+                tdlib_rs::enums::ButtonStyle::Default
+            } else {
+                tdlib_rs::enums::ButtonStyle::Primary
+            },
+        ));
+        result_row.push(send::build_copy_button(
+            "复制查询",
+            &lookup_command,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ));
+
+        return send::ReplyPanel::markdown(
+            crate::tgbot::transfer::outcome::format_result_card_text(
+                "已找到历史转存结果",
+                &source_link,
+                target_chat_id,
+                &link,
             ),
-        ])
+        )
+        .row(result_row)
         .row(vec![send::build_copy_button(
-            "复制重转命令",
+            "复制重转",
             &transfer_command,
             tdlib_rs::enums::ButtonStyle::Default,
         )])
@@ -74,8 +97,11 @@ pub async fn lookup_command(
             "lookup command hit active job"
         );
         return send::ReplyPanel::markdown(format!(
-            "*找到进行中的任务*\n源链接：`{}`\n目标 chat：`{}`\njob_id：`{}`\n建议：使用 `/d run` 或 `/d all` 查看进度。",
-            source_link, target_chat_id, job.id
+            "*找到进行中的任务*\n状态：`{}`\njob：`#{}`\n目标：`{}`\n━━━━━━━━━━━━\n建议：使用 `/d run` 或 `/d all` 查看进度。\n源：`{}`",
+            job.status,
+            job.id,
+            target_chat_id,
+            markdown_inline_code(&source_link)
         ))
         .row(vec![
             send::build_copy_button(
@@ -89,13 +115,13 @@ pub async fn lookup_command(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "复制查询命令",
+                "复制查询",
                 &lookup_command,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
         .row(vec![send::build_copy_button(
-            "复制重转命令",
+            "复制重转",
             &transfer_command,
             tdlib_rs::enums::ButtonStyle::Default,
         )])
@@ -105,17 +131,18 @@ pub async fn lookup_command(
 
     tracing::info!(request_chat_id, target_chat_id, "lookup command missed");
     send::ReplyPanel::markdown(format!(
-        "*未找到历史转存结果*\n源链接：`{}`\n目标 chat：`{}`\n可直接执行下面的转存命令重新发起任务。",
-        source_link, target_chat_id
+        "*未找到历史转存结果*\n状态：`miss`\n目标：`{}`\n━━━━━━━━━━━━\n说明：可直接复制转存命令重新发起任务。\n源：`{}`",
+        target_chat_id,
+        markdown_inline_code(&source_link)
     ))
     .row(vec![
         send::build_copy_button(
-            "复制转存命令",
+            "复制转存",
             &transfer_command,
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         send::build_copy_button(
-            "复制查询命令",
+            "复制查询",
             &lookup_command,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -127,4 +154,9 @@ pub async fn lookup_command(
     ])
     .send(request_chat_id, client_id)
     .await
+}
+
+/// 转义 Markdown 行内代码里的反引号，避免用户输入链接破坏卡片格式。
+fn markdown_inline_code(text: &str) -> String {
+    text.replace('`', "'")
 }

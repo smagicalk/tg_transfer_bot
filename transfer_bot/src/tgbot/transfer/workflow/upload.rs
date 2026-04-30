@@ -26,6 +26,7 @@ pub(super) async fn upload_prepared(
                 .await
                 .map_err(|e| anyhow::Error::new(TdError(e)))?;
         let tdlib_rs::enums::Message::Message(message) = sent;
+        let message = crate::tgbot::send::wait_for_sent_message(message).await?;
         return Ok(UploadResult {
             result_message_id: message.id,
             is_album: false,
@@ -56,6 +57,7 @@ pub(super) async fn upload_prepared(
         if first_message_id.is_none()
             && let Some(Some(msg)) = messages.messages.first()
         {
+            let msg = crate::tgbot::send::wait_for_sent_message(msg.clone()).await?;
             first_message_id = Some(msg.id);
         }
     }
@@ -91,34 +93,25 @@ pub(super) async fn build_result_message_link(
             Ok(link.link)
         }
         Err(err) => {
-            // 上传已经成功时，链接生成失败不能反向把任务判成失败；这里保留可定位消息的兜底链接。
+            // 上传已经成功时，链接生成失败不能反向把任务判成失败。
+            // 普通 chat/basic group 没有稳定可点击消息链接，因此只保存可复制的定位信息。
             tracing::warn!(
-                "get_message_link failed, use fallback link, chat_id={}, message_id={}, error={:?}",
+                "get_message_link failed, use result locator, chat_id={}, message_id={}, error={:?}",
                 chat_id,
                 message_id,
                 err
             );
-            Ok(fallback_result_message_link(chat_id, message_id))
+            Ok(fallback_result_message_locator(chat_id, message_id))
         }
     }
 }
 
-/// 构造结果消息的兜底链接。
+/// 构造结果消息的兜底定位。
 ///
-/// `-100...` 形式的群/频道使用 t.me/c 链接；其他 chat 使用 Telegram 客户端 deeplink，
-/// 保证上传成功后数据库至少有一个可定位目标消息的值。
-pub(super) fn fallback_result_message_link(chat_id: i64, message_id: i64) -> String {
-    const CHANNEL_CHAT_ID_PREFIX: i64 = 1_000_000_000_000;
-    let abs_chat_id = chat_id.saturating_abs();
-    if chat_id < 0 && abs_chat_id > CHANNEL_CHAT_ID_PREFIX {
-        let internal_id = abs_chat_id - CHANNEL_CHAT_ID_PREFIX;
-        return format!("https://t.me/c/{}/{}", internal_id, message_id);
-    }
-
-    format!(
-        "tg://openmessage?chat_id={}&message_id={}",
-        chat_id, message_id
-    )
+/// 注意：TDLib 的 `message_id` 是 TDLib 内部消息 ID，不能随意拼成 t.me 链接。
+/// 可打开链接必须以 `getMessageLink` 的返回值为准；失败时这里只保存排查用定位。
+pub(super) fn fallback_result_message_locator(chat_id: i64, message_id: i64) -> String {
+    format!("chat_id={} message_id={}", chat_id, message_id)
 }
 
 /// 校验多条消息是否可以按 album 发送。

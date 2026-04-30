@@ -6,6 +6,8 @@ use super::keyboard::build_downloads_page_command;
 use super::types::DownloadsArgs;
 use crate::tgbot::transfer::store;
 
+const CARD_DIVIDER: &str = "━━━━━━━━━━━━";
+
 /// 将任务快照渲染成便于 Telegram 阅读的文本。
 pub(super) fn format_downloads_text(
     snapshots: &[store::JobProgressSnapshot],
@@ -15,11 +17,12 @@ pub(super) fn format_downloads_text(
     let total_pages = compute_total_pages(total, args.limit);
     if snapshots.is_empty() {
         return format!(
-            "*下载列表为空* `[{}]`\n页码：`{}/{}`  每页：`{}`\n当前命令：{}\n短命令优先，长命令也可用。",
+            "*下载列表为空*\n筛选：`{}`\n页码：`{}/{}`  每页：`{}`\n{}\n命令：{}\n说明：可切换筛选或稍后刷新。",
             args.filter.label(),
             args.page,
             total_pages,
             args.limit,
+            CARD_DIVIDER,
             short_and_long(
                 build_downloads_page_command(
                     args.filter,
@@ -39,15 +42,16 @@ pub(super) fn format_downloads_text(
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "*下载列表* `[{}]`\n页码：`{}/{}`  每页：`{}`  总数：`{}`",
+        "*下载列表*\n筛选：`{}`\n页码：`{}/{}`  每页：`{}`  总数：`{}`",
         args.filter.label(),
         args.page,
         total_pages,
         args.limit,
         total
     ));
+    lines.push(CARD_DIVIDER.to_owned());
     lines.push(format!(
-        "当前命令：{}",
+        "命令：{}",
         short_and_long(
             build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
             build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Long),
@@ -55,6 +59,7 @@ pub(super) fn format_downloads_text(
     ));
 
     for snapshot in snapshots {
+        lines.push(CARD_DIVIDER.to_owned());
         let total = snapshot.job.total_items.max(0);
         let finished = snapshot.success_count + snapshot.failed_count + snapshot.cancelled_count;
         let progress = if total <= 0 {
@@ -64,28 +69,29 @@ pub(super) fn format_downloads_text(
         };
 
         lines.push(format!(
-            "*#{}* `[{}]` 进度 `{}/{} ({}%)`",
+            "*任务 #{}*\n状态：`{}`\n进度：`{}/{} ({}%)`",
             snapshot.job.id, snapshot.job.status, finished, total, progress
         ));
         lines.push(format!(
-            "等待 `{}` | 下载中 `{}` | 上传中 `{}` | 已就绪 `{}` | 成功 `{}` | 失败 `{}` | 已停 `{}`",
+            "阶段：等待 `{}` | 下载 `{}` | 就绪 `{}` | 上传 `{}`",
             snapshot.pending_count,
             snapshot.preparing_count,
-            snapshot.uploading_count,
             snapshot.prepared_count,
-            snapshot.success_count,
-            snapshot.failed_count,
-            snapshot.cancelled_count
+            snapshot.uploading_count,
+        ));
+        lines.push(format!(
+            "结果：成功 `{}` | 失败 `{}` | 已停 `{}`",
+            snapshot.success_count, snapshot.failed_count, snapshot.cancelled_count
         ));
 
         if snapshot.active_download_files > 0 {
-            lines.push(format!("真实下载 {}", format_live_download(snapshot)));
+            lines.push(format!("真实下载：{}", format_live_download(snapshot)));
         }
 
         lines.push(format!(
-            "更新 `{}` | 目标 `{}`",
-            snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
-            snapshot.job.target_chat_id
+            "目标：`{}`\n更新：`{}`",
+            snapshot.job.target_chat_id,
+            snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S")
         ));
     }
 

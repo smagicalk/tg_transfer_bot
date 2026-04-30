@@ -29,11 +29,12 @@ pub(in crate::tgbot::send::message) async fn parse_markdown_text(
     text: String,
     client_id: i32,
 ) -> anyhow::Result<tdlib_rs::types::FormattedText> {
-    let parsed = tdlib_rs::functions::parse_markdown(
-        tdlib_rs::types::FormattedText {
-            text,
-            entities: vec![],
-        },
+    let parsed = tdlib_rs::functions::parse_text_entities(
+        text,
+        tdlib_rs::enums::TextParseMode::Markdown(tdlib_rs::types::TextParseModeMarkdown {
+            // 现有文案使用 Bot API Markdown v1 风格：`*bold*`、`code`、`[text](url)`。
+            version: 1,
+        }),
         client_id,
     )
     .await

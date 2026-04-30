@@ -81,6 +81,16 @@ pub async fn handle_update(
         return Ok(());
     }
 
+    // 发送成功/失败更新：用于把 sendMessage 返回的临时 message_id 对齐到最终 message_id。
+    if let Update::MessageSendSucceeded(update_send_succeeded) = update {
+        crate::tgbot::send::observe_message_send_succeeded(update_send_succeeded);
+        return Ok(());
+    }
+    if let Update::MessageSendFailed(update_send_failed) = update {
+        crate::tgbot::send::observe_message_send_failed(update_send_failed);
+        return Ok(());
+    }
+
     // 新消息更新：执行命令分发。
     if let Update::NewMessage(update_new_message) = update {
         let message = update_new_message.message;
@@ -115,7 +125,7 @@ pub async fn handle_update(
             if text.is_empty() {
                 if let Some(client_id) = client_id {
                     crate::tgbot::send::send_text_message(
-                        "not input".to_owned(),
+                        "未收到文本内容。".to_owned(),
                         chat_id,
                         client_id,
                     )
@@ -136,12 +146,10 @@ pub async fn handle_update(
                     "admin command received"
                 );
 
-                match command {
+                let command_result = match command {
                     // /help 命令入口。
                     // 返回机器人当前支持的命令说明。
-                    "/help" | "/h" => {
-                        tgbot::transfer::help_command(text, chat_id, client_id).await?;
-                    }
+                    "/help" | "/h" => tgbot::transfer::help_command(text, chat_id, client_id).await,
                     // /transfer 命令入口。
                     "/transfer" | "/t" => {
                         // request_message_id 用于请求级幂等（防止同一条指令重复建任务）。
@@ -152,29 +160,27 @@ pub async fn handle_update(
                             message.id,
                             client_id,
                         )
-                        .await?;
+                        .await
                     }
                     // /lookup 命令入口。
                     // 按源链接查找历史转存结果。
                     "/lookup" | "/lk" => {
                         tgbot::transfer::lookup_command(text, config.clone(), chat_id, client_id)
-                            .await?;
+                            .await
                     }
                     // /config 命令入口。
                     // 仅开放运行时安全可调的配置项。
                     "/config" | "/cfg" => {
-                        tgbot::transfer::config_command(text, chat_id, client_id).await?;
+                        tgbot::transfer::config_command(text, chat_id, client_id).await
                     }
                     // /downloads 命令入口。
                     // 展示当前聊天最近的转存任务进度列表。
                     "/downloads" | "/d" => {
-                        tgbot::transfer::downloads_command(text, chat_id, client_id).await?;
+                        tgbot::transfer::downloads_command(text, chat_id, client_id).await
                     }
                     // /job 命令入口。
                     // 手动暂停、恢复、停止指定转存任务。
-                    "/job" | "/j" => {
-                        tgbot::transfer::job_command(text, chat_id, client_id).await?;
-                    }
+                    "/job" | "/j" => tgbot::transfer::job_command(text, chat_id, client_id).await,
                     _ => {
                         tracing::warn!(
                             command,
@@ -183,7 +189,20 @@ pub async fn handle_update(
                             message_id = message.id,
                             "unknown admin command"
                         );
+                        send_unknown_command_message(command, chat_id, client_id).await
                     }
+                };
+
+                if let Err(err) = command_result {
+                    tracing::warn!(
+                        command,
+                        chat_id,
+                        sender_id,
+                        message_id = message.id,
+                        error = %err,
+                        "admin command failed"
+                    );
+                    send_command_error_message(command, &err, chat_id, client_id).await?;
                 }
             }
         }
@@ -229,4 +248,59 @@ pub async fn handle_update(
     }
 
     Ok(())
+}
+
+/// 回复未知命令，避免用户输入错误时只在日志里可见。
+async fn send_unknown_command_message(
+    command: &str,
+    chat_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    crate::tgbot::send::ReplyPanel::markdown(format!(
+        "*未知命令*\n命令：`{}`\n━━━━━━━━━━━━\n说明：使用 `/h` 查看可用命令。",
+        markdown_inline_code(command)
+    ))
+    .row(vec![crate::tgbot::send::build_copy_button(
+        "复制 /h",
+        "/h",
+        tdlib_rs::enums::ButtonStyle::Primary,
+    )])
+    .send(chat_id, client_id)
+    .await
+}
+
+/// 回复命令执行错误。
+///
+/// 命令处理失败大多是参数错误或当前任务状态不允许操作；这里给用户明确反馈，
+/// 同时保留可复制错误详情，避免问题只出现在日志中。
+async fn send_command_error_message(
+    command: &str,
+    err: &anyhow::Error,
+    chat_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    crate::tgbot::send::ReplyPanel::markdown(format!(
+        "*命令执行失败*\n命令：`{}`\n━━━━━━━━━━━━\n错误：`{}`\n说明：可复制 `/h` 查看命令格式。",
+        markdown_inline_code(command),
+        markdown_inline_code(&err.to_string())
+    ))
+    .row(vec![
+        crate::tgbot::send::build_copy_button(
+            "复制 /h",
+            "/h",
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        crate::tgbot::send::build_copy_button(
+            "复制错误",
+            &format!("{:#}", err),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ])
+    .send(chat_id, client_id)
+    .await
+}
+
+/// 转义 Markdown 行内代码里的反引号，避免用户输入破坏回复格式。
+fn markdown_inline_code(text: &str) -> String {
+    text.replace('`', "'")
 }

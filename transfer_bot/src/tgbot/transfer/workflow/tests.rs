@@ -6,7 +6,7 @@ use super::super::store;
 use super::TransferOutcome;
 use super::control::apply_job_control;
 use super::guard::{acquire_job_guard, acquire_source_target_create_guard};
-use super::upload::{fallback_result_message_link, validate_album_kinds};
+use super::upload::{fallback_result_message_locator, validate_album_kinds};
 use crate::db;
 use migration::MigratorTrait;
 use rand::RngExt;
@@ -120,18 +120,11 @@ fn test_validate_album_kinds_rejects_voice_in_album() {
     assert!(rs.is_err());
 }
 
-// 私有超级群/频道使用 t.me/c 兜底链接，避免 get_message_link 失败后丢失结果入口。
+// 链接生成失败时只保留定位信息，不伪造可能不可点击的 tg:// 或 t.me/c 链接。
 #[test]
-fn test_fallback_result_message_link_for_channel_chat() {
-    let link = fallback_result_message_link(-1001234567890, 88);
-    assert_eq!(link, "https://t.me/c/1234567890/88");
-}
-
-// 普通 chat 无法构造 t.me/c 时，退回 Telegram 客户端 deeplink。
-#[test]
-fn test_fallback_result_message_link_for_regular_chat() {
-    let link = fallback_result_message_link(12345, 88);
-    assert_eq!(link, "tg://openmessage?chat_id=12345&message_id=88");
+fn test_fallback_result_message_locator() {
+    let locator = fallback_result_message_locator(-5106953357, 769654784);
+    assert_eq!(locator, "chat_id=-5106953357 message_id=769654784");
 }
 
 // 同 source_link + target_chat_id 的创建锁应阻止并发穿透查重窗口。

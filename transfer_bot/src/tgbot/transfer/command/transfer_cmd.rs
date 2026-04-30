@@ -43,8 +43,9 @@ pub async fn transfer_command(
         lookup_command(&plan.source_link, plan.target_chat_id, CommandStyle::Short);
     let progress_message = send::send_markdown_message_with_buttons_returning(
         format!(
-            "*已接收转存请求*\n源链接：`{}`\n目标 chat：`{}`\n状态：后台处理中，可稍后查看运行列表。",
-            plan.source_link, plan.target_chat_id
+            "*已接收转存请求*\n状态：`queued`\n目标：`{}`\n━━━━━━━━━━━━\n说明：后台会自动下载并上传，进度会在本消息刷新。\n源：`{}`",
+            plan.target_chat_id,
+            markdown_inline_code(&plan.source_link)
         ),
         request_chat_id,
         vec![vec![
@@ -54,7 +55,7 @@ pub async fn transfer_command(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "复制查询命令",
+                "复制查询",
                 &lookup_command,
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
@@ -70,4 +71,9 @@ pub async fn transfer_command(
     // 后台任务会持续编辑这条消息，把它变成转存进度面板。
     super::super::spawn_transfer_job(plan, request_chat_id, Some(progress_message.id), client_id);
     Ok(())
+}
+
+/// 转义 Markdown 行内代码里的反引号，避免用户输入链接破坏卡片格式。
+fn markdown_inline_code(text: &str) -> String {
+    text.replace('`', "'")
 }

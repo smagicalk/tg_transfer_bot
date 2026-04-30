@@ -33,3 +33,44 @@ fn test_build_transfer_result_keyboard_uses_result_state_filter() {
     assert_eq!(success_last.text, "复制 /d done");
     assert_eq!(fail_last.text, "复制 /d fail");
 }
+
+// 非 HTTP(S) 定位信息不能生成“打开结果”按钮，否则客户端点击可能无反应。
+#[test]
+fn test_build_transfer_result_keyboard_uses_copy_for_locator() {
+    let keyboard = build_transfer_result_keyboard(
+        "https://t.me/c/1/2",
+        -5106953357,
+        Some("chat_id=-5106953357 message_id=769654784"),
+    );
+
+    let first = keyboard
+        .rows
+        .first()
+        .and_then(|row| row.first())
+        .expect("keyboard must have first button");
+
+    assert_eq!(first.text, "复制定位");
+    assert!(matches!(
+        first.r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+    ));
+}
+
+// HTTP(S) 结果链接保留“打开结果”按钮，由 Telegram 客户端负责跳转。
+#[test]
+fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
+    let keyboard =
+        build_transfer_result_keyboard("https://t.me/c/1/2", -100, Some("https://t.me/c/3/4"));
+
+    let first = keyboard
+        .rows
+        .first()
+        .and_then(|row| row.first())
+        .expect("keyboard must have first button");
+
+    assert_eq!(first.text, "打开结果");
+    assert!(matches!(
+        first.r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Url(_)
+    ));
+}
