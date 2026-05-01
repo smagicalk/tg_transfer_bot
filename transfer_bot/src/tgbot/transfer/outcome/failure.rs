@@ -23,17 +23,17 @@ pub(in crate::tgbot::transfer) async fn send_failure_message(
     ))
     .row(vec![
         crate::tgbot::send::build_copy_button(
-            "复制重转",
+            "复制重新转存",
             &retry_command,
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制查询",
+            "复制查询命令",
             &lookup_command,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制 /d fail",
+            "复制失败列表",
             &build_downloads_command(Some("fail"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),

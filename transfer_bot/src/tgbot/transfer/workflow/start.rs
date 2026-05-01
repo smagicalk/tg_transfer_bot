@@ -10,6 +10,7 @@ use super::super::{spider, store};
 use super::TransferOutcome;
 use super::control::apply_job_control;
 use super::guard::{JobGuard, acquire_job_guard, acquire_source_target_create_guard};
+use super::upload::refresh_stored_result_link;
 
 /// 转存入口完成创建阶段后的下一步动作。
 pub(super) enum TransferStart {
@@ -39,14 +40,20 @@ pub(super) async fn build_transfer_start(
     if let Some(old) =
         store::find_success_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
     {
+        let link = refresh_stored_result_link(
+            old.id,
+            old.target_chat_id,
+            old.result_message_id,
+            &old.result_message_link,
+            client_id,
+        )
+        .await?;
         tracing::info!(
             job_id = old.id,
             target_chat_id = plan.target_chat_id,
             "reuse successful transfer result"
         );
-        return Ok(TransferStart::Outcome(TransferOutcome::Reused {
-            link: old.result_message_link,
-        }));
+        return Ok(TransferStart::Outcome(TransferOutcome::Reused { link }));
     }
 
     // 业务查重第二层：
@@ -79,7 +86,7 @@ pub(super) async fn build_transfer_start(
             request_message_id = plan.request_message_id,
             "matched idempotent transfer request"
         );
-        return request_job_start(old).await;
+        return request_job_start(old, client_id).await;
     }
 
     create_new_job_start(plan, client_id).await
@@ -106,7 +113,10 @@ fn active_job_start(old: db::transfer_job::Model, plan: &TransferPlan) -> Transf
 }
 
 /// 将同一请求已存在的任务转换为下一步动作。
-async fn request_job_start(old: db::transfer_job::Model) -> anyhow::Result<TransferStart> {
+async fn request_job_start(
+    old: db::transfer_job::Model,
+    client_id: i32,
+) -> anyhow::Result<TransferStart> {
     // 同一条命令重复投递时按已有任务状态返回确定结果：
     // - pending/running：恢复执行，避免上次后台任务已丢失。
     // - paused/cancelling/cancelled：返回状态，不重新创建。
@@ -132,7 +142,15 @@ async fn request_job_start(old: db::transfer_job::Model) -> anyhow::Result<Trans
         Ok(TransferStart::Outcome(TransferOutcome::Cancelled {
             job_id: old.id,
         }))
-    } else if let Some(link) = old.result_message_link {
+    } else if let Some(link) = old.result_message_link.as_deref() {
+        let link = refresh_stored_result_link(
+            old.id,
+            old.target_chat_id,
+            old.result_message_id,
+            link,
+            client_id,
+        )
+        .await?;
         Ok(TransferStart::Outcome(TransferOutcome::Reused { link }))
     } else {
         anyhow::bail!("duplicated request without reusable result link");

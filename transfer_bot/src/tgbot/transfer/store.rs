@@ -26,7 +26,8 @@ pub(super) use job::finish_uploaded_job;
 pub(super) use job::{
     cancel_job_now, create_job, find_job_by_request, finish_job, finish_job_with_item_statuses,
     finish_uploaded_job_with_item_statuses, get_job_status, list_cancelling_jobs,
-    list_recoverable_jobs, mark_job_running, pause_job, request_cancel_job, wake_job,
+    list_recoverable_jobs, mark_job_running, pause_job, request_cancel_job,
+    update_result_message_link, wake_job,
 };
 pub(super) use progress::{
     find_active_job_by_source_target, find_active_job_id_by_source_target,
@@ -88,11 +89,15 @@ const FILE_CACHE_DELETING_RETRY_DELAY_MS: u64 = 50;
 
 /// 已成功转存任务的最小查询结果。
 ///
-/// lookup 和启动查重只需要任务 ID 与结果链接，不需要读取 transfer_job 全字段。
+/// lookup 和启动查重只需要任务 ID、目标 chat、结果消息 ID 与结果链接，不需要读取 transfer_job 全字段。
 #[derive(Debug, Clone)]
 pub(super) struct SuccessfulJobResult {
     /// 已成功任务 ID，用于日志定位。
     pub id: i64,
+    /// 目标转存 chat_id，用于历史链接失效时重新生成入口链接。
+    pub target_chat_id: i64,
+    /// 上传结果入口消息 ID；旧数据可能为空，无法刷新时继续使用已存链接。
+    pub result_message_id: Option<i64>,
     /// 上传结果入口链接。
     pub result_message_link: String,
 }

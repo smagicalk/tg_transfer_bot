@@ -69,16 +69,20 @@ pub(super) fn format_transfer_final_text(
     result_link: &str,
 ) -> String {
     let result_line = if crate::tgbot::send::is_openable_url(result_link) {
-        "结果：`可打开，见下方按钮`".to_owned()
+        format!(
+            "*结果*\n[打开转存消息]({})\n链接：`{}`",
+            result_link,
+            markdown_inline_code(result_link)
+        )
     } else {
         format!(
-            "结果：`已上传，但当前 chat 无可跳转公开链接`\n定位：`{}`",
+            "*结果*\n状态：`已上传，但当前 chat 无可跳转消息链接`\n定位：`{}`",
             markdown_inline_code(result_link)
         )
     };
 
     format!(
-        "*{}*\n状态：`success`\n目标：`{}`\n{}\n{}\n源：`{}`",
+        "*{}*\n状态：`success`  目标：`{}`\n{}\n{}\n\n*来源*\n`{}`",
         title,
         target_chat_id,
         CARD_DIVIDER,

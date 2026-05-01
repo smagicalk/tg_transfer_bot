@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::config::BotConfig;
 use crate::tgbot::send;
+use crate::tgbot::transfer::refresh_stored_result_link;
 use crate::tgbot::transfer::store;
 
 use super::common::{
@@ -35,7 +36,14 @@ pub async fn lookup_command(
     if let Some(job) =
         store::find_success_job_by_source_target(&source_link, target_chat_id).await?
     {
-        let link = job.result_message_link;
+        let link = refresh_stored_result_link(
+            job.id,
+            job.target_chat_id,
+            job.result_message_id,
+            &job.result_message_link,
+            client_id,
+        )
+        .await?;
         tracing::info!(
             request_chat_id,
             target_chat_id,
@@ -45,16 +53,16 @@ pub async fn lookup_command(
         let mut result_row = Vec::new();
         if send::is_openable_url(&link) {
             result_row.push(send::build_url_button(
-                "打开结果",
+                "打开转存消息",
                 &link,
                 tdlib_rs::enums::ButtonStyle::Primary,
             ));
         }
         result_row.push(send::build_copy_button(
             if send::is_openable_url(&link) {
-                "复制链接"
+                "复制结果链接"
             } else {
-                "复制定位"
+                "复制结果定位"
             },
             &link,
             if send::is_openable_url(&link) {
@@ -64,7 +72,7 @@ pub async fn lookup_command(
             },
         ));
         result_row.push(send::build_copy_button(
-            "复制查询",
+            "复制查询命令",
             &lookup_command,
             tdlib_rs::enums::ButtonStyle::Default,
         ));
@@ -79,7 +87,7 @@ pub async fn lookup_command(
         )
         .row(result_row)
         .row(vec![send::build_copy_button(
-            "复制重转",
+            "复制重新转存",
             &transfer_command,
             tdlib_rs::enums::ButtonStyle::Default,
         )])
@@ -97,7 +105,7 @@ pub async fn lookup_command(
             "lookup command hit active job"
         );
         return send::ReplyPanel::markdown(format!(
-            "*找到进行中的任务*\n状态：`{}`\njob：`#{}`\n目标：`{}`\n━━━━━━━━━━━━\n建议：使用 `/d run` 或 `/d all` 查看进度。\n源：`{}`",
+            "*找到进行中的转存任务*\n状态：`{}`  job：`#{}`\n目标：`{}`\n━━━━━━━━━━━━\n*下一步*\n使用 `/d run` 查看运行列表，或复制 job_id 手动暂停/停止。\n\n*来源*\n`{}`",
             job.status,
             job.id,
             target_chat_id,
@@ -110,18 +118,18 @@ pub async fn lookup_command(
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             send::build_copy_button(
-                "复制 /d run",
+                "复制运行列表",
                 "/d run",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "复制查询",
+                "复制查询命令",
                 &lookup_command,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
         .row(vec![send::build_copy_button(
-            "复制重转",
+            "复制重新转存",
             &transfer_command,
             tdlib_rs::enums::ButtonStyle::Default,
         )])
@@ -131,18 +139,18 @@ pub async fn lookup_command(
 
     tracing::info!(request_chat_id, target_chat_id, "lookup command missed");
     send::ReplyPanel::markdown(format!(
-        "*未找到历史转存结果*\n状态：`miss`\n目标：`{}`\n━━━━━━━━━━━━\n说明：可直接复制转存命令重新发起任务。\n源：`{}`",
+        "*未找到转存结果*\n状态：`miss`  目标：`{}`\n━━━━━━━━━━━━\n*下一步*\n复制转存命令后重新发起任务。\n\n*来源*\n`{}`",
         target_chat_id,
         markdown_inline_code(&source_link)
     ))
     .row(vec![
         send::build_copy_button(
-            "复制转存",
+            "复制转存命令",
             &transfer_command,
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         send::build_copy_button(
-            "复制查询",
+            "复制查询命令",
             &lookup_command,
             tdlib_rs::enums::ButtonStyle::Default,
         ),

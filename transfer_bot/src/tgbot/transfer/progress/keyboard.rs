@@ -15,12 +15,12 @@ pub(super) fn build_transfer_progress_keyboard(
     let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
     let mut rows = vec![vec![
         crate::tgbot::send::build_copy_button(
-            "复制查询",
+            "复制查询命令",
             &lookup_command,
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制 /d run",
+            "复制运行列表",
             &build_downloads_command(Some("run"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -54,20 +54,20 @@ pub(super) fn build_transfer_result_keyboard(
     let retry_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Short);
     let mut first_row = Vec::new();
     if let Some(result_link) = result_link {
-        // 只有 TDLib 返回的 HTTP(S) 链接才放“打开结果”按钮；客户端 deeplink 不稳定，
+        // 只有 TDLib 返回或本模块兜底生成的 HTTP(S) 链接才放“打开转存消息”按钮；客户端 deeplink 不稳定，
         // 放到 URL 按钮里会造成点击无反应。
         if crate::tgbot::send::is_openable_url(result_link) {
             first_row.push(crate::tgbot::send::build_url_button(
-                "打开结果",
+                "打开转存消息",
                 result_link,
                 tdlib_rs::enums::ButtonStyle::Primary,
             ));
         }
         first_row.push(crate::tgbot::send::build_copy_button(
             if crate::tgbot::send::is_openable_url(result_link) {
-                "复制链接"
+                "复制结果链接"
             } else {
-                "复制定位"
+                "复制结果定位"
             },
             result_link,
             if crate::tgbot::send::is_openable_url(result_link) {
@@ -78,7 +78,7 @@ pub(super) fn build_transfer_result_keyboard(
         ));
     }
     first_row.push(crate::tgbot::send::build_copy_button(
-        "复制查询",
+        "复制查询命令",
         &lookup_command,
         tdlib_rs::enums::ButtonStyle::Default,
     ));
@@ -92,15 +92,15 @@ pub(super) fn build_transfer_result_keyboard(
         first_row,
         vec![
             crate::tgbot::send::build_copy_button(
-                "复制重转",
+                "复制重新转存",
                 &retry_command,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             crate::tgbot::send::build_copy_button(
                 if result_link.is_some() {
-                    "复制 /d done"
+                    "复制完成列表"
                 } else {
-                    "复制 /d fail"
+                    "复制失败列表"
                 },
                 &build_downloads_command(Some(list_filter), None, None, CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,

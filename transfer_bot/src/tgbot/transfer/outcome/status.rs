@@ -34,7 +34,7 @@ pub(in crate::tgbot::transfer) async fn send_paused_message(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制 /d pause",
+            "复制暂停列表",
             &build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -66,7 +66,7 @@ pub(in crate::tgbot::transfer) async fn send_cancelling_message(
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制 /d cancel",
+            "复制停止列表",
             &build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -98,7 +98,7 @@ pub(in crate::tgbot::transfer) async fn send_cancelled_message(
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制 /d cancel",
+            "复制停止列表",
             &build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -132,18 +132,18 @@ pub(in crate::tgbot::transfer) async fn send_running_message(
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制 /d run",
+            "复制运行列表",
             &build_downloads_command(Some("run"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制查询",
+            "复制查询命令",
             &lookup_command,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ])
     .row(vec![crate::tgbot::send::build_copy_button(
-        "复制重转",
+        "复制重新转存",
         &transfer_command,
         tdlib_rs::enums::ButtonStyle::Default,
     )])

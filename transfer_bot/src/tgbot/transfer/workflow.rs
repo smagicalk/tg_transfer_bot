@@ -21,6 +21,7 @@ pub(super) use guard::is_job_running_in_process;
 pub(super) use recovery::{recover_unfinished_jobs, resume_one_job};
 use runner::run_job_inner;
 use start::{TransferStart, build_transfer_start};
+pub(in crate::tgbot::transfer) use upload::refresh_stored_result_link;
 
 /// 转存命令的执行结果。
 #[derive(Debug, Clone)]

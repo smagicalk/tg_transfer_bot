@@ -8,6 +8,59 @@
 请先阅读 AGENTS.md、README.md 和 docs/SESSION_HANDOFF.md，然后继续 tg_transfer_bot 项目。
 ```
 
+## 最新会话状态（2026-04-30）
+
+当前分支：
+
+```text
+dev
+```
+
+最近完成并已提交：
+
+```text
+63bb6ad 优化 Telegram 回复体验 / Improve Telegram reply UX
+```
+
+该提交包含：
+
+- 将 `/transfer`、`/lookup`、`/downloads`、`/help`、`/config`、`/job`、结果卡片和错误卡片统一成卡片式回复。
+- 修复 Markdown 解析，改为 TDLib `parseTextEntities` Markdown v1，避免 `*加粗*` 原样显示。
+- 增加 `send/message/state.rs`，处理 TDLib 临时 `message_id` 到最终 `message_id` 的映射。
+- 编辑进度消息遇到 `Message not found` 时，会等待最终 `message_id` 并重试一次。
+- 结果链接只在 TDLib 返回 HTTP(S) 时显示“打开结果”；普通 chat/basic group 没有公开链接时显示“复制定位”。
+- 未知命令和参数错误现在会直接回复用户，不再只写日志。
+- 增加发送状态缓存、超时清理、结果按钮降级等测试。
+
+提交前已验证：
+
+```powershell
+$env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'
+cargo fmt -p transfer_bot -- --check
+cargo test -p transfer_bot -- --nocapture
+cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
+git diff --check
+```
+
+验证结果：`cargo test -p transfer_bot` 为 `64 passed`。
+
+当前未提交变更：
+
+```text
+README.md
+docs/SESSION_HANDOFF.md
+```
+
+`README.md` 已补充开发调用流程和核心函数索引，便于从入口函数一路读到下载、上传、恢复、GC。`docs/SESSION_HANDOFF.md` 即本文，记录本次会话最新状态。
+
+本地运行/测试残留：
+
+```text
+transfer_bot/db.test.sqlite
+```
+
+该文件是测试生成的本地 SQLite，已被忽略，不应提交。
+
 ## 项目目标
 
 `tg_transfer_bot` 是一个基于 TDLib 的 Telegram 转存机器人。核心目标是接收转存命令，解析命令里的 Telegram 消息或相册链接，下载对应媒体，再上传到配置的目标 chat。
@@ -32,9 +85,11 @@ dev
 最近提交：
 
 ```text
+63bb6ad 优化 Telegram 回复体验 / Improve Telegram reply UX
+27368cf 合并初始迁移字段 / Fold item ref flag into initial migration
+7a28aa9 添加会话交接文档 / Add session handoff documentation
 4ce3f57 修复恢复对齐并优化查询 / Fix recovery reconciliation and query projections
 c136133 改进日志：隐藏敏感信息并补充转存排查日志 / Improve safe transfer logging
-f0c519e docs: improve readme
 ```
 
 ## 重要目录

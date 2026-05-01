@@ -38,7 +38,7 @@ pub(super) async fn pause_job(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         send::build_copy_button(
-            "复制 /d pause",
+            "复制暂停列表",
             &downloads_command(Some("pause"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -95,7 +95,7 @@ pub(super) async fn resume_job(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         send::build_copy_button(
-            "复制 /d run",
+            "复制运行列表",
             &downloads_command(Some("run"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
@@ -158,7 +158,7 @@ pub(super) async fn stop_job(
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         send::build_copy_button(
-            "复制 /d cancel",
+            "复制停止列表",
             &downloads_command(Some("cancel"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),

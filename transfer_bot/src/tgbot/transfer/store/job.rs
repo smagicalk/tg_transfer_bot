@@ -16,6 +16,7 @@ pub(in crate::tgbot::transfer) use create::create_job;
 pub(in crate::tgbot::transfer) use finish::finish_uploaded_job;
 pub(in crate::tgbot::transfer) use finish::{
     finish_job, finish_job_with_item_statuses, finish_uploaded_job_with_item_statuses,
+    update_result_message_link,
 };
 pub(in crate::tgbot::transfer) use query::{
     find_job_by_request, get_job_status, list_cancelling_jobs, list_recoverable_jobs,

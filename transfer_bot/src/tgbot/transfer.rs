@@ -20,6 +20,7 @@ pub use command::{
 pub(in crate::tgbot::transfer) use runtime::runtime_config;
 pub use runtime::{init_runtime_config, update_runtime_config};
 pub(in crate::tgbot::transfer) use spawn::{spawn_recovery_job, spawn_transfer_job};
+pub(in crate::tgbot::transfer) use workflow::refresh_stored_result_link;
 
 // 启动任务仅初始化一次：
 // - 后台文件删除队列消费者

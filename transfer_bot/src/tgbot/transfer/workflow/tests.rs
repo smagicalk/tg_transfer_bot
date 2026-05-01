@@ -6,7 +6,10 @@ use super::super::store;
 use super::TransferOutcome;
 use super::control::apply_job_control;
 use super::guard::{acquire_job_guard, acquire_source_target_create_guard};
-use super::upload::{fallback_result_message_locator, validate_album_kinds};
+use super::upload::{
+    build_private_supergroup_message_link, extract_tdlib_message_id_from_stored_link,
+    fallback_result_message_locator, tdlib_message_id_to_visible_id, validate_album_kinds,
+};
 use crate::db;
 use migration::MigratorTrait;
 use rand::RngExt;
@@ -120,11 +123,44 @@ fn test_validate_album_kinds_rejects_voice_in_album() {
     assert!(rs.is_err());
 }
 
-// 链接生成失败时只保留定位信息，不伪造可能不可点击的 tg:// 或 t.me/c 链接。
+// 非 supergroup/channel 场景无法生成稳定链接时，只保留定位信息。
 #[test]
 fn test_fallback_result_message_locator() {
     let locator = fallback_result_message_locator(-5106953357, 769654784);
     assert_eq!(locator, "chat_id=-5106953357 message_id=769654784");
+}
+
+// TDLib 内部消息 ID 必须换算成 Telegram 链接里的可见消息 ID，否则 t.me/c 会点不开。
+#[test]
+fn test_tdlib_message_id_to_visible_id() {
+    assert_eq!(tdlib_message_id_to_visible_id(769654784), Some(734));
+    assert_eq!(tdlib_message_id_to_visible_id(0), None);
+}
+
+// 私有 supergroup/channel 兜底链接使用 t.me/c 和换算后的可见消息 ID。
+#[test]
+fn test_build_private_supergroup_message_link() {
+    let link = build_private_supergroup_message_link(1835352976, 769654784);
+    assert_eq!(link.as_deref(), Some("https://t.me/c/1835352976/734"));
+}
+
+// 历史保存的 tg:// 或定位字符串可以提取 message_id，用于刷新旧结果链接。
+#[test]
+fn test_extract_tdlib_message_id_from_stored_link() {
+    assert_eq!(
+        extract_tdlib_message_id_from_stored_link(
+            "tg://openmessage?chat_id=-5106953357&message_id=769654784"
+        ),
+        Some(769654784)
+    );
+    assert_eq!(
+        extract_tdlib_message_id_from_stored_link("chat_id=-5106953357 message_id=769654784"),
+        Some(769654784)
+    );
+    assert_eq!(
+        extract_tdlib_message_id_from_stored_link("https://t.me/c/1/2"),
+        None
+    );
 }
 
 // 同 source_link + target_chat_id 的创建锁应阻止并发穿透查重窗口。

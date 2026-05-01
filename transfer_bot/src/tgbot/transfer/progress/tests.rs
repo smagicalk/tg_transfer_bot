@@ -30,11 +30,11 @@ fn test_build_transfer_result_keyboard_uses_result_state_filter() {
         .and_then(|row| row.last())
         .expect("fail keyboard must have last button");
 
-    assert_eq!(success_last.text, "复制 /d done");
-    assert_eq!(fail_last.text, "复制 /d fail");
+    assert_eq!(success_last.text, "复制完成列表");
+    assert_eq!(fail_last.text, "复制失败列表");
 }
 
-// 非 HTTP(S) 定位信息不能生成“打开结果”按钮，否则客户端点击可能无反应。
+// 非 HTTP(S) 定位信息不能生成“打开转存消息”按钮，否则客户端点击可能无反应。
 #[test]
 fn test_build_transfer_result_keyboard_uses_copy_for_locator() {
     let keyboard = build_transfer_result_keyboard(
@@ -49,14 +49,14 @@ fn test_build_transfer_result_keyboard_uses_copy_for_locator() {
         .and_then(|row| row.first())
         .expect("keyboard must have first button");
 
-    assert_eq!(first.text, "复制定位");
+    assert_eq!(first.text, "复制结果定位");
     assert!(matches!(
         first.r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
     ));
 }
 
-// HTTP(S) 结果链接保留“打开结果”按钮，由 Telegram 客户端负责跳转。
+// HTTP(S) 结果链接保留“打开转存消息”按钮，由 Telegram 客户端负责跳转。
 #[test]
 fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
     let keyboard =
@@ -68,7 +68,7 @@ fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
         .and_then(|row| row.first())
         .expect("keyboard must have first button");
 
-    assert_eq!(first.text, "打开结果");
+    assert_eq!(first.text, "打开转存消息");
     assert!(matches!(
         first.r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Url(_)

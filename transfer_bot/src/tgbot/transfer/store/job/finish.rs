@@ -16,6 +16,28 @@ use super::super::{
     JOB_STATUS_RUNNING, JOB_STATUS_SUCCESS, is_finished_job_status, now_utc8,
 };
 
+/// 更新已完成任务的结果链接。
+///
+/// 旧版本可能保存过不可点击的 `tg://openmessage` 或纯定位字符串；当重复转存
+/// 或 `/lookup` 成功用 TDLib 重新生成入口链接后，在这里写回数据库，后续命中
+/// 同一 source_link + target_chat_id 时可以直接返回可点击链接。
+pub(in crate::tgbot::transfer) async fn update_result_message_link(
+    job_id: i64,
+    result_message_link: String,
+) -> anyhow::Result<()> {
+    let db_conn = db::get_db().await?;
+    db::transfer_job::Entity::update_many()
+        .set(db::transfer_job::ActiveModel {
+            result_message_link: sea_orm::ActiveValue::Set(Some(result_message_link)),
+            updated_at: sea_orm::ActiveValue::Set(now_utc8()),
+            ..Default::default()
+        })
+        .filter(db::transfer_job::Column::Id.eq(job_id))
+        .exec(db_conn)
+        .await?;
+    Ok(())
+}
+
 /// 完成任务并写回汇总状态。
 ///
 /// 返回 true 表示终态写入成功；返回 false 表示任务已被停止/终止状态抢先更新，

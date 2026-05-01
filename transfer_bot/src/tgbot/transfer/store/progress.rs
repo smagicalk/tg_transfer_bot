@@ -21,7 +21,7 @@ use super::{
 };
 
 /// 按 `source_link + target_chat_id` 查找最近已成功转存且已保存入口链接的任务。
-/// 命中后可以直接复用历史链接，避免重复转存。
+/// 命中后优先复用历史链接；如果旧链接不可点击，调用方会用 result_message_id 刷新。
 pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
     source_link: &str,
     target_chat_id: i64,
@@ -30,23 +30,29 @@ pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
     let row = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
+        .column(db::transfer_job::Column::TargetChatId)
+        .column(db::transfer_job::Column::ResultMessageId)
         .column(db::transfer_job::Column::ResultMessageLink)
         .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
         .filter(db::transfer_job::Column::TargetChatId.eq(target_chat_id))
         .filter(db::transfer_job::Column::Status.eq(JOB_STATUS_SUCCESS))
         .filter(db::transfer_job::Column::ResultMessageLink.is_not_null())
         .order_by_desc(db::transfer_job::Column::FinishedAt)
-        .into_tuple::<(i64, Option<String>)>()
+        .into_tuple::<(i64, i64, Option<i64>, Option<String>)>()
         .one(db_conn)
         .await?;
 
     // 数据库层已经过滤非空链接，但实体字段类型仍是 Option，这里再做一次防御转换。
-    Ok(row.and_then(|(id, result_message_link)| {
-        result_message_link.map(|result_message_link| SuccessfulJobResult {
-            id,
-            result_message_link,
-        })
-    }))
+    Ok(row.and_then(
+        |(id, target_chat_id, result_message_id, result_message_link)| {
+            result_message_link.map(|result_message_link| SuccessfulJobResult {
+                id,
+                target_chat_id,
+                result_message_id,
+                result_message_link,
+            })
+        },
+    ))
 }
 
 /// 按 `source_link + target_chat_id` 查找最近进行中的任务。

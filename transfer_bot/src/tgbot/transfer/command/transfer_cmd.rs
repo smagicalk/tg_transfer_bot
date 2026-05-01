@@ -43,7 +43,7 @@ pub async fn transfer_command(
         lookup_command(&plan.source_link, plan.target_chat_id, CommandStyle::Short);
     let progress_message = send::send_markdown_message_with_buttons_returning(
         format!(
-            "*已接收转存请求*\n状态：`queued`\n目标：`{}`\n━━━━━━━━━━━━\n说明：后台会自动下载并上传，进度会在本消息刷新。\n源：`{}`",
+            "*已接收转存请求*\n状态：`queued`  目标：`{}`\n━━━━━━━━━━━━\n*进度*\n后台会自动下载并上传，本消息会持续刷新。\n\n*来源*\n`{}`",
             plan.target_chat_id,
             markdown_inline_code(&plan.source_link)
         ),
@@ -55,12 +55,12 @@ pub async fn transfer_command(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "复制查询",
+                "复制查询命令",
                 &lookup_command,
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             send::build_copy_button(
-                "复制 /d run",
+                "复制运行列表",
                 "/d run",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),

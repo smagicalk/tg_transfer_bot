@@ -48,8 +48,25 @@ pub fn build_url_button(
 
 /// 判断链接是否适合放到 Telegram URL 按钮里。
 ///
-/// TDLib 的 `getMessageLink` 成功时会返回 HTTPS 链接；`tg://openmessage`
-/// 这类客户端 deeplink 在部分 chat 或客户端里不会跳转，所以结果卡片不再把它当成可打开链接。
+/// Telegram URL 按钮本身也能放 `tg://`，但旧版本用 TDLib 内部 message_id
+/// 拼出的 `tg://openmessage` 在客户端里会出现“按钮能点但跳不到消息”的问题。
+/// 因此业务层只把 TDLib `getMessageLink` 或 `t.me/c` 这类 HTTP(S) 链接当成可打开结果。
 pub fn is_openable_url(url: &str) -> bool {
     url.starts_with("https://") || url.starts_with("http://")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_openable_url;
+
+    // 业务层只把 HTTP(S) 当成稳定结果链接，避免旧 tg://openmessage 再次进入打开按钮。
+    #[test]
+    fn test_is_openable_url_rejects_telegram_deep_link() {
+        assert!(is_openable_url("https://t.me/c/5106953357/734"));
+        assert!(is_openable_url("http://example.com/message"));
+        assert!(!is_openable_url(
+            "tg://openmessage?chat_id=-5106953357&message_id=769654784"
+        ));
+        assert!(!is_openable_url("chat_id=-5106953357 message_id=769654784"));
+    }
 }
