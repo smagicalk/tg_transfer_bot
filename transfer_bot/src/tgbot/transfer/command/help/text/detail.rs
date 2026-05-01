@@ -140,7 +140,7 @@ fn build_config_detail() -> String {
         "",
         "可调字段：",
         "`job_concurrency`",
-        "`file_delete_delay_hours`",
+        "`file_delete_delay_minutes`",
         "`file_gc_interval_seconds`",
         "",
         "示例：",
@@ -153,8 +153,8 @@ fn build_config_detail() -> String {
             config_set_command("job_concurrency", 4, CommandStyle::Long),
         ),
         &short_and_long(
-            config_set_command("file_delete_delay_hours", 3, CommandStyle::Short),
-            config_set_command("file_delete_delay_hours", 3, CommandStyle::Long),
+            config_set_command("file_delete_delay_minutes", 3, CommandStyle::Short),
+            config_set_command("file_delete_delay_minutes", 3, CommandStyle::Long),
         ),
         &short_and_long(
             config_set_command("file_gc_interval_seconds", 30, CommandStyle::Short),

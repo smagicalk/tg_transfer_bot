@@ -184,7 +184,7 @@ pub(super) async fn run_job_inner(
                 last_error: last_error.clone(),
                 result_message_id: None,
                 result_message_link: None,
-                delay_hours: super::file_delete_delay_hours(),
+                delay_minutes: super::file_delete_delay_minutes(),
             },
             item_updates,
         )
@@ -217,7 +217,7 @@ pub(super) async fn run_job_inner(
             last_error.clone(),
             job.result_message_id,
             job.result_message_link.clone(),
-            super::file_delete_delay_hours(),
+            super::file_delete_delay_minutes(),
         )
         .await?
         {
@@ -267,7 +267,7 @@ pub(super) async fn run_job_inner(
                     last_error: None,
                     result_message_id: Some(upload_result.result_message_id),
                     result_message_link: Some(result_link.clone()),
-                    delay_hours: super::file_delete_delay_hours(),
+                    delay_minutes: super::file_delete_delay_minutes(),
                 },
                 item_updates,
             )
@@ -310,7 +310,7 @@ pub(super) async fn run_job_inner(
                     last_error: Some(err_str),
                     result_message_id: None,
                     result_message_link: None,
-                    delay_hours: super::file_delete_delay_hours(),
+                    delay_minutes: super::file_delete_delay_minutes(),
                 },
                 item_updates,
             )

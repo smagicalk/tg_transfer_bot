@@ -18,21 +18,21 @@ use super::super::{
 
 /// 任务完成后释放本任务引用：
 /// - active_refs 归零后进入“延迟删除队列”
-/// - delete_after = now + delay_hours
+/// - delete_after = now + delay_minutes
 #[cfg(test)]
 pub(in crate::tgbot::transfer) async fn release_job_file_refs(
     job_id: i64,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
-    release_job_file_refs_on_conn(db_conn, job_id, delay_hours).await
+    release_job_file_refs_on_conn(db_conn, job_id, delay_minutes).await
 }
 
 /// 在指定连接/事务内释放任务持有的文件引用。
 pub(in crate::tgbot::transfer::store) async fn release_job_file_refs_on_conn<C>(
     conn: &C,
     job_id: i64,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -52,7 +52,7 @@ where
         return Ok(());
     }
 
-    release_file_ref_counts_on_conn(conn, refs, delay_hours).await?;
+    release_file_ref_counts_on_conn(conn, refs, delay_minutes).await?;
     db::transfer_item::Entity::update_many()
         .col_expr(
             db::transfer_item::Column::FileRefReleased,
@@ -72,13 +72,13 @@ where
 pub(in crate::tgbot::transfer::store) async fn release_file_ref_counts_on_conn<C>(
     conn: &C,
     refs: HashMap<String, i32>,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
 {
     let now = now_utc8();
-    let delete_after = now + chrono::Duration::hours(delay_hours.max(0));
+    let delete_after = now + chrono::Duration::minutes(delay_minutes.max(0));
 
     for (file_key, dec) in refs {
         // 使用单条 UPDATE 表达式完成扣减，避免并发完成任务时读后写覆盖 active_refs。

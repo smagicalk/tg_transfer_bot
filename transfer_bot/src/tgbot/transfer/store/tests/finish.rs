@@ -58,7 +58,7 @@ async fn test_finish_uploaded_job_with_item_statuses_is_consistent() -> anyhow::
             last_error: None,
             result_message_id: Some(701),
             result_message_link: Some(result_link.clone()),
-            delay_hours: 2,
+            delay_minutes: 2,
         },
         vec![(item_id, "success".to_owned(), None)],
     )

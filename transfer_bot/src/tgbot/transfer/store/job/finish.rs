@@ -49,7 +49,7 @@ pub(in crate::tgbot::transfer) async fn finish_job(
     last_error: Option<String>,
     result_message_id: Option<i64>,
     result_message_link: Option<String>,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<bool> {
     let summary = FinishJobSummary {
         ok_count,
@@ -57,7 +57,7 @@ pub(in crate::tgbot::transfer) async fn finish_job(
         last_error,
         result_message_id,
         result_message_link,
-        delay_hours,
+        delay_minutes,
     };
     finish_job_with_allowed_statuses(
         job,
@@ -97,7 +97,7 @@ pub(in crate::tgbot::transfer) async fn finish_uploaded_job(
     last_error: Option<String>,
     result_message_id: Option<i64>,
     result_message_link: Option<String>,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<bool> {
     let summary = FinishJobSummary {
         ok_count,
@@ -105,7 +105,7 @@ pub(in crate::tgbot::transfer) async fn finish_uploaded_job(
         last_error,
         result_message_id,
         result_message_link,
-        delay_hours,
+        delay_minutes,
     };
     finish_job_with_allowed_statuses(
         job,
@@ -187,7 +187,7 @@ async fn finish_job_with_allowed_statuses(
         for (item_id, status, error_message) in item_updates {
             set_item_status_on_conn(&txn, item_id, &status, error_message).await?;
         }
-        release_job_file_refs_on_conn(&txn, job.id, summary.delay_hours).await?;
+        release_job_file_refs_on_conn(&txn, job.id, summary.delay_minutes).await?;
         txn.commit().await?;
         return Ok(true);
     }

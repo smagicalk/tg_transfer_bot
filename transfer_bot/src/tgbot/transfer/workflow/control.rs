@@ -4,7 +4,7 @@
 
 use crate::tgbot::transfer::store;
 
-use super::{TransferOutcome, file_delete_delay_hours};
+use super::{TransferOutcome, file_delete_delay_minutes};
 
 /// 检查用户控制状态，并在需要时执行暂停/取消收尾。
 ///
@@ -20,7 +20,7 @@ pub(super) async fn apply_job_control(job_id: i64) -> anyhow::Result<Option<Tran
         store::JOB_STATUS_CANCELLING
         | store::JOB_STATUS_CANCEL_FINALIZING
         | store::JOB_STATUS_CANCELLED => {
-            store::cancel_job_now(job_id, "cancelled by user", file_delete_delay_hours()).await?;
+            store::cancel_job_now(job_id, "cancelled by user", file_delete_delay_minutes()).await?;
             Ok(Some(TransferOutcome::Cancelled { job_id }))
         }
         status if store::is_finished_job_status(status) => {

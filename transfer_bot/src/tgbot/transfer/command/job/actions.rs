@@ -123,7 +123,7 @@ pub(super) async fn stop_job(
             job_id,
             "cancelled by user",
             super::super::super::runtime_config()
-                .file_delete_delay_hours
+                .file_delete_delay_minutes
                 .max(0),
         )
         .await?

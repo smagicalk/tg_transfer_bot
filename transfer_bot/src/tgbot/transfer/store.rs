@@ -165,8 +165,8 @@ pub(super) struct FinishJobSummary {
     pub result_message_id: Option<i64>,
     /// 上传结果入口链接。
     pub result_message_link: Option<String>,
-    /// 文件引用释放后的延迟删除小时数。
-    pub delay_hours: i64,
+    /// 文件引用释放后的延迟删除分钟数。
+    pub delay_minutes: i64,
 }
 
 /// 判断任务是否已经处于终态。

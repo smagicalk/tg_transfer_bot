@@ -38,9 +38,13 @@ pub struct TransferConfig {
     #[serde(default = "default_transfer_job_concurrency")]
     pub job_concurrency: usize,
 
-    // 文件引用归零后的延迟删除小时数。
-    #[serde(default = "default_transfer_file_delete_delay_hours")]
-    pub file_delete_delay_hours: i64,
+    // 文件引用归零后的延迟删除分钟数。
+    // `alias` 兼容旧配置键，旧值会按“分钟”解释，保存后会写成新键。
+    #[serde(
+        default = "default_transfer_file_delete_delay_minutes",
+        alias = "file_delete_delay_hours"
+    )]
+    pub file_delete_delay_minutes: i64,
 
     // 文件 GC 扫描间隔（秒）。
     #[serde(default = "default_transfer_file_gc_interval_seconds")]
@@ -51,7 +55,7 @@ impl Default for TransferConfig {
     fn default() -> Self {
         Self {
             job_concurrency: default_transfer_job_concurrency(),
-            file_delete_delay_hours: default_transfer_file_delete_delay_hours(),
+            file_delete_delay_minutes: default_transfer_file_delete_delay_minutes(),
             file_gc_interval_seconds: default_transfer_file_gc_interval_seconds(),
         }
     }
@@ -151,8 +155,8 @@ fn default_transfer_job_concurrency() -> usize {
     2
 }
 
-// 默认文件延迟删除小时数。
-fn default_transfer_file_delete_delay_hours() -> i64 {
+// 默认文件延迟删除分钟数。
+fn default_transfer_file_delete_delay_minutes() -> i64 {
     2
 }
 
@@ -205,7 +209,7 @@ mod tests {
           },
           "transfer_config": {
             "job_concurrency": 2,
-            "file_delete_delay_hours": 2,
+            "file_delete_delay_minutes": 2,
             "file_gc_interval_seconds": 60
           },
           "login_info": {
@@ -217,5 +221,22 @@ mod tests {
         let bot_config: BotConfig = serde_json::from_str(bot_config_str).unwrap();
         assert_eq!(bot_config.target_map.get(&1234), Some(&1234));
         assert_eq!(bot_config.transfer_config.job_concurrency, 2);
+        assert_eq!(bot_config.transfer_config.file_delete_delay_minutes, 2);
+    }
+
+    // 旧配置键兼容：避免用户本地 config.json 还没改名时启动失败。
+    #[test]
+    fn test_transfer_config_accepts_old_delay_key_as_minutes() {
+        let text = r#"{
+            "job_concurrency": 2,
+            "file_delete_delay_hours": 5,
+            "file_gc_interval_seconds": 60
+        }"#;
+
+        let cfg: TransferConfig = serde_json::from_str(text).unwrap();
+        assert_eq!(cfg.file_delete_delay_minutes, 5);
+        let serialized = serde_json::to_string(&cfg).unwrap();
+        assert!(serialized.contains("file_delete_delay_minutes"));
+        assert!(!serialized.contains("file_delete_delay_hours"));
     }
 }

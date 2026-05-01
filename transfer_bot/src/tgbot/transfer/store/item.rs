@@ -67,7 +67,7 @@ pub(in crate::tgbot::transfer) async fn ensure_items_for_bundle(
 pub(in crate::tgbot::transfer) async fn reconcile_items_for_bundle(
     job_id: i64,
     bundle: &TransferBundle,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
     let txn = db_conn.begin().await?;
@@ -82,14 +82,14 @@ pub(in crate::tgbot::transfer) async fn reconcile_items_for_bundle(
         let key = (msg.chat_id, msg.id);
         let file_key = file_key_for_message(msg);
         if let Some(old) = old_map.remove(&key) {
-            reconcile_existing_item_on_conn(&txn, old, file_key, delay_hours).await?;
+            reconcile_existing_item_on_conn(&txn, old, file_key, delay_minutes).await?;
         } else {
             insert_item_with_optional_file_ref_on_conn(&txn, job_id, msg, file_key).await?;
         }
     }
 
     for (_, old) in old_map {
-        mark_item_obsolete_on_conn(&txn, old, delay_hours).await?;
+        mark_item_obsolete_on_conn(&txn, old, delay_minutes).await?;
     }
 
     update_job_source_snapshot_on_conn(&txn, job_id, bundle).await?;
@@ -183,7 +183,7 @@ async fn reconcile_existing_item_on_conn<C>(
     conn: &C,
     old: db::transfer_item::Model,
     new_file_key: String,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -195,7 +195,7 @@ where
     }
 
     if old.file_key != new_file_key && !old.file_ref_released && !is_text_file_key(&old.file_key) {
-        release_one_file_ref_on_conn(conn, old.file_key.clone(), delay_hours).await?;
+        release_one_file_ref_on_conn(conn, old.file_key.clone(), delay_minutes).await?;
     }
 
     let status = if old.file_key != new_file_key || old.status == ITEM_STATUS_OBSOLETE {
@@ -232,13 +232,13 @@ where
 async fn mark_item_obsolete_on_conn<C>(
     conn: &C,
     old: db::transfer_item::Model,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
 {
     if !old.file_ref_released && !is_text_file_key(&old.file_key) {
-        release_one_file_ref_on_conn(conn, old.file_key.clone(), delay_hours).await?;
+        release_one_file_ref_on_conn(conn, old.file_key.clone(), delay_minutes).await?;
     }
 
     db::transfer_item::Entity::update_many()
@@ -301,14 +301,14 @@ where
 async fn release_one_file_ref_on_conn<C>(
     conn: &C,
     file_key: String,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
 {
     let mut refs = HashMap::new();
     refs.insert(file_key, 1);
-    release_file_ref_counts_on_conn(conn, refs, delay_hours).await
+    release_file_ref_counts_on_conn(conn, refs, delay_minutes).await
 }
 
 /// 获取消息当前对应的 file_key；纯文本消息使用稳定文本占位键。

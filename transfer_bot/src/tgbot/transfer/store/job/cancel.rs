@@ -67,7 +67,7 @@ impl Drop for CancelFinalizingGuard {
 pub(in crate::tgbot::transfer) async fn cancel_job_now(
     job_id: i64,
     reason: impl Into<String>,
-    delay_hours: i64,
+    delay_minutes: i64,
 ) -> anyhow::Result<db::transfer_job::Model> {
     let _cancel_guard = acquire_cancel_finalizing_guard(job_id).await;
     let db_conn = db::get_db().await?;
@@ -202,7 +202,7 @@ pub(in crate::tgbot::transfer) async fn cancel_job_now(
     for (item_id, status, error_message) in item_updates {
         set_item_status_on_conn(&txn, item_id, &status, error_message).await?;
     }
-    release_job_file_refs_on_conn(&txn, job_id, delay_hours).await?;
+    release_job_file_refs_on_conn(&txn, job_id, delay_minutes).await?;
     txn.commit().await?;
 
     db::transfer_job::Entity::find_by_id(job_id)

@@ -60,12 +60,12 @@ async fn update_transfer_config(key: &str, value: &str) -> anyhow::Result<String
             }
             bot_config.transfer_config.job_concurrency = parsed;
         }
-        "file_delete_delay_hours" => {
+        "file_delete_delay_minutes" | "file_delete_delay_hours" => {
             let parsed = value.parse::<i64>()?;
             if parsed < 0 {
-                anyhow::bail!("file_delete_delay_hours must be >= 0");
+                anyhow::bail!("file_delete_delay_minutes must be >= 0");
             }
-            bot_config.transfer_config.file_delete_delay_hours = parsed;
+            bot_config.transfer_config.file_delete_delay_minutes = parsed;
         }
         "file_gc_interval_seconds" => {
             let parsed = value.parse::<u64>()?;
@@ -96,8 +96,8 @@ fn format_transfer_config_text(title: &str, config: &config::TransferConfig) -> 
         "━━━━━━━━━━━━".to_owned(),
         format!("并发：`job_concurrency = {}`", config.job_concurrency),
         format!(
-            "删除延迟：`file_delete_delay_hours = {}` 小时",
-            config.file_delete_delay_hours
+            "删除延迟：`file_delete_delay_minutes = {}` 分钟",
+            config.file_delete_delay_minutes
         ),
         format!(
             "GC 间隔：`file_gc_interval_seconds = {}` 秒",
@@ -115,8 +115,8 @@ fn format_transfer_config_text(title: &str, config: &config::TransferConfig) -> 
             config_set_command("job_concurrency", 4, CommandStyle::Long),
         ),
         short_and_long(
-            config_set_command("file_delete_delay_hours", 3, CommandStyle::Short),
-            config_set_command("file_delete_delay_hours", 3, CommandStyle::Long),
+            config_set_command("file_delete_delay_minutes", 3, CommandStyle::Short),
+            config_set_command("file_delete_delay_minutes", 3, CommandStyle::Long),
         ),
         short_and_long(
             config_set_command("file_gc_interval_seconds", 30, CommandStyle::Short),
@@ -143,8 +143,8 @@ fn build_config_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
         ],
         vec![
             send::build_copy_button(
-                "删除延迟=3h",
-                &config_set_command("file_delete_delay_hours", 3, CommandStyle::Short),
+                "删除延迟=3m",
+                &config_set_command("file_delete_delay_minutes", 3, CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
@@ -165,12 +165,12 @@ mod tests {
     fn test_format_transfer_config_text() {
         let cfg = config::TransferConfig {
             job_concurrency: 2,
-            file_delete_delay_hours: 2,
+            file_delete_delay_minutes: 2,
             file_gc_interval_seconds: 60,
         };
         let text = format_transfer_config_text("当前可调配置", &cfg);
         assert!(text.contains("job_concurrency = 2"));
-        assert!(text.contains("file_delete_delay_hours = 2"));
+        assert!(text.contains("file_delete_delay_minutes = 2"));
         assert!(text.contains("file_gc_interval_seconds = 60"));
     }
 }

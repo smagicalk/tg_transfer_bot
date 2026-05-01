@@ -371,7 +371,7 @@ config.example.json
 动态可调配置主要在 `transfer_config`：
 
 - `job_concurrency`
-- `file_delete_delay_hours`
+- `file_delete_delay_minutes`
 - `file_gc_interval_seconds`
 
 TDLib 登录、API 密钥等不建议通过命令动态修改。

@@ -25,7 +25,7 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
         store::cancel_job_now(
             job.id,
             "cancelled by user before restart",
-            super::file_delete_delay_hours(),
+            super::file_delete_delay_minutes(),
         )
         .await?;
     }
@@ -120,6 +120,6 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
     );
     // 恢复时以重新 spider 到的链接内容为准，并同步修正旧 item/file_cache 引用：
     // 新出现的消息会新增，消失的旧消息会 obsolete，文件变化的消息会迁移 file_key。
-    store::reconcile_items_for_bundle(job.id, &bundle, super::file_delete_delay_hours()).await?;
+    store::reconcile_items_for_bundle(job.id, &bundle, super::file_delete_delay_minutes()).await?;
     run_job_inner(job, bundle.messages, client_id).await
 }

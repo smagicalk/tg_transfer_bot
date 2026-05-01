@@ -53,8 +53,8 @@ pub(super) async fn transfer(
     }
 }
 
-/// 文件删除延迟（小时）：
-/// 从 config.json 读取 `transfer_config.file_delete_delay_hours`。
-fn file_delete_delay_hours() -> i64 {
-    super::runtime_config().file_delete_delay_hours.max(0)
+/// 文件删除延迟（分钟）：
+/// 从 config.json 读取 `transfer_config.file_delete_delay_minutes`。
+fn file_delete_delay_minutes() -> i64 {
+    super::runtime_config().file_delete_delay_minutes.max(0)
 }

@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
         admin_count = config.admin_ids.len(),
         target_count = config.target_map.len(),
         job_concurrency = config.transfer_config.job_concurrency,
-        file_delete_delay_hours = config.transfer_config.file_delete_delay_hours,
+        file_delete_delay_minutes = config.transfer_config.file_delete_delay_minutes,
         file_gc_interval_seconds = config.transfer_config.file_gc_interval_seconds,
         "runtime config loaded"
     );

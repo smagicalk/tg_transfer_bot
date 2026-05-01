@@ -60,7 +60,7 @@ $env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
 | `admin_ids` | 允许使用机器人的 user/chat id |
 | `target_map` | 源 chat 到目标 chat 的映射，`0` 可作为兜底目标 |
 | `transfer_config.job_concurrency` | 后台转存任务并发数 |
-| `transfer_config.file_delete_delay_hours` | 文件引用归零后的延迟删除小时数 |
+| `transfer_config.file_delete_delay_minutes` | 文件引用归零后的延迟删除分钟数 |
 | `transfer_config.file_gc_interval_seconds` | 文件删除队列扫描间隔秒数 |
 | `login_info` | 登录方式，支持 `OCR`、`PHONE`、`TOKEN` |
 
@@ -151,7 +151,7 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
 ```text
 /cfg show
 /cfg set job_concurrency 4
-/cfg set file_delete_delay_hours 3
+/cfg set file_delete_delay_minutes 3
 /cfg set file_gc_interval_seconds 30
 ```
 
@@ -324,7 +324,7 @@ workflow::resume_one_job(job, client_id)
   -> control::apply_job_control(job_id)
   -> spider::spider_message(job.source_link, client_id)
   -> store::mark_job_running(job_id)
-  -> store::reconcile_items_for_bundle(job_id, bundle, delay_hours)
+  -> store::reconcile_items_for_bundle(job_id, bundle, delay_minutes)
        -> 新消息：新增 transfer_item 并增加 file_cache 引用
        -> 消失消息：标记 obsolete 并释放旧 file_cache 引用
        -> 文件变化：迁移 file_key 引用
