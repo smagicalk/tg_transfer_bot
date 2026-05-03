@@ -226,7 +226,7 @@ fn build_job_detail() -> String {
                 command_root("job", CommandStyle::Short)
             ),
             format!(
-                "{} <pause|resume|stop> <job_id>",
+                "{} <pause|resume|stop|status> <job_id>",
                 command_root("job", CommandStyle::Long)
             ),
         ),
@@ -244,6 +244,10 @@ fn build_job_detail() -> String {
             "{}：停止任务并释放文件引用，文件按删除队列延迟清理。",
             card::code("stop | s")
         ),
+        format!(
+            "{}：查看单任务详情、阶段计数和真实下载进度。",
+            card::code("status | st")
+        ),
         String::new(),
         "示例：".to_owned(),
         short_and_long(
@@ -257,6 +261,10 @@ fn build_job_detail() -> String {
         short_and_long(
             job_command("s", 123, CommandStyle::Short),
             job_command("stop", 123, CommandStyle::Long),
+        ),
+        short_and_long(
+            job_command("st", 123, CommandStyle::Short),
+            job_command("status", 123, CommandStyle::Long),
         ),
     ]
     .join("\n")

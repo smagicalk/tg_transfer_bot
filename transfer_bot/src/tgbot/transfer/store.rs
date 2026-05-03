@@ -31,7 +31,8 @@ pub(super) use job::{
 };
 pub(super) use progress::{
     find_active_job_by_source_target, find_active_job_id_by_source_target,
-    find_success_job_by_source_target, get_job_progress_snapshot, list_recent_job_snapshots,
+    find_success_job_by_source_target, get_job_progress_snapshot,
+    get_job_progress_snapshot_for_request_chat, list_recent_job_snapshots,
 };
 
 /// 主任务状态：等待后台执行。

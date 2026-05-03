@@ -34,6 +34,7 @@ fn test_build_help_detail_text() {
 
     let job = build_help_detail_text("j").unwrap();
     assert!(job.contains("/job pause 123"));
+    assert!(job.contains("/job status 123"));
 
     let config = build_help_detail_text("config").unwrap();
     assert!(config.contains("/config set job_concurrency 4"));

@@ -63,11 +63,11 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
                 command_root("job", CommandStyle::Short)
             ),
             format!(
-                "{} <pause|resume|stop> <job_id>",
+                "{} <pause|resume|stop|status> <job_id>",
                 command_root("job", CommandStyle::Long)
             ),
         ),
-        "说明：手动暂停、恢复、停止转存任务。".to_owned(),
+        "说明：查看详情，或手动暂停、恢复、停止转存任务。".to_owned(),
         String::new(),
         card::DIVIDER.to_owned(),
         card::section("帮助详情"),

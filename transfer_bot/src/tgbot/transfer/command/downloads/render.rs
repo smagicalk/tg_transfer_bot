@@ -1,7 +1,7 @@
 // `/downloads` 的文本渲染。
 // 该模块只把已经查询好的任务快照渲染为 card 标记文本。
 
-use super::super::common::{CommandStyle, short_and_long};
+use super::super::common::{CommandStyle, format_bytes, short_and_long};
 use super::keyboard::build_downloads_page_command;
 use super::types::DownloadsArgs;
 use crate::tgbot::transfer::card;
@@ -149,21 +149,4 @@ fn format_live_download(snapshot: &store::JobProgressSnapshot) -> String {
         prefix,
         format_bytes(snapshot.active_downloaded_bytes)
     )
-}
-
-/// 以人类可读形式展示字节数。
-pub(super) fn format_bytes(bytes: i64) -> String {
-    let units = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = bytes.max(0) as f64;
-    let mut unit_idx = 0usize;
-    while value >= 1024.0 && unit_idx < units.len() - 1 {
-        value /= 1024.0;
-        unit_idx += 1;
-    }
-
-    if unit_idx == 0 {
-        format!("{} {}", value as i64, units[unit_idx])
-    } else {
-        format!("{:.1} {}", value, units[unit_idx])
-    }
 }

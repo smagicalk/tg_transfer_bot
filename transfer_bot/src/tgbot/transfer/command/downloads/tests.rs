@@ -1,12 +1,13 @@
 // `/downloads` 的单元测试集中放在这里，避免入口文件继续膨胀。
 
 use super::super::common::CommandStyle;
+use super::super::common::format_bytes;
 use super::keyboard::{
     DownloadsCallbackAction, build_downloads_filter_callback_data, build_downloads_keyboard,
     build_downloads_page_callback_data, build_downloads_page_command,
     parse_downloads_callback_data,
 };
-use super::render::{format_bytes, format_downloads_text};
+use super::render::format_downloads_text;
 use super::types::{DownloadsArgs, DownloadsFilter, parse_downloads_args};
 use crate::tgbot::transfer::store;
 

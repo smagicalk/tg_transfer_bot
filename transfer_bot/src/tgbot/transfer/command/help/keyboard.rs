@@ -112,6 +112,11 @@ pub(super) fn build_help_detail_buttons(
                 &job_command("s", 123, CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+            send::build_copy_button(
+                "复制详情示例",
+                &job_command("st", 123, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
         ]],
         _ => anyhow::bail!("unknown help topic: {}", command_name),
     };

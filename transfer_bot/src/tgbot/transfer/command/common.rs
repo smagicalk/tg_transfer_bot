@@ -115,6 +115,26 @@ pub(crate) fn help_command(topic: Option<&str>, style: CommandStyle) -> String {
     }
 }
 
+/// 以人类可读形式展示字节数。
+///
+/// `/downloads` 和 `/job status` 都展示 TDLib 实时下载进度，统一放在命令公共层，
+/// 避免同一个文件大小被不同命令渲染成不同样式。
+pub(crate) fn format_bytes(bytes: i64) -> String {
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes.max(0) as f64;
+    let mut unit_idx = 0usize;
+    while value >= 1024.0 && unit_idx < units.len() - 1 {
+        value /= 1024.0;
+        unit_idx += 1;
+    }
+
+    if unit_idx == 0 {
+        format!("{} {}", value as i64, units[unit_idx])
+    } else {
+        format!("{:.1} {}", value, units[unit_idx])
+    }
+}
+
 /// 返回命令根名称。
 ///
 /// 帮助页需要展示 `/config [show|set ...]` 这类不完全等同于具体命令的用法，
@@ -172,6 +192,7 @@ mod tests {
             "/d run 8 2"
         );
         assert_eq!(job_command("p", 42, CommandStyle::Short), "/j p 42");
+        assert_eq!(job_command("st", 42, CommandStyle::Short), "/j st 42");
         assert_eq!(
             config_set_command("transfer_job_concurrency", 2, CommandStyle::Long),
             "/config set transfer_job_concurrency 2"
@@ -186,5 +207,13 @@ mod tests {
             short_and_long("/d run".to_owned(), "/downloads run".to_owned()),
             "‹/downloads run› | ‹/d run›"
         );
+    }
+
+    // 文件大小格式要在不同命令之间保持一致，避免排查下载进度时出现两套展示。
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(100), "100 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
     }
 }

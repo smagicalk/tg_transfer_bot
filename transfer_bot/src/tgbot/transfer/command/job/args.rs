@@ -7,6 +7,7 @@ pub(super) enum JobAction {
     Pause,
     Resume,
     Stop,
+    Status,
 }
 
 /// `/job` 参数解析结果。
@@ -21,17 +22,18 @@ pub(super) fn parse_job_args(text: &[&str]) -> anyhow::Result<JobArgs> {
     let action = text
         .get(1)
         .copied()
-        .ok_or_else(|| anyhow::anyhow!("usage: /job <pause|resume|stop> <job_id>"))?;
+        .ok_or_else(|| anyhow::anyhow!("usage: /job <pause|resume|stop|status> <job_id>"))?;
     let job_id = text
         .get(2)
         .copied()
-        .ok_or_else(|| anyhow::anyhow!("usage: /job <pause|resume|stop> <job_id>"))?
+        .ok_or_else(|| anyhow::anyhow!("usage: /job <pause|resume|stop|status> <job_id>"))?
         .parse::<i64>()?;
 
     let action = match action {
         "pause" | "p" => JobAction::Pause,
         "resume" | "r" => JobAction::Resume,
         "stop" | "s" | "cancel" | "c" => JobAction::Stop,
+        "status" | "st" => JobAction::Status,
         other => anyhow::bail!("unknown job action: {}", other),
     };
 
@@ -78,6 +80,20 @@ mod tests {
             JobArgs {
                 action: JobAction::Stop,
                 job_id: 654,
+            }
+        );
+        assert_eq!(
+            parse_job_args(&["/j", "st", "42"]).unwrap(),
+            JobArgs {
+                action: JobAction::Status,
+                job_id: 42,
+            }
+        );
+        assert_eq!(
+            parse_job_args(&["/job", "status", "43"]).unwrap(),
+            JobArgs {
+                action: JobAction::Status,
+                job_id: 43,
             }
         );
         assert!(parse_job_args(&["/j", "bad", "1"]).is_err());

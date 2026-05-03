@@ -4,11 +4,11 @@
 mod actions;
 mod args;
 
-use actions::{pause_job, resume_job, stop_job};
+use actions::{pause_job, resume_job, show_job_status, stop_job};
 use args::{JobAction, parse_job_args};
 
 /// `/job` 命令入口。
-/// 命令格式：`/job <pause|resume|stop> <job_id>`
+/// 命令格式：`/job <pause|resume|stop|status> <job_id>`
 pub async fn job_command(
     text: Vec<&str>,
     request_chat_id: i64,
@@ -20,5 +20,6 @@ pub async fn job_command(
         JobAction::Pause => pause_job(args.job_id, request_chat_id, client_id).await,
         JobAction::Resume => resume_job(args.job_id, request_chat_id, client_id).await,
         JobAction::Stop => stop_job(args.job_id, request_chat_id, client_id).await,
+        JobAction::Status => show_job_status(args.job_id, request_chat_id, client_id).await,
     }
 }

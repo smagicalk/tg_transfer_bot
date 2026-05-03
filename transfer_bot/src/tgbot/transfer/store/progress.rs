@@ -161,27 +161,53 @@ pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
 pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot(
     job_id: i64,
 ) -> anyhow::Result<Option<JobProgressSnapshot>> {
+    get_job_progress_snapshot_with_request_chat(job_id, None).await
+}
+
+/// 查询当前请求聊天可见的单个任务进度快照。
+///
+/// `/job status` 是用户手动输入 job_id 的命令，必须同时校验 request_chat_id，
+/// 避免一个聊天通过猜测 job_id 看到其他聊天发起的任务详情。
+pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_for_request_chat(
+    job_id: i64,
+    request_chat_id: i64,
+) -> anyhow::Result<Option<JobProgressSnapshot>> {
+    get_job_progress_snapshot_with_request_chat(job_id, Some(request_chat_id)).await
+}
+
+/// 查询单个任务进度快照的内部实现。
+///
+/// `request_chat_id` 为空时用于进度面板内部轮询；非空时用于命令权限边界。
+async fn get_job_progress_snapshot_with_request_chat(
+    job_id: i64,
+    request_chat_id: Option<i64>,
+) -> anyhow::Result<Option<JobProgressSnapshot>> {
     let db_conn = db::get_db().await?;
-    let Some((id, status, total_items, target_chat_id, created_at, updated_at)) =
-        db::transfer_job::Entity::find()
-            .select_only()
-            .column(db::transfer_job::Column::Id)
-            .column(db::transfer_job::Column::Status)
-            .column(db::transfer_job::Column::TotalItems)
-            .column(db::transfer_job::Column::TargetChatId)
-            .column(db::transfer_job::Column::CreatedAt)
-            .column(db::transfer_job::Column::UpdatedAt)
-            .filter(db::transfer_job::Column::Id.eq(job_id))
-            .into_tuple::<(
-                i64,
-                String,
-                i32,
-                i64,
-                chrono::DateTime<chrono::FixedOffset>,
-                chrono::DateTime<chrono::FixedOffset>,
-            )>()
-            .one(db_conn)
-            .await?
+    let mut query = db::transfer_job::Entity::find()
+        .select_only()
+        .column(db::transfer_job::Column::Id)
+        .column(db::transfer_job::Column::Status)
+        .column(db::transfer_job::Column::TotalItems)
+        .column(db::transfer_job::Column::TargetChatId)
+        .column(db::transfer_job::Column::CreatedAt)
+        .column(db::transfer_job::Column::UpdatedAt)
+        .filter(db::transfer_job::Column::Id.eq(job_id));
+
+    if let Some(request_chat_id) = request_chat_id {
+        query = query.filter(db::transfer_job::Column::RequestChatId.eq(request_chat_id));
+    }
+
+    let Some((id, status, total_items, target_chat_id, created_at, updated_at)) = query
+        .into_tuple::<(
+            i64,
+            String,
+            i32,
+            i64,
+            chrono::DateTime<chrono::FixedOffset>,
+            chrono::DateTime<chrono::FixedOffset>,
+        )>()
+        .one(db_conn)
+        .await?
     else {
         return Ok(None);
     };

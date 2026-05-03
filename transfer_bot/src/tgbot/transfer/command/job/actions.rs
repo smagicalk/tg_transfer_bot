@@ -4,9 +4,12 @@
 use crate::tgbot::send;
 use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
+use crate::tgbot::transfer::store::JobProgressSnapshot;
 use crate::tgbot::transfer::workflow;
 
-use super::super::common::{CommandStyle, downloads_command, job_command as build_job_command};
+use super::super::common::{
+    CommandStyle, downloads_command, format_bytes, job_command as build_job_command,
+};
 
 /// 暂停任务。
 ///
@@ -164,6 +167,32 @@ pub(super) async fn stop_job(
         .await
 }
 
+/// 查看单个任务详情。
+///
+/// 只读取轻量进度快照，不会影响后台任务状态。
+pub(super) async fn show_job_status(
+    job_id: i64,
+    request_chat_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let Some(snapshot) =
+        store::get_job_progress_snapshot_for_request_chat(job_id, request_chat_id).await?
+    else {
+        anyhow::bail!("job not found: {}", job_id);
+    };
+    tracing::info!(
+        job_id,
+        request_chat_id,
+        status = %snapshot.job.status,
+        "transfer job status requested"
+    );
+
+    send::ReplyPanel::card(format_job_status_text(&snapshot))
+        .rows(build_job_status_buttons(&snapshot))
+        .send(request_chat_id, client_id)
+        .await
+}
+
 /// 构造 `/job` 动作结果卡片。
 fn format_job_action_text(title: &str, job_id: i64, status: &str, detail: &str) -> String {
     [
@@ -179,9 +208,173 @@ fn format_job_action_text(title: &str, job_id: i64, status: &str, detail: &str) 
     .join("\n")
 }
 
+/// 构造单任务详情卡片。
+fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
+    let total = snapshot.job.total_items.max(0);
+    let finished = snapshot.success_count + snapshot.failed_count + snapshot.cancelled_count;
+    let progress = if total <= 0 {
+        0
+    } else {
+        finished.saturating_mul(100) / total
+    };
+    let mut lines = vec![
+        "任务详情".to_owned(),
+        format!(
+            "job：{}  状态：{}  目标：{}",
+            card::job_ref(snapshot.job.id),
+            card::code(&snapshot.job.status),
+            card::code(snapshot.job.target_chat_id)
+        ),
+        card::DIVIDER.to_owned(),
+        card::section("进度"),
+        format!(
+            "总进度：{}",
+            card::code(format!("{}/{} ({}%)", finished, total, progress))
+        ),
+        format!(
+            "阶段：等待 {} | 下载 {} | 就绪 {} | 上传 {}",
+            card::code(snapshot.pending_count),
+            card::code(snapshot.preparing_count),
+            card::code(snapshot.prepared_count),
+            card::code(snapshot.uploading_count)
+        ),
+        format!(
+            "结果：成功 {} | 失败 {} | 已停 {}",
+            card::code(snapshot.success_count),
+            card::code(snapshot.failed_count),
+            card::code(snapshot.cancelled_count)
+        ),
+    ];
+
+    if snapshot.active_download_files > 0 {
+        lines.push(format!(
+            "真实下载：{}",
+            card::code(format_job_live_download(snapshot))
+        ));
+    }
+
+    lines.push(card::section("时间"));
+    lines.push(format!(
+        "创建：{}",
+        card::code(snapshot.job.created_at.format("%Y-%m-%d %H:%M:%S"))
+    ));
+    lines.push(format!(
+        "更新：{}",
+        card::code(snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"))
+    ));
+    lines.join("\n")
+}
+
+/// 构造单任务详情按钮。
+fn build_job_status_buttons(
+    snapshot: &JobProgressSnapshot,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let job_id = snapshot.job.id;
+    let status = snapshot.job.status.as_str();
+    let mut rows = Vec::new();
+
+    if matches!(
+        status,
+        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING
+    ) {
+        rows.push(vec![
+            send::build_copy_button(
+                "复制暂停",
+                &build_job_command("p", job_id, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_copy_button(
+                "复制停止",
+                &build_job_command("s", job_id, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ]);
+    } else if status == store::JOB_STATUS_PAUSED {
+        rows.push(vec![
+            send::build_copy_button(
+                "复制恢复",
+                &build_job_command("r", job_id, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_copy_button(
+                "复制停止",
+                &build_job_command("s", job_id, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ]);
+    }
+
+    rows.push(vec![
+        send::build_copy_button(
+            "复制刷新详情",
+            &build_job_command("st", job_id, CommandStyle::Short),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        send::build_copy_button(
+            "复制相关列表",
+            &downloads_command(
+                Some(job_status_list_filter(status)),
+                None,
+                None,
+                CommandStyle::Short,
+            ),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]);
+    rows
+}
+
+/// 根据任务状态选择最接近的 `/downloads` 筛选器。
+fn job_status_list_filter(status: &str) -> &'static str {
+    match status {
+        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING => "run",
+        store::JOB_STATUS_PAUSED => "pause",
+        store::JOB_STATUS_CANCELLING | store::JOB_STATUS_CANCEL_FINALIZING => "cancelling",
+        store::JOB_STATUS_CANCELLED => "cancel",
+        store::JOB_STATUS_SUCCESS => "done",
+        store::JOB_STATUS_FAILED | store::JOB_STATUS_PARTIAL => "fail",
+        _ => "all",
+    }
+}
+
+/// 渲染单任务详情里的真实下载进度。
+fn format_job_live_download(snapshot: &JobProgressSnapshot) -> String {
+    let prefix = format!("{} 个文件", snapshot.active_download_files);
+    if snapshot.active_download_total_bytes > 0 && !snapshot.has_unknown_download_total {
+        let progress = snapshot.active_downloaded_bytes.saturating_mul(100)
+            / snapshot.active_download_total_bytes.max(1);
+        return format!(
+            "{} {}/{} ({}%)",
+            prefix,
+            format_bytes(snapshot.active_downloaded_bytes),
+            format_bytes(snapshot.active_download_total_bytes),
+            progress
+        );
+    }
+
+    if snapshot.active_download_total_bytes > 0 {
+        return format!(
+            "{} 已下 {} / 已知总量 {}+",
+            prefix,
+            format_bytes(snapshot.active_downloaded_bytes),
+            format_bytes(snapshot.active_download_total_bytes)
+        );
+    }
+
+    format!(
+        "{} 已下 {}",
+        prefix,
+        format_bytes(snapshot.active_downloaded_bytes)
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::format_job_action_text;
+    use super::{
+        build_job_status_buttons, format_job_action_text, format_job_live_download,
+        format_job_status_text, job_status_list_filter,
+    };
+    use crate::tgbot::transfer::store;
 
     // job 控制回复应使用 card 代码字段展示 job_id 和状态。
     #[test]
@@ -191,5 +384,85 @@ mod tests {
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("状态：‹paused›"));
         assert!(text.contains("说明：等待恢复。"));
+    }
+
+    // 单任务详情应展示状态、目标、进度和时间字段。
+    #[test]
+    fn test_format_job_status_text() {
+        let snapshot = snapshot_with_status(store::JOB_STATUS_RUNNING);
+        let text = format_job_status_text(&snapshot);
+
+        assert!(text.contains("任务详情"));
+        assert!(text.contains("job：‹#42›"));
+        assert!(text.contains("状态：‹running›"));
+        assert!(text.contains("总进度：‹1/3 (33%)›"));
+        assert!(text.contains("■ 时间"));
+    }
+
+    // 运行中任务详情应提供暂停/停止按钮，便于直接控制。
+    #[test]
+    fn test_build_job_status_buttons_for_running() {
+        let buttons = build_job_status_buttons(&snapshot_with_status(store::JOB_STATUS_RUNNING));
+
+        assert_eq!(buttons[0][0].text, "复制暂停");
+        assert_eq!(buttons[0][1].text, "复制停止");
+        assert_eq!(buttons[1][0].text, "复制刷新详情");
+    }
+
+    // paused 任务详情应提供恢复按钮。
+    #[test]
+    fn test_build_job_status_buttons_for_paused() {
+        let buttons = build_job_status_buttons(&snapshot_with_status(store::JOB_STATUS_PAUSED));
+
+        assert_eq!(buttons[0][0].text, "复制恢复");
+        assert_eq!(buttons[0][1].text, "复制停止");
+    }
+
+    // 任务状态应映射到最接近的 downloads 筛选。
+    #[test]
+    fn test_job_status_list_filter() {
+        assert_eq!(job_status_list_filter(store::JOB_STATUS_RUNNING), "run");
+        assert_eq!(job_status_list_filter(store::JOB_STATUS_PAUSED), "pause");
+        assert_eq!(job_status_list_filter(store::JOB_STATUS_SUCCESS), "done");
+        assert_eq!(job_status_list_filter(store::JOB_STATUS_FAILED), "fail");
+    }
+
+    // 真实下载摘要应和下载列表保持同一风格。
+    #[test]
+    fn test_format_job_live_download() {
+        let mut snapshot = snapshot_with_status(store::JOB_STATUS_RUNNING);
+        snapshot.active_download_files = 1;
+        snapshot.active_downloaded_bytes = 1024;
+        snapshot.active_download_total_bytes = 2048;
+
+        assert_eq!(
+            format_job_live_download(&snapshot),
+            "1 个文件 1.0 KB/2.0 KB (50%)"
+        );
+    }
+
+    fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
+        let now = store::now_utc8();
+        store::JobProgressSnapshot {
+            job: store::JobProgressJob {
+                id: 42,
+                target_chat_id: -100,
+                status: status.to_owned(),
+                total_items: 3,
+                created_at: now,
+                updated_at: now,
+            },
+            pending_count: 1,
+            preparing_count: 0,
+            prepared_count: 1,
+            uploading_count: 0,
+            success_count: 1,
+            failed_count: 0,
+            cancelled_count: 0,
+            active_download_files: 0,
+            active_downloaded_bytes: 0,
+            active_download_total_bytes: 0,
+            has_unknown_download_total: false,
+        }
     }
 }
