@@ -2,8 +2,10 @@
 // 回调数据保持短格式，避免 Telegram callback payload 过长。
 
 use super::super::common::{CommandStyle, downloads_command as build_command};
+use super::super::job::build_job_status_callback_data;
 use super::types::{DownloadsArgs, DownloadsFilter};
 use crate::tgbot::send;
+use crate::tgbot::transfer::store;
 
 /// `/downloads` 按钮回调前缀。
 const DOWNLOADS_CALLBACK_PREFIX: &str = "d:";
@@ -109,11 +111,13 @@ pub(super) fn parse_downloads_callback_data(
 ///
 /// 规则：
 /// - 可翻页按钮使用 callback，点击后原地刷新
+/// - 当前页任务使用 callback，点击后直接进入单任务详情
 /// - 当前页按钮使用 copy-text，方便直接复制当前页命令
 /// - 不能继续翻页时退化为 copy-text，避免触发“消息未修改”
 pub(super) fn build_downloads_keyboard(
     args: &DownloadsArgs,
     total_pages: u64,
+    page_items: &[store::JobProgressSnapshot],
 ) -> tdlib_rs::types::ReplyMarkupInlineKeyboard {
     let current_command =
         build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short);
@@ -122,59 +126,77 @@ pub(super) fn build_downloads_keyboard(
     let next_page = (args.page + 1).min(total_pages);
     let last_page = total_pages.max(1);
 
-    tdlib_rs::types::ReplyMarkupInlineKeyboard {
-        rows: vec![
-            vec![
-                build_navigation_button("首页", args, first_page, current_command.clone()),
-                build_navigation_button("上页", args, prev_page, current_command.clone()),
-                build_copy_button(
-                    &format!("{}/{}", args.page, total_pages),
-                    &build_downloads_page_command(
-                        args.filter,
-                        args.limit,
-                        args.page,
-                        CommandStyle::Short,
-                    ),
-                    tdlib_rs::enums::ButtonStyle::Primary,
-                ),
-                build_navigation_button(
-                    "下页",
-                    args,
-                    next_page,
-                    build_downloads_page_command(
-                        args.filter,
-                        args.limit,
-                        args.page,
-                        CommandStyle::Short,
-                    ),
-                ),
-                build_navigation_button(
-                    "末页",
-                    args,
-                    last_page,
-                    build_downloads_page_command(
-                        args.filter,
-                        args.limit,
-                        args.page,
-                        CommandStyle::Short,
-                    ),
-                ),
-            ],
-            vec![
-                build_callback_button(
-                    "刷新",
-                    &build_downloads_refresh_callback_data(args),
-                    tdlib_rs::enums::ButtonStyle::Primary,
-                ),
-                send::build_copy_button(
-                    "复制当前命令",
-                    &current_command,
-                    tdlib_rs::enums::ButtonStyle::Default,
-                ),
-            ],
-            build_filter_buttons(args),
-        ],
-    }
+    let mut rows = vec![vec![
+        build_navigation_button("首页", args, first_page, current_command.clone()),
+        build_navigation_button("上页", args, prev_page, current_command.clone()),
+        build_copy_button(
+            &format!("{}/{}", args.page, total_pages),
+            &build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        build_navigation_button(
+            "下页",
+            args,
+            next_page,
+            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
+        ),
+        build_navigation_button(
+            "末页",
+            args,
+            last_page,
+            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
+        ),
+    ]];
+
+    rows.extend(build_job_detail_buttons(page_items));
+
+    rows.push(vec![
+        build_callback_button(
+            "刷新",
+            &build_downloads_refresh_callback_data(args),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        send::build_copy_button(
+            "复制当前命令",
+            &current_command,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]);
+    rows.push(build_filter_buttons(args));
+
+    tdlib_rs::types::ReplyMarkupInlineKeyboard { rows }
+}
+
+/// 构建当前页任务详情按钮。
+///
+/// 每个按钮只携带 job_id，让用户从下载列表直接跳到对应任务卡片。
+/// 按两列排版可以减少一页任务较多时的键盘高度。
+fn build_job_detail_buttons(
+    page_items: &[store::JobProgressSnapshot],
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    page_items
+        .iter()
+        .map(|snapshot| {
+            let status = snapshot.job.status.as_str();
+            let style = if matches!(
+                status,
+                store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING
+            ) {
+                tdlib_rs::enums::ButtonStyle::Primary
+            } else {
+                tdlib_rs::enums::ButtonStyle::Default
+            };
+
+            send::build_callback_button(
+                &format!("详情 #{}", snapshot.job.id),
+                &build_job_status_callback_data(snapshot.job.id),
+                style,
+            )
+        })
+        .collect::<Vec<_>>()
+        .chunks(2)
+        .map(<[_]>::to_vec)
+        .collect::<Vec<_>>()
 }
 
 /// 构建常用筛选按钮行。

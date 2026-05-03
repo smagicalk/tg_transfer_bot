@@ -12,6 +12,13 @@ pub(super) fn is_job_callback_payload(data: &str) -> bool {
     is_job_callback_data(data)
 }
 
+/// 生成单任务详情按钮所需的 `/job status` callback 数据。
+///
+/// 这个包装函数给 `/downloads` 复用，避免它直接依赖 `/job` 的内部参数枚举。
+pub(super) fn build_job_status_callback_data(job_id: i64) -> String {
+    args::build_job_callback_data(args::JobCallbackAction::Status, job_id)
+}
+
 /// `/job` 命令入口。
 /// 命令格式：`/job <pause|resume|stop|status> <job_id>`
 pub async fn job_command(

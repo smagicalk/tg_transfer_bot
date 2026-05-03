@@ -121,6 +121,54 @@ fn test_format_downloads_text_for_empty() {
     assert!(text.contains("下载列表为空"));
 }
 
+// 当前页存在任务时，应为每个任务生成详情按钮。
+#[test]
+fn test_build_downloads_keyboard_has_job_detail_buttons() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::All,
+        limit: 8,
+        page: 1,
+    };
+    let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("running")]);
+
+    assert_eq!(keyboard.rows[1][0].text, "详情 #1");
+    assert!(matches!(
+        keyboard.rows[1][0].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+}
+
+// 任务详情按钮应使用短 callback payload，方便和 `/job` 统一路由。
+#[test]
+fn test_build_downloads_keyboard_job_detail_callback_data() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::All,
+        limit: 8,
+        page: 1,
+    };
+    let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("running")]);
+
+    let button = &keyboard.rows[1][0];
+    let data = match &button.r#type {
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
+        other => panic!("unexpected button type: {:?}", other),
+    };
+    assert_eq!(data, "j:st:1");
+}
+
+// 空列表时不应生成任务详情按钮行。
+#[test]
+fn test_build_downloads_keyboard_empty_page_has_no_job_detail_row() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::All,
+        limit: 8,
+        page: 1,
+    };
+    let keyboard = build_downloads_keyboard(&args, 1, &[]);
+
+    assert_eq!(keyboard.rows[1][0].text, "刷新");
+}
+
 // 字节格式化应能覆盖整数和小数展示。
 #[test]
 fn test_format_bytes() {
@@ -196,7 +244,7 @@ fn test_build_downloads_keyboard_current_page_is_copy_button() {
         limit: 5,
         page: 2,
     };
-    let keyboard = build_downloads_keyboard(&args, 4);
+    let keyboard = build_downloads_keyboard(&args, 4, &[]);
     let current = &keyboard.rows[0][2];
     assert_eq!(current.text, "2/4");
     assert!(matches!(
@@ -213,7 +261,7 @@ fn test_build_downloads_keyboard_has_refresh_row() {
         limit: 8,
         page: 1,
     };
-    let keyboard = build_downloads_keyboard(&args, 2);
+    let keyboard = build_downloads_keyboard(&args, 2, &[]);
 
     assert_eq!(keyboard.rows.len(), 3);
     assert_eq!(keyboard.rows[1][0].text, "刷新");
@@ -232,7 +280,7 @@ fn test_build_downloads_keyboard_has_filter_row() {
         limit: 8,
         page: 2,
     };
-    let keyboard = build_downloads_keyboard(&args, 4);
+    let keyboard = build_downloads_keyboard(&args, 4, &[]);
 
     assert_eq!(keyboard.rows[2][0].text, "全部");
     assert!(matches!(

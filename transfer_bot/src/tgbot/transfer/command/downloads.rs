@@ -137,7 +137,7 @@ async fn render_downloads_page(
         "downloads page rendered"
     );
     let text = format_downloads_text(&page_items, &normalized_args, total);
-    let keyboard = build_downloads_keyboard(&normalized_args, total_pages);
+    let keyboard = build_downloads_keyboard(&normalized_args, total_pages, &page_items);
 
     Ok(DownloadsRenderedPage {
         panel: send::ReplyPanel::card(text).rows(keyboard.rows),
