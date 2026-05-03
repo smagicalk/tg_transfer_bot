@@ -28,6 +28,26 @@ pub fn build_copy_button(
     }
 }
 
+/// 构造 callback 按钮。
+///
+/// 点击后 TDLib 会发送 `UpdateNewCallbackQuery`，适合“刷新当前消息”或“原地执行轻量控制”。
+pub fn build_callback_button(
+    text: &str,
+    data: &str,
+    style: tdlib_rs::enums::ButtonStyle,
+) -> tdlib_rs::types::InlineKeyboardButton {
+    tdlib_rs::types::InlineKeyboardButton {
+        text: text.to_owned(),
+        icon_custom_emoji_id: 0,
+        style,
+        r#type: tdlib_rs::enums::InlineKeyboardButtonType::Callback(
+            tdlib_rs::types::InlineKeyboardButtonTypeCallback {
+                data: data.to_owned(),
+            },
+        ),
+    }
+}
+
 /// 构造打开链接按钮。
 pub fn build_url_button(
     text: &str,
@@ -57,7 +77,20 @@ pub fn is_openable_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_openable_url;
+    use super::{build_callback_button, is_openable_url};
+
+    // callback 按钮应保留短 payload，供命令分发器识别。
+    #[test]
+    fn test_build_callback_button() {
+        let button =
+            build_callback_button("刷新", "j:st:42", tdlib_rs::enums::ButtonStyle::Primary);
+
+        assert_eq!(button.text, "刷新");
+        assert!(matches!(
+            button.r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+        ));
+    }
 
     // 业务层只把 HTTP(S) 当成稳定结果链接，避免旧 tg://openmessage 再次进入打开按钮。
     #[test]

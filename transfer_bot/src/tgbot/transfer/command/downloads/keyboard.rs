@@ -240,16 +240,7 @@ fn build_callback_button(
     data: &str,
     style: tdlib_rs::enums::ButtonStyle,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    tdlib_rs::types::InlineKeyboardButton {
-        text: text.to_owned(),
-        icon_custom_emoji_id: 0,
-        style,
-        r#type: tdlib_rs::enums::InlineKeyboardButtonType::Callback(
-            tdlib_rs::types::InlineKeyboardButtonTypeCallback {
-                data: data.to_owned(),
-            },
-        ),
-    }
+    send::build_callback_button(text, data, style)
 }
 
 /// 构建一个复制文本按钮。

@@ -18,6 +18,13 @@ use keyboard::{DownloadsCallbackAction, build_downloads_keyboard, parse_download
 use render::{compute_downloads_query_limit, compute_total_pages, format_downloads_text};
 use types::{DownloadsArgs, parse_downloads_args};
 
+/// 判断 callback payload 是否属于 `/downloads`。
+///
+/// 统一回调分发器只看前缀，具体参数是否合法仍由 `/downloads` 自己解析和回复。
+pub(super) fn is_downloads_callback_data(data: &str) -> bool {
+    data.starts_with("d:")
+}
+
 /// `/downloads` 命令入口。
 /// 命令格式：`/downloads [filter] [limit] [page]`
 /// 示例：

@@ -15,8 +15,8 @@ mod types;
 mod workflow;
 
 pub use command::{
-    config_command, downloads_callback_query, downloads_command, help_command, job_command,
-    lookup_command, transfer_command,
+    config_command, downloads_command, help_command, job_command, lookup_command,
+    transfer_callback_query, transfer_command,
 };
 pub(in crate::tgbot::transfer) use runtime::runtime_config;
 pub use runtime::{init_runtime_config, update_runtime_config};

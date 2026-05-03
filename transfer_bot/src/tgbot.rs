@@ -209,7 +209,7 @@ pub async fn handle_update(
         return Ok(());
     }
 
-    // inline keyboard 回调：目前用于 `/downloads` 分页。
+    // inline keyboard 回调：用于 `/downloads` 分页和 `/job` 原地控制。
     if let Update::NewCallbackQuery(update_callback_query) = update {
         // 只接受管理员在管理员聊天里点击的按钮。
         if !(config.admin_ids.contains(&update_callback_query.chat_id)
@@ -228,7 +228,7 @@ pub async fn handle_update(
             sender_user_id = update_callback_query.sender_user_id,
             "admin callback query received"
         );
-        tgbot::transfer::downloads_callback_query(update_callback_query, client_id).await?;
+        tgbot::transfer::transfer_callback_query(update_callback_query, client_id).await?;
         return Ok(());
     }
 

@@ -17,6 +17,27 @@ pub(super) struct JobArgs {
     pub(super) job_id: i64,
 }
 
+/// `/job` callback 动作。
+///
+/// callback 只承载轻量控制，不放链接和长文本，避免 Telegram payload 过长。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum JobCallbackAction {
+    Pause,
+    Resume,
+    Stop,
+    Status,
+}
+
+/// `/job` callback 解析结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct JobCallbackArgs {
+    pub(super) action: JobCallbackAction,
+    pub(super) job_id: i64,
+}
+
+/// `/job` callback 前缀。
+const JOB_CALLBACK_PREFIX: &str = "j:";
+
 /// 解析 `/job <action> <job_id>`。
 pub(super) fn parse_job_args(text: &[&str]) -> anyhow::Result<JobArgs> {
     let action = text
@@ -38,6 +59,42 @@ pub(super) fn parse_job_args(text: &[&str]) -> anyhow::Result<JobArgs> {
     };
 
     Ok(JobArgs { action, job_id })
+}
+
+/// 判断 callback payload 是否属于 `/job`。
+pub(super) fn is_job_callback_data(data: &str) -> bool {
+    data.starts_with(JOB_CALLBACK_PREFIX)
+}
+
+/// 构造 `/job` callback payload。
+///
+/// payload 采用 `j:<action>:<job_id>`，短格式便于后续继续加按钮。
+pub(super) fn build_job_callback_data(action: JobCallbackAction, job_id: i64) -> String {
+    let action = match action {
+        JobCallbackAction::Pause => "p",
+        JobCallbackAction::Resume => "r",
+        JobCallbackAction::Stop => "s",
+        JobCallbackAction::Status => "st",
+    };
+    format!("{}{}:{}", JOB_CALLBACK_PREFIX, action, job_id)
+}
+
+/// 解析 `/job` callback payload。
+pub(super) fn parse_job_callback_data(data: &str) -> Option<JobCallbackArgs> {
+    let payload = data.strip_prefix(JOB_CALLBACK_PREFIX)?;
+    let mut parts = payload.split(':');
+    let action = match parts.next()? {
+        "p" => JobCallbackAction::Pause,
+        "r" => JobCallbackAction::Resume,
+        "s" => JobCallbackAction::Stop,
+        "st" => JobCallbackAction::Status,
+        _ => return None,
+    };
+    let job_id = parts.next()?.parse::<i64>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(JobCallbackArgs { action, job_id })
 }
 
 #[cfg(test)]
@@ -99,5 +156,24 @@ mod tests {
         assert!(parse_job_args(&["/j", "bad", "1"]).is_err());
         assert!(parse_job_args(&["/j", "p"]).is_err());
         assert!(parse_job_args(&["/j", "p", "abc"]).is_err());
+    }
+
+    // callback payload 使用短格式，避免 Telegram callback data 过长。
+    #[test]
+    fn test_job_callback_data_roundtrip() {
+        let data = build_job_callback_data(JobCallbackAction::Status, 42);
+        assert_eq!(data, "j:st:42");
+        assert!(is_job_callback_data(&data));
+        assert_eq!(
+            parse_job_callback_data(&data),
+            Some(JobCallbackArgs {
+                action: JobCallbackAction::Status,
+                job_id: 42,
+            })
+        );
+
+        assert_eq!(parse_job_callback_data("d:r:run:8:1"), None);
+        assert_eq!(parse_job_callback_data("j:x:42"), None);
+        assert_eq!(parse_job_callback_data("j:st:not-int"), None);
     }
 }

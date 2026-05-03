@@ -7,7 +7,10 @@ mod buttons;
 mod message;
 mod panel;
 
-pub use buttons::{build_copy_button, build_inline_keyboard, build_url_button, is_openable_url};
+pub use buttons::{
+    build_callback_button, build_copy_button, build_inline_keyboard, build_url_button,
+    is_openable_url,
+};
 pub use message::{
     answer_callback_query, edit_card_message_with_inline_keyboard,
     edit_markdown_message_with_inline_keyboard, observe_message_send_failed,
