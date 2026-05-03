@@ -1,18 +1,18 @@
 // 转存进度面板的文案渲染。
-// 本模块只负责把任务快照和执行结果转换成 Markdown 文本，不触碰 TDLib 调用。
+// 本模块只负责把任务快照和执行结果转换成 card 标记文本，不触碰 TDLib 调用。
 
-use crate::tgbot::transfer::{store, types};
-
-const CARD_DIVIDER: &str = "━━━━━━━━━━━━";
+use crate::tgbot::transfer::{card, store, types};
 
 /// 构造任务尚未入库时的等待文本。
 pub(super) fn format_transfer_waiting_text(plan: &types::TransferPlan) -> String {
-    format!(
-        "*转存进度*\n状态：`waiting`\n目标：`{}`\n{}\n说明：正在排队或抓取源消息。\n源：`{}`",
-        plan.target_chat_id,
-        CARD_DIVIDER,
-        markdown_inline_code(&plan.source_link)
-    )
+    let mut lines = vec![
+        "转存进度".to_owned(),
+        card::status_target("waiting", plan.target_chat_id),
+        card::DIVIDER.to_owned(),
+        "说明：正在排队或抓取源消息。".to_owned(),
+    ];
+    lines.extend(card::source_link_block(&plan.source_link));
+    lines.join("\n")
 }
 
 /// 构造单任务进度文本。
@@ -28,36 +28,44 @@ pub(super) fn format_transfer_progress_text(
         finished.saturating_mul(100) / total
     };
     let mut lines = vec![
-        format!("*转存进度* `#{}`", snapshot.job.id),
-        format!("状态：`{}`", snapshot.job.status),
-        CARD_DIVIDER.to_owned(),
-        format!("进度：`{}/{} ({}%)`", finished, total, progress),
-        format!("目标：`{}`", snapshot.job.target_chat_id),
+        format!("转存进度 {}", card::job_ref(snapshot.job.id)),
         format!(
-            "阶段：等待 `{}` | 下载 `{}` | 就绪 `{}` | 上传 `{}`",
-            snapshot.pending_count,
-            snapshot.preparing_count,
-            snapshot.prepared_count,
-            snapshot.uploading_count
+            "{}",
+            card::status_target(&snapshot.job.status, snapshot.job.target_chat_id)
+        ),
+        card::DIVIDER.to_owned(),
+        format!(
+            "{}：{}",
+            card::section("进度"),
+            card::code(format!("{}/{} ({}%)", finished, total, progress))
         ),
         format!(
-            "结果：成功 `{}` | 失败 `{}` | 已停 `{}`",
-            snapshot.success_count, snapshot.failed_count, snapshot.cancelled_count
+            "阶段：等待 {} | 下载 {} | 就绪 {} | 上传 {}",
+            card::code(snapshot.pending_count),
+            card::code(snapshot.preparing_count),
+            card::code(snapshot.prepared_count),
+            card::code(snapshot.uploading_count)
+        ),
+        format!(
+            "结果：成功 {} | 失败 {} | 已停 {}",
+            card::code(snapshot.success_count),
+            card::code(snapshot.failed_count),
+            card::code(snapshot.cancelled_count)
         ),
     ];
 
     if snapshot.active_download_files > 0 {
         lines.push(format!(
             "真实下载：{}",
-            format_progress_live_download(snapshot)
+            card::code(format_progress_live_download(snapshot))
         ));
     }
 
     lines.push(format!(
-        "更新：`{}`",
-        snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S")
+        "更新：{}",
+        card::code(snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"))
     ));
-    lines.push(format!("源：`{}`", markdown_inline_code(source_link)));
+    lines.extend(card::source_link_block(source_link));
     lines.join("\n")
 }
 
@@ -68,27 +76,15 @@ pub(super) fn format_transfer_final_text(
     target_chat_id: i64,
     result_link: &str,
 ) -> String {
-    let result_line = if crate::tgbot::send::is_openable_url(result_link) {
-        format!(
-            "*结果*\n[打开转存消息]({})\n链接：`{}`",
-            result_link,
-            markdown_inline_code(result_link)
-        )
-    } else {
-        format!(
-            "*结果*\n状态：`已上传，但当前 chat 无可跳转消息链接`\n定位：`{}`",
-            markdown_inline_code(result_link)
-        )
-    };
-
-    format!(
-        "*{}*\n状态：`success`  目标：`{}`\n{}\n{}\n\n*来源*\n`{}`",
-        title,
-        target_chat_id,
-        CARD_DIVIDER,
-        result_line,
-        markdown_inline_code(source_link)
-    )
+    let mut lines = vec![
+        title.to_owned(),
+        card::status_target("success", target_chat_id),
+        card::DIVIDER.to_owned(),
+        card::result_block(result_link),
+        String::new(),
+    ];
+    lines.extend(card::source_block(source_link));
+    lines.join("\n")
 }
 
 /// 构造暂停、停止、运行中这类控制态文本。
@@ -99,15 +95,18 @@ pub(super) fn format_transfer_control_text(
     job_id: i64,
     detail: &str,
 ) -> String {
-    format!(
-        "*{}*\njob：`#{}`\n目标：`{}`\n{}\n说明：{}\n源：`{}`",
-        title,
-        job_id,
-        target_chat_id,
-        CARD_DIVIDER,
-        detail,
-        markdown_inline_code(source_link)
-    )
+    let mut lines = vec![
+        title.to_owned(),
+        format!(
+            "job：{}  目标：{}",
+            card::job_ref(job_id),
+            card::code(target_chat_id)
+        ),
+        card::DIVIDER.to_owned(),
+        format!("说明：{}", detail),
+    ];
+    lines.extend(card::source_block(source_link));
+    lines.join("\n")
 }
 
 /// 构造失败结果文本。
@@ -116,13 +115,15 @@ pub(super) fn format_transfer_error_text(
     target_chat_id: i64,
     error: &str,
 ) -> String {
-    format!(
-        "*转存失败*\n状态：`failed`\n目标：`{}`\n{}\n错误：`{}`\n源：`{}`",
-        target_chat_id,
-        CARD_DIVIDER,
-        markdown_inline_code(error),
-        markdown_inline_code(source_link)
-    )
+    let mut lines = vec![
+        "转存失败".to_owned(),
+        card::status_target("failed", target_chat_id),
+        card::DIVIDER.to_owned(),
+        card::section("错误"),
+        card::code(error),
+    ];
+    lines.extend(card::source_block(source_link));
+    lines.join("\n")
 }
 
 /// 渲染真实下载进度。
@@ -171,9 +172,4 @@ pub(super) fn format_progress_bytes(bytes: i64) -> String {
     } else {
         format!("{:.1} {}", value, units[unit_idx])
     }
-}
-
-/// 转义 Markdown 行内代码里的反引号，避免错误文本破坏面板格式。
-fn markdown_inline_code(text: &str) -> String {
-    text.replace('`', "'")
 }

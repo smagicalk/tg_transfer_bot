@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::config::BotConfig;
 use crate::tgbot::send;
+use crate::tgbot::transfer::card;
 
 use super::common::{CommandStyle, lookup_command, resolve_target_chat_id};
 use crate::tgbot::transfer::types::TransferPlan;
@@ -41,12 +42,8 @@ pub async fn transfer_command(
     // 先给用户一个即时反馈，避免长时间下载/上传期间命令看起来像“卡住了”。
     let lookup_command =
         lookup_command(&plan.source_link, plan.target_chat_id, CommandStyle::Short);
-    let progress_message = send::send_markdown_message_with_buttons_returning(
-        format!(
-            "*已接收转存请求*\n状态：`queued`  目标：`{}`\n━━━━━━━━━━━━\n*进度*\n后台会自动下载并上传，本消息会持续刷新。\n\n*来源*\n`{}`",
-            plan.target_chat_id,
-            markdown_inline_code(&plan.source_link)
-        ),
+    let progress_message = send::send_card_message_with_buttons_returning(
+        format_transfer_accepted_text(&plan),
         request_chat_id,
         vec![vec![
             send::build_copy_button(
@@ -73,7 +70,41 @@ pub async fn transfer_command(
     Ok(())
 }
 
-/// 转义 Markdown 行内代码里的反引号，避免用户输入链接破坏卡片格式。
-fn markdown_inline_code(text: &str) -> String {
-    text.replace('`', "'")
+/// 构造 `/transfer` 首次回执卡片。
+///
+/// 后台任务启动后会持续编辑同一条消息，因此初始卡片也使用 card 格式，避免样式闪变。
+fn format_transfer_accepted_text(plan: &TransferPlan) -> String {
+    [
+        "已接收转存请求".to_owned(),
+        card::status_target("queued", plan.target_chat_id),
+        card::DIVIDER.to_owned(),
+        card::section("进度"),
+        "后台会自动下载并上传，本消息会持续刷新。".to_owned(),
+        String::new(),
+    ]
+    .into_iter()
+    .chain(card::source_block(&plan.source_link))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_transfer_accepted_text;
+    use crate::tgbot::transfer::types::TransferPlan;
+
+    // 首次回执应直接使用卡片标记，后续编辑不会从 Markdown 样式跳到 card 样式。
+    #[test]
+    fn test_format_transfer_accepted_text() {
+        let text = format_transfer_accepted_text(&TransferPlan {
+            source_link: "https://t.me/c/1/2".to_owned(),
+            target_chat_id: -100,
+            request_chat_id: 1,
+            request_message_id: 2,
+        });
+
+        assert!(text.contains("状态：‹queued›"));
+        assert!(text.contains("目标：‹-100›"));
+        assert!(text.contains("‹https://t.me/c/1/2›"));
+    }
 }

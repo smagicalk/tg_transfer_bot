@@ -2,6 +2,7 @@
 // 每个动作都先更新数据库状态，再返回可复制的下一步命令按钮。
 
 use crate::tgbot::send;
+use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
 use crate::tgbot::transfer::workflow;
 
@@ -22,9 +23,11 @@ pub(super) async fn pause_job(
         status = %job.status,
         "transfer job paused by command"
     );
-    send::ReplyPanel::markdown(format!(
-        "*任务已暂停*\njob：`#{}`\n状态：`{}`\n━━━━━━━━━━━━\n说明：恢复后会从已有子项状态继续处理。",
-        job.id, job.status
+    send::ReplyPanel::card(format_job_action_text(
+        "任务已暂停",
+        job.id,
+        &job.status,
+        "恢复后会从已有子项状态继续处理。",
     ))
     .row(vec![
         send::build_copy_button(
@@ -79,29 +82,26 @@ pub(super) async fn resume_job(
         "后台会继续下载/上传剩余内容。"
     };
 
-    send::ReplyPanel::markdown(format!(
-        "*{}*\njob：`#{}`\n状态：`{}`\n━━━━━━━━━━━━\n说明：{}",
-        title, job.id, job.status, detail
-    ))
-    .row(vec![
-        send::build_copy_button(
-            "复制暂停",
-            &build_job_command("p", job.id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        send::build_copy_button(
-            "复制停止",
-            &build_job_command("s", job.id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        send::build_copy_button(
-            "复制运行列表",
-            &downloads_command(Some("run"), None, None, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-    ])
-    .send(request_chat_id, client_id)
-    .await
+    send::ReplyPanel::card(format_job_action_text(title, job.id, &job.status, detail))
+        .row(vec![
+            send::build_copy_button(
+                "复制暂停",
+                &build_job_command("p", job.id, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制停止",
+                &build_job_command("s", job.id, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制运行列表",
+                &downloads_command(Some("run"), None, None, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+        ])
+        .send(request_chat_id, client_id)
+        .await
 }
 
 /// 停止任务。
@@ -147,22 +147,49 @@ pub(super) async fn stop_job(
         "文件引用已释放，后续由删除队列按配置清理。"
     };
 
-    send::ReplyPanel::markdown(format!(
-        "*{}*\njob：`#{}`\n状态：`{}`\n━━━━━━━━━━━━\n说明：{}",
-        title, job.id, job.status, detail
-    ))
-    .row(vec![
-        send::build_copy_button(
-            "复制 job_id",
-            &job.id.to_string(),
-            tdlib_rs::enums::ButtonStyle::Primary,
+    send::ReplyPanel::card(format_job_action_text(title, job.id, &job.status, detail))
+        .row(vec![
+            send::build_copy_button(
+                "复制 job_id",
+                &job.id.to_string(),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_copy_button(
+                "复制停止列表",
+                &downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ])
+        .send(request_chat_id, client_id)
+        .await
+}
+
+/// 构造 `/job` 动作结果卡片。
+fn format_job_action_text(title: &str, job_id: i64, status: &str, detail: &str) -> String {
+    [
+        title.to_owned(),
+        format!(
+            "job：{}  状态：{}",
+            card::job_ref(job_id),
+            card::code(status)
         ),
-        send::build_copy_button(
-            "复制停止列表",
-            &downloads_command(Some("cancel"), None, None, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .send(request_chat_id, client_id)
-    .await
+        card::DIVIDER.to_owned(),
+        format!("说明：{}", detail),
+    ]
+    .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_job_action_text;
+
+    // job 控制回复应使用 card 代码字段展示 job_id 和状态。
+    #[test]
+    fn test_format_job_action_text() {
+        let text = format_job_action_text("任务已暂停", 42, "paused", "等待恢复。");
+
+        assert!(text.contains("job：‹#42›"));
+        assert!(text.contains("状态：‹paused›"));
+        assert!(text.contains("说明：等待恢复。"));
+    }
 }

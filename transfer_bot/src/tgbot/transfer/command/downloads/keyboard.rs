@@ -23,15 +23,54 @@ pub(super) fn build_downloads_page_command(
     build_command(filter, Some(limit), Some(page), style)
 }
 
-/// 生成按钮回调数据。
-pub(super) fn build_downloads_callback_data(
+/// 下载列表按钮动作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DownloadsCallbackAction {
+    Page,
+    Refresh,
+    Filter,
+}
+
+/// 生成翻页按钮回调数据。
+pub(super) fn build_downloads_page_callback_data(
     filter: DownloadsFilter,
     limit: u64,
     page: u64,
 ) -> String {
+    build_downloads_callback_data(DownloadsCallbackAction::Page, filter, limit, page)
+}
+
+/// 生成刷新按钮回调数据。
+pub(super) fn build_downloads_refresh_callback_data(args: &DownloadsArgs) -> String {
+    build_downloads_callback_data(
+        DownloadsCallbackAction::Refresh,
+        args.filter,
+        args.limit,
+        args.page,
+    )
+}
+
+/// 生成筛选按钮回调数据。
+pub(super) fn build_downloads_filter_callback_data(filter: DownloadsFilter, limit: u64) -> String {
+    build_downloads_callback_data(DownloadsCallbackAction::Filter, filter, limit, 1)
+}
+
+/// 生成按钮回调数据。
+fn build_downloads_callback_data(
+    action: DownloadsCallbackAction,
+    filter: DownloadsFilter,
+    limit: u64,
+    page: u64,
+) -> String {
+    let action = match action {
+        DownloadsCallbackAction::Page => "p",
+        DownloadsCallbackAction::Refresh => "r",
+        DownloadsCallbackAction::Filter => "f",
+    };
     format!(
-        "{}{}:{}:{}",
+        "{}{}:{}:{}:{}",
         DOWNLOADS_CALLBACK_PREFIX,
+        action,
         filter.command_value(),
         limit.clamp(1, 20),
         page.max(1)
@@ -39,20 +78,31 @@ pub(super) fn build_downloads_callback_data(
 }
 
 /// 解析按钮回调数据，还原为分页参数。
-pub(super) fn parse_downloads_callback_data(data: &str) -> Option<DownloadsArgs> {
+pub(super) fn parse_downloads_callback_data(
+    data: &str,
+) -> Option<(DownloadsCallbackAction, DownloadsArgs)> {
     let payload = data.strip_prefix(DOWNLOADS_CALLBACK_PREFIX)?;
     let mut parts = payload.split(':');
+    let action = match parts.next()? {
+        "p" => DownloadsCallbackAction::Page,
+        "r" => DownloadsCallbackAction::Refresh,
+        "f" => DownloadsCallbackAction::Filter,
+        _ => return None,
+    };
     let filter = DownloadsFilter::parse(parts.next()?)?;
     let limit = parts.next()?.parse::<u64>().ok()?.clamp(1, 20);
     let page = parts.next()?.parse::<u64>().ok()?.max(1);
     if parts.next().is_some() {
         return None;
     }
-    Some(DownloadsArgs {
-        filter,
-        limit,
-        page,
-    })
+    Some((
+        action,
+        DownloadsArgs {
+            filter,
+            limit,
+            page,
+        },
+    ))
 }
 
 /// 构建下载列表分页键盘。
@@ -73,43 +123,86 @@ pub(super) fn build_downloads_keyboard(
     let last_page = total_pages.max(1);
 
     tdlib_rs::types::ReplyMarkupInlineKeyboard {
-        rows: vec![vec![
-            build_navigation_button("首页", args, first_page, current_command.clone()),
-            build_navigation_button("上页", args, prev_page, current_command.clone()),
-            build_copy_button(
-                &format!("{}/{}", args.page, total_pages),
-                &build_downloads_page_command(
-                    args.filter,
-                    args.limit,
-                    args.page,
-                    CommandStyle::Short,
+        rows: vec![
+            vec![
+                build_navigation_button("首页", args, first_page, current_command.clone()),
+                build_navigation_button("上页", args, prev_page, current_command.clone()),
+                build_copy_button(
+                    &format!("{}/{}", args.page, total_pages),
+                    &build_downloads_page_command(
+                        args.filter,
+                        args.limit,
+                        args.page,
+                        CommandStyle::Short,
+                    ),
+                    tdlib_rs::enums::ButtonStyle::Primary,
                 ),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            build_navigation_button(
-                "下页",
-                args,
-                next_page,
-                build_downloads_page_command(
-                    args.filter,
-                    args.limit,
-                    args.page,
-                    CommandStyle::Short,
+                build_navigation_button(
+                    "下页",
+                    args,
+                    next_page,
+                    build_downloads_page_command(
+                        args.filter,
+                        args.limit,
+                        args.page,
+                        CommandStyle::Short,
+                    ),
                 ),
-            ),
-            build_navigation_button(
-                "末页",
-                args,
-                last_page,
-                build_downloads_page_command(
-                    args.filter,
-                    args.limit,
-                    args.page,
-                    CommandStyle::Short,
+                build_navigation_button(
+                    "末页",
+                    args,
+                    last_page,
+                    build_downloads_page_command(
+                        args.filter,
+                        args.limit,
+                        args.page,
+                        CommandStyle::Short,
+                    ),
                 ),
-            ),
-        ]],
+            ],
+            vec![
+                build_callback_button(
+                    "刷新",
+                    &build_downloads_refresh_callback_data(args),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_copy_button(
+                    "复制当前命令",
+                    &current_command,
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
+            build_filter_buttons(args),
+        ],
     }
+}
+
+/// 构建常用筛选按钮行。
+fn build_filter_buttons(args: &DownloadsArgs) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    [
+        ("全部", DownloadsFilter::All),
+        ("处理中", DownloadsFilter::Running),
+        ("下载", DownloadsFilter::Downloading),
+        ("上传", DownloadsFilter::Uploading),
+        ("完成", DownloadsFilter::Finished),
+        ("失败", DownloadsFilter::Failed),
+    ]
+    .into_iter()
+    .map(|(label, filter)| {
+        if filter == args.filter {
+            return send::build_copy_button(
+                label,
+                &build_downloads_page_command(filter, args.limit, 1, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            );
+        }
+        build_callback_button(
+            label,
+            &build_downloads_filter_callback_data(filter, args.limit),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )
+    })
+    .collect()
 }
 
 /// 构建一个导航按钮。
@@ -135,7 +228,25 @@ fn build_navigation_button(
         style: tdlib_rs::enums::ButtonStyle::Default,
         r#type: tdlib_rs::enums::InlineKeyboardButtonType::Callback(
             tdlib_rs::types::InlineKeyboardButtonTypeCallback {
-                data: build_downloads_callback_data(args.filter, args.limit, target_page),
+                data: build_downloads_page_callback_data(args.filter, args.limit, target_page),
+            },
+        ),
+    }
+}
+
+/// 构建一个 callback 按钮。
+fn build_callback_button(
+    text: &str,
+    data: &str,
+    style: tdlib_rs::enums::ButtonStyle,
+) -> tdlib_rs::types::InlineKeyboardButton {
+    tdlib_rs::types::InlineKeyboardButton {
+        text: text.to_owned(),
+        icon_custom_emoji_id: 0,
+        style,
+        r#type: tdlib_rs::enums::InlineKeyboardButtonType::Callback(
+            tdlib_rs::types::InlineKeyboardButtonTypeCallback {
+                data: data.to_owned(),
             },
         ),
     }

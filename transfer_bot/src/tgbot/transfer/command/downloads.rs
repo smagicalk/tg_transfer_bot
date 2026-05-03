@@ -14,7 +14,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-use keyboard::{build_downloads_keyboard, parse_downloads_callback_data};
+use keyboard::{DownloadsCallbackAction, build_downloads_keyboard, parse_downloads_callback_data};
 use render::{compute_downloads_query_limit, compute_total_pages, format_downloads_text};
 use types::{DownloadsArgs, parse_downloads_args};
 
@@ -59,7 +59,7 @@ pub async fn downloads_callback_query(
         }
     };
 
-    let Some(args) = parse_downloads_callback_data(&payload) else {
+    let Some((action, args)) = parse_downloads_callback_data(&payload) else {
         send::answer_callback_query(update.id, Some("分页参数无效"), client_id).await?;
         return Ok(());
     };
@@ -69,13 +69,19 @@ pub async fn downloads_callback_query(
         filter = args.filter.command_value(),
         limit = args.limit,
         page = args.page,
+        action = ?action,
         "downloads callback page requested"
     );
 
     let rendered = render_downloads_page(update.chat_id, args).await?;
-    let (text, keyboard) = rendered.panel.into_markdown_parts()?;
-    send::answer_callback_query(update.id, None, client_id).await?;
-    send::edit_markdown_message_with_inline_keyboard(
+    let (text, keyboard) = rendered.panel.into_card_parts()?;
+    let callback_tip = match action {
+        DownloadsCallbackAction::Page => None,
+        DownloadsCallbackAction::Refresh => Some("已刷新"),
+        DownloadsCallbackAction::Filter => Some(args.filter.label()),
+    };
+    send::answer_callback_query(update.id, callback_tip, client_id).await?;
+    send::edit_card_message_with_inline_keyboard(
         text,
         update.chat_id,
         update.message_id,
@@ -127,6 +133,6 @@ async fn render_downloads_page(
     let keyboard = build_downloads_keyboard(&normalized_args, total_pages);
 
     Ok(DownloadsRenderedPage {
-        panel: send::ReplyPanel::markdown(text).rows(keyboard.rows),
+        panel: send::ReplyPanel::card(text).rows(keyboard.rows),
     })
 }

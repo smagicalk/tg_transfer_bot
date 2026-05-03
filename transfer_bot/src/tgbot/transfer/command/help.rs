@@ -27,7 +27,7 @@ pub async fn help_command(
             build_help_detail_buttons(command_name)?,
         ),
     };
-    let mut panel = send::ReplyPanel::markdown(help_text);
+    let mut panel = send::ReplyPanel::card(help_text);
     for row in rows {
         panel = panel.row(row);
     }

@@ -1,12 +1,11 @@
 // `/downloads` 的文本渲染。
-// 该模块只把已经查询好的任务快照渲染为 Telegram Markdown 文本。
+// 该模块只把已经查询好的任务快照渲染为 card 标记文本。
 
 use super::super::common::{CommandStyle, short_and_long};
 use super::keyboard::build_downloads_page_command;
 use super::types::DownloadsArgs;
+use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
-
-const CARD_DIVIDER: &str = "━━━━━━━━━━━━";
 
 /// 将任务快照渲染成便于 Telegram 阅读的文本。
 pub(super) fn format_downloads_text(
@@ -17,12 +16,11 @@ pub(super) fn format_downloads_text(
     let total_pages = compute_total_pages(total, args.limit);
     if snapshots.is_empty() {
         return format!(
-            "*下载列表为空*\n筛选：`{}`\n页码：`{}/{}`  每页：`{}`\n{}\n命令：{}\n说明：可切换筛选或稍后刷新。",
-            args.filter.label(),
-            args.page,
-            total_pages,
-            args.limit,
-            CARD_DIVIDER,
+            "下载列表为空\n筛选：{}\n页码：{}  每页：{}\n{}\n命令：{}\n说明：可切换筛选或稍后刷新。",
+            card::code(args.filter.label()),
+            card::code(format!("{}/{}", args.page, total_pages)),
+            card::code(args.limit),
+            card::DIVIDER,
             short_and_long(
                 build_downloads_page_command(
                     args.filter,
@@ -42,14 +40,13 @@ pub(super) fn format_downloads_text(
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "*下载列表*\n筛选：`{}`\n页码：`{}/{}`  每页：`{}`  总数：`{}`",
-        args.filter.label(),
-        args.page,
-        total_pages,
-        args.limit,
-        total
+        "下载列表\n筛选：{}\n页码：{}  每页：{}  总数：{}",
+        card::code(args.filter.label()),
+        card::code(format!("{}/{}", args.page, total_pages)),
+        card::code(args.limit),
+        card::code(total)
     ));
-    lines.push(CARD_DIVIDER.to_owned());
+    lines.push(card::DIVIDER.to_owned());
     lines.push(format!(
         "命令：{}",
         short_and_long(
@@ -59,7 +56,7 @@ pub(super) fn format_downloads_text(
     ));
 
     for snapshot in snapshots {
-        lines.push(CARD_DIVIDER.to_owned());
+        lines.push(card::DIVIDER.to_owned());
         let total = snapshot.job.total_items.max(0);
         let finished = snapshot.success_count + snapshot.failed_count + snapshot.cancelled_count;
         let progress = if total <= 0 {
@@ -69,29 +66,36 @@ pub(super) fn format_downloads_text(
         };
 
         lines.push(format!(
-            "*任务 #{}*\n状态：`{}`\n进度：`{}/{} ({}%)`",
-            snapshot.job.id, snapshot.job.status, finished, total, progress
+            "{}\n状态：{}\n进度：{}",
+            card::section(&format!("任务 #{}", snapshot.job.id)),
+            card::code(&snapshot.job.status),
+            card::code(format!("{}/{} ({}%)", finished, total, progress))
         ));
         lines.push(format!(
-            "阶段：等待 `{}` | 下载 `{}` | 就绪 `{}` | 上传 `{}`",
-            snapshot.pending_count,
-            snapshot.preparing_count,
-            snapshot.prepared_count,
-            snapshot.uploading_count,
+            "阶段：等待 {} | 下载 {} | 就绪 {} | 上传 {}",
+            card::code(snapshot.pending_count),
+            card::code(snapshot.preparing_count),
+            card::code(snapshot.prepared_count),
+            card::code(snapshot.uploading_count),
         ));
         lines.push(format!(
-            "结果：成功 `{}` | 失败 `{}` | 已停 `{}`",
-            snapshot.success_count, snapshot.failed_count, snapshot.cancelled_count
+            "结果：成功 {} | 失败 {} | 已停 {}",
+            card::code(snapshot.success_count),
+            card::code(snapshot.failed_count),
+            card::code(snapshot.cancelled_count)
         ));
 
         if snapshot.active_download_files > 0 {
-            lines.push(format!("真实下载：{}", format_live_download(snapshot)));
+            lines.push(format!(
+                "真实下载：{}",
+                card::code(format_live_download(snapshot))
+            ));
         }
 
         lines.push(format!(
-            "目标：`{}`\n更新：`{}`",
-            snapshot.job.target_chat_id,
-            snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S")
+            "目标：{}\n更新：{}",
+            card::code(snapshot.job.target_chat_id),
+            card::code(snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"))
         ));
     }
 

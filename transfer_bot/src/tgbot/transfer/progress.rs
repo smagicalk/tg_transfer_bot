@@ -67,7 +67,7 @@ pub(super) async fn update_transfer_progress_message(
                 &plan.source_link,
                 plan.target_chat_id,
             );
-            if let Err(err) = crate::tgbot::send::edit_markdown_message_with_inline_keyboard(
+            if let Err(err) = crate::tgbot::send::edit_card_message_with_inline_keyboard(
                 text.clone(),
                 notify_chat_id,
                 message_id,
@@ -152,7 +152,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         ),
     };
 
-    crate::tgbot::send::edit_markdown_message_with_inline_keyboard(
+    crate::tgbot::send::edit_card_message_with_inline_keyboard(
         text,
         notify_chat_id,
         message_id,

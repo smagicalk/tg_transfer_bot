@@ -6,10 +6,16 @@ mod raw;
 mod state;
 
 use super::buttons::build_inline_keyboard;
-use content::{build_copyable_formatted_text, build_plain_formatted_text, parse_markdown_text};
+use content::{
+    build_card_formatted_text, build_copyable_formatted_text, build_plain_formatted_text,
+    parse_markdown_text,
+};
 use raw::{send_formatted_text_message, send_formatted_text_message_returning};
 
-pub use raw::{answer_callback_query, edit_markdown_message_with_inline_keyboard};
+pub use raw::{
+    answer_callback_query, edit_card_message_with_inline_keyboard,
+    edit_markdown_message_with_inline_keyboard,
+};
 pub use state::{
     observe_message_send_failed, observe_message_send_succeeded, wait_for_sent_message,
     wait_for_sent_message_id,
@@ -81,6 +87,52 @@ pub async fn send_markdown_message_with_buttons(
         text,
         chat_id,
         build_inline_keyboard(rows),
+        client_id,
+    )
+    .await
+}
+
+/// 向指定 chat 发送卡片风格文本。
+///
+/// 卡片文本会在本地转成 TDLib 原生 `FormattedText`，不经过 Markdown 解析。
+pub async fn send_card_message(text: String, chat_id: i64, client_id: i32) -> anyhow::Result<()> {
+    let formatted_text = build_card_formatted_text(text)?;
+    send_formatted_text_message(formatted_text, chat_id, None, client_id).await
+}
+
+/// 向指定 chat 发送卡片风格文本并附带按钮。
+pub async fn send_card_message_with_buttons(
+    text: String,
+    chat_id: i64,
+    rows: Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let formatted_text = build_card_formatted_text(text)?;
+    send_formatted_text_message(
+        formatted_text,
+        chat_id,
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
+            build_inline_keyboard(rows),
+        )),
+        client_id,
+    )
+    .await
+}
+
+/// 向指定 chat 发送卡片风格文本并附带按钮，同时返回消息对象。
+pub async fn send_card_message_with_buttons_returning(
+    text: String,
+    chat_id: i64,
+    rows: Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>,
+    client_id: i32,
+) -> anyhow::Result<tdlib_rs::types::Message> {
+    let formatted_text = build_card_formatted_text(text)?;
+    send_formatted_text_message_returning(
+        formatted_text,
+        chat_id,
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
+            build_inline_keyboard(rows),
+        )),
         client_id,
     )
     .await

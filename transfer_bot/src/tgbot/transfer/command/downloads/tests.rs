@@ -2,7 +2,8 @@
 
 use super::super::common::CommandStyle;
 use super::keyboard::{
-    build_downloads_callback_data, build_downloads_keyboard, build_downloads_page_command,
+    DownloadsCallbackAction, build_downloads_filter_callback_data, build_downloads_keyboard,
+    build_downloads_page_callback_data, build_downloads_page_command,
     parse_downloads_callback_data,
 };
 use super::render::{format_bytes, format_downloads_text};
@@ -143,16 +144,47 @@ fn test_build_downloads_page_command() {
 // 分页按钮回调应能往返解析。
 #[test]
 fn test_downloads_callback_data_roundtrip() {
-    let data = build_downloads_callback_data(DownloadsFilter::Finished, 5, 3);
+    let data = build_downloads_page_callback_data(DownloadsFilter::Finished, 5, 3);
     assert_eq!(
         parse_downloads_callback_data(&data),
-        Some(DownloadsArgs {
-            filter: DownloadsFilter::Finished,
-            limit: 5,
-            page: 3,
-        })
+        Some((
+            DownloadsCallbackAction::Page,
+            DownloadsArgs {
+                filter: DownloadsFilter::Finished,
+                limit: 5,
+                page: 3,
+            }
+        ))
     );
     assert_eq!(parse_downloads_callback_data("x:done:5:3"), None);
+    assert_eq!(parse_downloads_callback_data("d:done:5:3"), None);
+
+    assert_eq!(
+        parse_downloads_callback_data("d:r:run:8:1"),
+        Some((
+            DownloadsCallbackAction::Refresh,
+            DownloadsArgs {
+                filter: DownloadsFilter::Running,
+                limit: 8,
+                page: 1,
+            }
+        ))
+    );
+
+    assert_eq!(
+        parse_downloads_callback_data(&build_downloads_filter_callback_data(
+            DownloadsFilter::Failed,
+            8,
+        )),
+        Some((
+            DownloadsCallbackAction::Filter,
+            DownloadsArgs {
+                filter: DownloadsFilter::Failed,
+                limit: 8,
+                page: 1,
+            }
+        ))
+    );
 }
 
 // 当前页按钮应复制当前命令，避免点了之后无变化。
@@ -168,6 +200,47 @@ fn test_build_downloads_keyboard_current_page_is_copy_button() {
     assert_eq!(current.text, "2/4");
     assert!(matches!(
         current.r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+    ));
+}
+
+// 第二行提供刷新和复制当前命令，刷新使用 callback 原地重新查询。
+#[test]
+fn test_build_downloads_keyboard_has_refresh_row() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::Running,
+        limit: 8,
+        page: 1,
+    };
+    let keyboard = build_downloads_keyboard(&args, 2);
+
+    assert_eq!(keyboard.rows.len(), 3);
+    assert_eq!(keyboard.rows[1][0].text, "刷新");
+    assert!(matches!(
+        keyboard.rows[1][0].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert_eq!(keyboard.rows[1][1].text, "复制当前命令");
+}
+
+// 第三行提供常用筛选按钮；当前筛选退化为复制命令，避免重复点造成无效编辑。
+#[test]
+fn test_build_downloads_keyboard_has_filter_row() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::Running,
+        limit: 8,
+        page: 2,
+    };
+    let keyboard = build_downloads_keyboard(&args, 4);
+
+    assert_eq!(keyboard.rows[2][0].text, "全部");
+    assert!(matches!(
+        keyboard.rows[2][0].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert_eq!(keyboard.rows[2][1].text, "处理中");
+    assert!(matches!(
+        keyboard.rows[2][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
     ));
 }

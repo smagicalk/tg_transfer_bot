@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use crate::config::BotConfig;
 use crate::tgbot::send;
+use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::refresh_stored_result_link;
 use crate::tgbot::transfer::store;
 
 use super::common::{
-    CommandStyle, lookup_command as build_lookup_command, resolve_target_chat_id,
-    transfer_command as build_transfer_command,
+    CommandStyle, job_command as build_job_command, lookup_command as build_lookup_command,
+    resolve_target_chat_id, transfer_command as build_transfer_command,
 };
 
 /// `/lookup` 命令入口。
@@ -77,14 +78,12 @@ pub async fn lookup_command(
             tdlib_rs::enums::ButtonStyle::Default,
         ));
 
-        return send::ReplyPanel::markdown(
-            crate::tgbot::transfer::outcome::format_result_card_text(
-                "已找到历史转存结果",
-                &source_link,
-                target_chat_id,
-                &link,
-            ),
-        )
+        return send::ReplyPanel::card(crate::tgbot::transfer::outcome::format_result_card_text(
+            "已找到历史转存结果",
+            &source_link,
+            target_chat_id,
+            &link,
+        ))
         .row(result_row)
         .row(vec![send::build_copy_button(
             "复制重新转存",
@@ -104,19 +103,30 @@ pub async fn lookup_command(
             status = %job.status,
             "lookup command hit active job"
         );
-        return send::ReplyPanel::markdown(format!(
-            "*找到进行中的转存任务*\n状态：`{}`  job：`#{}`\n目标：`{}`\n━━━━━━━━━━━━\n*下一步*\n使用 `/d run` 查看运行列表，或复制 job_id 手动暂停/停止。\n\n*来源*\n`{}`",
-            job.status,
-            job.id,
+        return send::ReplyPanel::card(format_lookup_active_text(
+            &source_link,
             target_chat_id,
-            markdown_inline_code(&source_link)
+            job.id,
+            &job.status,
         ))
         .row(vec![
             send::build_copy_button(
-                "复制 job_id",
-                &job.id.to_string(),
+                "复制暂停",
+                &build_job_command("p", job.id, CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
+            send::build_copy_button(
+                "复制停止",
+                &build_job_command("s", job.id, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制 job_id",
+                &job.id.to_string(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ])
+        .row(vec![
             send::build_copy_button(
                 "复制运行列表",
                 "/d run",
@@ -127,44 +137,96 @@ pub async fn lookup_command(
                 &lookup_command,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+            send::build_copy_button(
+                "复制重新转存",
+                &transfer_command,
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
         ])
-        .row(vec![send::build_copy_button(
-            "复制重新转存",
-            &transfer_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        )])
         .send(request_chat_id, client_id)
         .await;
     }
 
     tracing::info!(request_chat_id, target_chat_id, "lookup command missed");
-    send::ReplyPanel::markdown(format!(
-        "*未找到转存结果*\n状态：`miss`  目标：`{}`\n━━━━━━━━━━━━\n*下一步*\n复制转存命令后重新发起任务。\n\n*来源*\n`{}`",
-        target_chat_id,
-        markdown_inline_code(&source_link)
-    ))
-    .row(vec![
-        send::build_copy_button(
-            "复制转存命令",
-            &transfer_command,
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        send::build_copy_button(
-            "复制查询命令",
-            &lookup_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        send::build_copy_button(
-            "复制源链接",
-            &source_link,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .send(request_chat_id, client_id)
-    .await
+    send::ReplyPanel::card(format_lookup_miss_text(&source_link, target_chat_id))
+        .row(vec![
+            send::build_copy_button(
+                "复制转存命令",
+                &transfer_command,
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_copy_button(
+                "复制查询命令",
+                &lookup_command,
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制源链接",
+                &source_link,
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ])
+        .send(request_chat_id, client_id)
+        .await
 }
 
-/// 转义 Markdown 行内代码里的反引号，避免用户输入链接破坏卡片格式。
-fn markdown_inline_code(text: &str) -> String {
-    text.replace('`', "'")
+/// 构造命中进行中任务时的查询卡片。
+fn format_lookup_active_text(
+    source_link: &str,
+    target_chat_id: i64,
+    job_id: i64,
+    status: &str,
+) -> String {
+    let mut lines = vec![
+        "找到进行中的转存任务".to_owned(),
+        card::status_job_target(status, job_id, target_chat_id),
+        card::DIVIDER.to_owned(),
+        card::section("下一步"),
+        format!(
+            "可直接复制暂停/停止命令，或使用 {} 查看运行列表。",
+            card::code("/d run")
+        ),
+        String::new(),
+    ];
+    lines.extend(card::source_block(source_link));
+    lines.join("\n")
+}
+
+/// 构造未命中历史结果时的查询卡片。
+fn format_lookup_miss_text(source_link: &str, target_chat_id: i64) -> String {
+    let mut lines = vec![
+        "未找到转存结果".to_owned(),
+        card::status_target("miss", target_chat_id),
+        card::DIVIDER.to_owned(),
+        card::section("下一步"),
+        "复制转存命令后重新发起任务。".to_owned(),
+        String::new(),
+    ];
+    lines.extend(card::source_block(source_link));
+    lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_lookup_active_text, format_lookup_miss_text};
+
+    // lookup 命中运行中任务时应使用 card 标记，避免 Markdown 原文泄露到消息里。
+    #[test]
+    fn test_format_lookup_active_text() {
+        let text = format_lookup_active_text("https://t.me/c/1/2", -100, 42, "running");
+
+        assert!(text.contains("状态：‹running›"));
+        assert!(text.contains("job：‹#42›"));
+        assert!(text.contains("‹/d run›"));
+        assert!(text.contains("暂停/停止命令"));
+    }
+
+    // lookup 未命中时应保留源链接并给出 miss 状态。
+    #[test]
+    fn test_format_lookup_miss_text() {
+        let text = format_lookup_miss_text("https://t.me/c/1/2", -100);
+
+        assert!(text.contains("状态：‹miss›"));
+        assert!(text.contains("‹https://t.me/c/1/2›"));
+    }
 }

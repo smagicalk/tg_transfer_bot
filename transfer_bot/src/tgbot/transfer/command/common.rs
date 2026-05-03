@@ -4,6 +4,7 @@
 // - 各命令共用的基础依赖
 
 use crate::config::BotConfig;
+use crate::tgbot::transfer::card;
 
 /// 命令输出风格：
 /// - Short: 适合按钮复制、快速输入
@@ -124,7 +125,8 @@ pub(crate) fn command_root(kind: &str, style: CommandStyle) -> &'static str {
 
 /// 同时展示短命令和长命令。
 pub(crate) fn short_and_long(short: String, long: String) -> String {
-    format!("`{}` | `{}`", long, short)
+    // 帮助和列表回复统一使用 card 格式；发送层会把 `‹...›` 转成 TDLib code 实体。
+    format!("{} | {}", card::code(long), card::code(short))
 }
 
 /// 返回命令名称。
@@ -182,7 +184,7 @@ mod tests {
     fn test_short_and_long_formats_copyable_pair() {
         assert_eq!(
             short_and_long("/d run".to_owned(), "/downloads run".to_owned()),
-            "`/downloads run` | `/d run`"
+            "‹/downloads run› | ‹/d run›"
         );
     }
 }

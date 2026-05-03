@@ -5,6 +5,7 @@
 use super::common::{CommandStyle, config_set_command, config_show_command, short_and_long};
 use crate::config;
 use crate::tgbot::send;
+use crate::tgbot::transfer::card;
 
 /// `/config` 命令入口。
 /// 支持：
@@ -42,7 +43,7 @@ pub async fn config_command(
         Some(other) => anyhow::bail!("unknown config subcommand: {}", other),
     };
 
-    let mut panel = send::ReplyPanel::markdown(reply);
+    let mut panel = send::ReplyPanel::card(reply);
     for row in rows {
         panel = panel.row(row);
     }
@@ -91,21 +92,29 @@ async fn update_transfer_config(key: &str, value: &str) -> anyhow::Result<String
 /// 格式化当前可调配置。
 fn format_transfer_config_text(title: &str, config: &config::TransferConfig) -> String {
     [
-        format!("*{}*", title),
-        "状态：`runtime-config`".to_owned(),
-        "━━━━━━━━━━━━".to_owned(),
-        format!("并发：`job_concurrency = {}`", config.job_concurrency),
+        title.to_owned(),
+        format!("状态：{}", card::code("runtime-config")),
+        card::DIVIDER.to_owned(),
         format!(
-            "删除延迟：`file_delete_delay_minutes = {}` 分钟",
-            config.file_delete_delay_minutes
+            "并发：{}",
+            card::code(format!("job_concurrency = {}", config.job_concurrency))
         ),
         format!(
-            "GC 间隔：`file_gc_interval_seconds = {}` 秒",
-            config.file_gc_interval_seconds
+            "删除延迟：{} 分钟",
+            card::code(format!(
+                "file_delete_delay_minutes = {}",
+                config.file_delete_delay_minutes
+            ))
+        ),
+        format!(
+            "GC 间隔：{} 秒",
+            card::code(format!(
+                "file_gc_interval_seconds = {}",
+                config.file_gc_interval_seconds
+            ))
         ),
         "".to_owned(),
-        "━━━━━━━━━━━━".to_owned(),
-        "示例命令：".to_owned(),
+        card::section("示例命令"),
         short_and_long(
             config_show_command(CommandStyle::Short),
             config_show_command(CommandStyle::Long),

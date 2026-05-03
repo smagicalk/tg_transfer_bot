@@ -3,14 +3,15 @@
 
 use super::buttons::build_inline_keyboard;
 use super::message::{
-    send_copyable_message, send_copyable_message_with_buttons, send_markdown_message,
-    send_markdown_message_with_buttons,
+    send_card_message, send_card_message_with_buttons, send_copyable_message,
+    send_copyable_message_with_buttons, send_markdown_message, send_markdown_message_with_buttons,
 };
 
 /// 回复文本的渲染风格。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyPanelStyle {
     Markdown,
+    Card,
     Copyable,
 }
 
@@ -33,6 +34,15 @@ impl ReplyPanel {
             text: text.into(),
             rows: Vec::new(),
             style: ReplyPanelStyle::Markdown,
+        }
+    }
+
+    /// 构造卡片风格面板。
+    pub fn card(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            rows: Vec::new(),
+            style: ReplyPanelStyle::Card,
         }
     }
 
@@ -68,6 +78,13 @@ impl ReplyPanel {
                         .await
                 }
             }
+            ReplyPanelStyle::Card => {
+                if self.rows.is_empty() {
+                    send_card_message(self.text, chat_id, client_id).await
+                } else {
+                    send_card_message_with_buttons(self.text, chat_id, self.rows, client_id).await
+                }
+            }
             ReplyPanelStyle::Copyable => {
                 if self.rows.is_empty() {
                     send_copyable_message(self.text, chat_id, client_id).await
@@ -90,6 +107,18 @@ impl ReplyPanel {
         }
         Ok((self.text, build_inline_keyboard(self.rows)))
     }
+
+    /// 拆出卡片文本与 inline keyboard。
+    ///
+    /// 分页、进度面板这类消息需要先发送再编辑，因此这里提供和 Markdown 对等的拆包入口。
+    pub fn into_card_parts(
+        self,
+    ) -> anyhow::Result<(String, tdlib_rs::types::ReplyMarkupInlineKeyboard)> {
+        if self.style != ReplyPanelStyle::Card {
+            anyhow::bail!("reply panel style is not card");
+        }
+        Ok((self.text, build_inline_keyboard(self.rows)))
+    }
 }
 
 #[cfg(test)]
@@ -100,7 +129,7 @@ mod tests {
     // ReplyPanel 应能正确累积按钮行。
     #[test]
     fn test_reply_panel_collect_rows() {
-        let panel = ReplyPanel::markdown("hello")
+        let panel = ReplyPanel::card("hello")
             .row(vec![build_copy_button(
                 "复制",
                 "value",
@@ -113,6 +142,6 @@ mod tests {
             )]);
 
         assert_eq!(panel.rows.len(), 2);
-        assert_eq!(panel.style, ReplyPanelStyle::Markdown);
+        assert_eq!(panel.style, ReplyPanelStyle::Card);
     }
 }
