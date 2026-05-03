@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a prepaid giveaway
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

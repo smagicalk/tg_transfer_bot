@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Animated variant of a chat photo in MPEG4 format
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AnimatedChatPhoto {

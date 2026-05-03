@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains a list of chat members joined a chat via an invite link
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ChatInviteLinkMembers {

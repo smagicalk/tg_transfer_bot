@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An option changed its value
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateOption {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about features, available to Premium users
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PremiumFeatures {

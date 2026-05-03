@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about subscription to a channel chat, a bot, or a business account that was paid in Telegram Stars
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct StarSubscription {

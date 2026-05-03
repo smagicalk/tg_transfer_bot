@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Chat permissions were changed
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UpdateChatPermissions {

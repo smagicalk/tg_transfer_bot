@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A price for paid messages was changed in the supergroup chat
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct MessagePaidMessagePriceChanged {

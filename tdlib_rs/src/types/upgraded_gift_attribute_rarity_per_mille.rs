@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The rarity is represented as the numeric frequence of the model
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UpgradedGiftAttributeRarityPerMille {

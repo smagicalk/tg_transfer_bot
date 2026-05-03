@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents an inline message that can be sent via the bot
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PreparedInlineMessageId {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a game. Use getInternalLink with internalLinkTypeGame to share the game
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

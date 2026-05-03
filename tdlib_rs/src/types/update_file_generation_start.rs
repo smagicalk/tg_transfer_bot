@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The file generation process needs to be started by the application. Use setFileGenerationProgress and finishFileGeneration to generate the file
 #[serde_as]
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

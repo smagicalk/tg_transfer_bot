@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An audio message
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct PushMessageContentAudio {

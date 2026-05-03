@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An embedded post
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct PageBlockEmbeddedPost {

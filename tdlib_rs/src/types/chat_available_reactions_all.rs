@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// All reactions are available in the chat, excluding the paid reaction and custom reactions in channel chats
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ChatAvailableReactionsAll {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A value with information about its recent changes
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StatisticalValue {

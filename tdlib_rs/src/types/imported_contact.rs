@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a contact to import
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ImportedContact {

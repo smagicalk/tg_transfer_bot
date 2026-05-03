@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about notification settings for a chat or a forum topic
 #[serde_as]
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

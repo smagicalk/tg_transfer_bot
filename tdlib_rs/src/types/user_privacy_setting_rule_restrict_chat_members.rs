@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A rule to restrict all members of specified basic groups and supergroups from doing something
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UserPrivacySettingRuleRestrictChatMembers {

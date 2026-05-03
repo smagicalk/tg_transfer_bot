@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains autosave settings for an autosave settings scope
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ScopeAutosaveSettings {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Only specific reactions are available in the chat
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ChatAvailableReactionsSome {

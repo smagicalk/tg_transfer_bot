@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A file download was changed. This update is sent only after file download list is loaded for the first time
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UpdateFileDownload {

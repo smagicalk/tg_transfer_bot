@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The chat is a private chat with an administrator of a chat to which the user sent join request
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ChatActionBarJoinRequest {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes price of a suggested post in Telegram Stars
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct SuggestedPostPriceStar {

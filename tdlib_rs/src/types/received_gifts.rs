@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a list of gifts received by a user or a chat
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ReceivedGifts {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains autosave settings for a chat, which overrides default settings for the corresponding scope
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AutosaveSettingsException {

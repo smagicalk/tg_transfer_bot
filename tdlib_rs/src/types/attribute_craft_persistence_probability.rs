@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes chance of the crafted gift to have the backdrop or symbol of one of the original gifts
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AttributeCraftPersistenceProbability {

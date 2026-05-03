@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The levels of live story group call messages have changed
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UpdateGroupCallMessageLevels {

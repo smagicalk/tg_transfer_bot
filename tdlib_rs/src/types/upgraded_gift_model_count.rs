@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a model of an upgraded gift with the number of gifts found
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpgradedGiftModelCount {

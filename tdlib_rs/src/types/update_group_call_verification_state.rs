@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The verification state of an encrypted group call has changed; for group calls not bound to a chat only
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UpdateGroupCallVerificationState {

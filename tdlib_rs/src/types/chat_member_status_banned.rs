@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The user or the chat was banned (and hence is not a member of the chat). Implies the user can't return to the chat, view messages, or be used as a participant identifier to join a video chat of the chat
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ChatMemberStatusBanned {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A regular gift was received or sent by the current user, or the current user was notified about a channel gift
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageGift {

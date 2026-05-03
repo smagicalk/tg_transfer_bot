@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An area pointing to a HTTP or tg: link
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StoryAreaTypeLink {

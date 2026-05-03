@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes settings for a business account start page to set
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputBusinessStartPage {

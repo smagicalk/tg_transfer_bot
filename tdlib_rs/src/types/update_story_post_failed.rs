@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A story failed to post. If the story posting is canceled, then updateStoryDeleted will be received instead of this update
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateStoryPostFailed {

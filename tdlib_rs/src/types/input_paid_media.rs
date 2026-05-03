@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a paid media to be sent
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputPaidMedia {

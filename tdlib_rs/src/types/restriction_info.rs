@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about restrictions that must be applied to a chat or a message
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct RestrictionInfo {

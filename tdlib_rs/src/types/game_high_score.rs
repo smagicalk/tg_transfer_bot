@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains one row of the game high score table
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GameHighScore {

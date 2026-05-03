@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a message in a specific position
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct MessagePosition {

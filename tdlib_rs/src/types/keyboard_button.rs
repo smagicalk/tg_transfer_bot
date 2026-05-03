@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a single button in a bot keyboard
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

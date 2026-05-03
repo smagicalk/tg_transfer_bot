@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes the maximum number of times that a specific gift can be purchased
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GiftPurchaseLimits {

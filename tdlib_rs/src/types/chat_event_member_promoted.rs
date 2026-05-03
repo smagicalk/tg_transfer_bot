@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A chat member has gained/lost administrator status, or the list of their administrator privileges has changed
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatEventMemberPromoted {

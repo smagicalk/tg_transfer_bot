@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A link to an anchor on the same page
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct RichTextAnchorLink {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An HTTP URL needs to be open
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct LoginUrlInfoOpen {

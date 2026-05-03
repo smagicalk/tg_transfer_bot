@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes price of a resold gift in Toncoins
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GiftResalePriceTon {

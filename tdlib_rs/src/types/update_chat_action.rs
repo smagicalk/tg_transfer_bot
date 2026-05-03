@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A message sender activity in the chat has changed
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateChatAction {

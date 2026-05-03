@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A list of active notifications in a notification group has changed
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

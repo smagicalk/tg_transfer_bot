@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents the current state of 2-step verification
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PasswordState {

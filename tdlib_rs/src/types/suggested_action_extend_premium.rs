@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Suggests the user to extend their expiring Telegram Premium subscription
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct SuggestedActionExtendPremium {

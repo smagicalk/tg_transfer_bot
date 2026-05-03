@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a completed giveaway
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GiveawayInfoCompleted {

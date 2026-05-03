@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains number of being downloaded and recently downloaded files found
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct DownloadedFileCounts {

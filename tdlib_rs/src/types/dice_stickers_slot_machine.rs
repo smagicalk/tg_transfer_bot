@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Animated stickers to be combined into a slot machine
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct DiceStickersSlotMachine {

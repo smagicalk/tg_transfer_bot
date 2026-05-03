@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an option for buying Telegram Stars. Use telegramPaymentPurposeStars for out-of-store payments
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StarPaymentOption {

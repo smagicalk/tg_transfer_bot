@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a gift that was acquired by the current user on an auction
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct GiftAuctionAcquiredGift {

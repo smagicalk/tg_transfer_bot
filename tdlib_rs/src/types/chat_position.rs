@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a position of a chat in a chat list
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

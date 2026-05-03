@@ -1,6 +1,6 @@
+use crate::send_request;
 #[allow(clippy::all)]
-    use serde_json::json;
-    use crate::send_request;
+use serde_json::json;
 /// Manually adds a new sticker to the list of recently used stickers. The new sticker is added to the top of the list. If the sticker was already in the list, it is removed from the list first.
 /// Only stickers belonging to a sticker set or in WEBP or WEBM format can be added to this list. Emoji stickers can't be added to recent stickers
 /// # Arguments
@@ -8,15 +8,19 @@
 /// * `sticker` - Sticker file to add
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
-pub async fn add_recent_sticker(is_attached: bool, sticker: crate::enums::InputFile, client_id: i32) -> Result<crate::enums::Stickers, crate::types::Error> {
+pub async fn add_recent_sticker(
+    is_attached: bool,
+    sticker: crate::enums::InputFile,
+    client_id: i32,
+) -> Result<crate::enums::Stickers, crate::types::Error> {
     let request = json!({
-        "@type": "addRecentSticker",
-        "is_attached": is_attached,
-        "sticker": sticker,
-        });
+    "@type": "addRecentSticker",
+    "is_attached": is_attached,
+    "sticker": sticker,
+    });
     let response = send_request(client_id, request).await;
     if response["@type"] == "error" {
-        return Err(serde_json::from_value(response).unwrap())
+        return Err(serde_json::from_value(response).unwrap());
     }
     Ok(serde_json::from_value(response).unwrap())
 }

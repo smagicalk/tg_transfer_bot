@@ -1,7 +1,6 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
 pub enum InputInvoice {
@@ -12,6 +11,9 @@ pub enum InputInvoice {
     #[serde(rename(serialize = "inputInvoiceName", deserialize = "inputInvoiceName"))]
     Name(crate::types::InputInvoiceName),
     /// An invoice for a payment toward Telegram; must not be used in the in-store apps
-    #[serde(rename(serialize = "inputInvoiceTelegram", deserialize = "inputInvoiceTelegram"))]
+    #[serde(rename(
+        serialize = "inputInvoiceTelegram",
+        deserialize = "inputInvoiceTelegram"
+    ))]
     Telegram(crate::types::InputInvoiceTelegram),
 }

@@ -1,7 +1,6 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
 pub enum ThumbnailFormat {
@@ -12,7 +11,10 @@ pub enum ThumbnailFormat {
     #[serde(rename(serialize = "thumbnailFormatGif", deserialize = "thumbnailFormatGif"))]
     Gif,
     /// The thumbnail is in MPEG4 format. It will be used only for some animations and videos
-    #[serde(rename(serialize = "thumbnailFormatMpeg4", deserialize = "thumbnailFormatMpeg4"))]
+    #[serde(rename(
+        serialize = "thumbnailFormatMpeg4",
+        deserialize = "thumbnailFormatMpeg4"
+    ))]
     Mpeg4,
     /// The thumbnail is in PNG format. It will be used only for background patterns
     #[serde(rename(serialize = "thumbnailFormatPng", deserialize = "thumbnailFormatPng"))]

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a poll
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

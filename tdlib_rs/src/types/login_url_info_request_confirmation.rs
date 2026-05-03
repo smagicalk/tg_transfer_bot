@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An authorization confirmation dialog needs to be shown to the user
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct LoginUrlInfoRequestConfirmation {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A personal document to be saved to Telegram Passport
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputPersonalDocument {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An area pointing to a venue found by the bot getOption("venue_search_bot_username")
 #[serde_as]
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

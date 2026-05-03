@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The transaction is a receiving of a paid message; relevant for regular users, supergroup and channel chats only
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct StarTransactionTypePaidMessageReceive {

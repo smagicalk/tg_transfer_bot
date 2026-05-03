@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A token for Windows Push Notification Services
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct DeviceTokenWindowsPush {

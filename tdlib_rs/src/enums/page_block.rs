@@ -1,7 +1,6 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
 pub enum PageBlock {
@@ -27,7 +26,10 @@ pub enum PageBlock {
     #[serde(rename(serialize = "pageBlockParagraph", deserialize = "pageBlockParagraph"))]
     Paragraph(crate::types::PageBlockParagraph),
     /// A preformatted text paragraph
-    #[serde(rename(serialize = "pageBlockPreformatted", deserialize = "pageBlockPreformatted"))]
+    #[serde(rename(
+        serialize = "pageBlockPreformatted",
+        deserialize = "pageBlockPreformatted"
+    ))]
     Preformatted(crate::types::PageBlockPreformatted),
     /// The footer of a page
     #[serde(rename(serialize = "pageBlockFooter", deserialize = "pageBlockFooter"))]
@@ -69,7 +71,10 @@ pub enum PageBlock {
     #[serde(rename(serialize = "pageBlockEmbedded", deserialize = "pageBlockEmbedded"))]
     Embedded(crate::types::PageBlockEmbedded),
     /// An embedded post
-    #[serde(rename(serialize = "pageBlockEmbeddedPost", deserialize = "pageBlockEmbeddedPost"))]
+    #[serde(rename(
+        serialize = "pageBlockEmbeddedPost",
+        deserialize = "pageBlockEmbeddedPost"
+    ))]
     EmbeddedPost(crate::types::PageBlockEmbeddedPost),
     /// A collage
     #[serde(rename(serialize = "pageBlockCollage", deserialize = "pageBlockCollage"))]
@@ -87,7 +92,10 @@ pub enum PageBlock {
     #[serde(rename(serialize = "pageBlockDetails", deserialize = "pageBlockDetails"))]
     Details(crate::types::PageBlockDetails),
     /// Related articles
-    #[serde(rename(serialize = "pageBlockRelatedArticles", deserialize = "pageBlockRelatedArticles"))]
+    #[serde(rename(
+        serialize = "pageBlockRelatedArticles",
+        deserialize = "pageBlockRelatedArticles"
+    ))]
     RelatedArticles(crate::types::PageBlockRelatedArticles),
     /// A map
     #[serde(rename(serialize = "pageBlockMap", deserialize = "pageBlockMap"))]

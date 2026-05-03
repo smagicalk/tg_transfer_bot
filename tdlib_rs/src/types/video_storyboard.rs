@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a storyboard for a video
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct VideoStoryboard {

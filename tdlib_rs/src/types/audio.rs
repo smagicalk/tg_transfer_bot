@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an audio file. Audio is usually in MP3 or M4A format
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Audio {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The code is re-sent, because device verification has failed
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ResendCodeReasonVerificationFailed {

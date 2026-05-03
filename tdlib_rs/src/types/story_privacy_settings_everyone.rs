@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The story can be viewed by everyone
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StoryPrivacySettingsEveryone {

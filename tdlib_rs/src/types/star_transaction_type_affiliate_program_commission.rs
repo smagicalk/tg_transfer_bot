@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The transaction is a receiving of a commission from an affiliate program; relevant for regular users, bots and channel chats only
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StarTransactionTypeAffiliateProgramCommission {

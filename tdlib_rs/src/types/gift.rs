@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a gift that can be sent to another user or channel chat
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

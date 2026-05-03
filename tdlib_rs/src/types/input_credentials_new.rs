@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Applies if a user enters new credentials on a payment provider website
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputCredentialsNew {

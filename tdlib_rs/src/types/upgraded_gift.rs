@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an upgraded gift that can be transferred to another owner or transferred to the TON blockchain as an NFT
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

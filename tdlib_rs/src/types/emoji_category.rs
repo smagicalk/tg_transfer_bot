@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an emoji category
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct EmojiCategory {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about the last message from which a new message was forwarded last time
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ForwardSource {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about Toncoins earned by the current user
 #[serde_as]
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

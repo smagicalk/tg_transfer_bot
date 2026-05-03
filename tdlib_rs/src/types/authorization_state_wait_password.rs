@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The user has been authorized, but needs to enter a 2-step verification password to start using the application.
 /// Call checkAuthenticationPassword to provide the password, or requestAuthenticationPasswordRecovery to recover the password, or deleteAccount to delete the account after a week
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

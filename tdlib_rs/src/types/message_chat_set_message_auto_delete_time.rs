@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The auto-delete or self-destruct timer for messages in the chat has been changed
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct MessageChatSetMessageAutoDeleteTime {

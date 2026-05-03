@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A detailed statistics about Telegram Stars earned by a user or a chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct StarRevenueStatistics {

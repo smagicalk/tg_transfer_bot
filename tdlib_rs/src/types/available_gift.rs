@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a gift that is available for purchase
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct AvailableGift {

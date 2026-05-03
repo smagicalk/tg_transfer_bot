@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Thumbnail image of a very poor quality and low resolution
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Minithumbnail {

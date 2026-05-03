@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a shortcut that can be used for a quick reply
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct QuickReplyShortcut {

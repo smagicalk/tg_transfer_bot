@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A language pack string which has different forms based on the number of some object it mentions. See https:www.unicode.org/cldr/charts/latest/supplemental/language_plural_rules.html for more information
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct LanguagePackStringValuePluralized {

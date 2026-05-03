@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a basic group of 0-200 users (must be upgraded to a supergroup to accommodate more than 200 users)
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct BasicGroup {

@@ -1,6 +1,6 @@
+use crate::send_request;
 #[allow(clippy::all)]
-    use serde_json::json;
-    use crate::send_request;
+use serde_json::json;
 /// Returns gifts received by the given user or chat
 /// # Arguments
 /// * `owner_id` - Identifier of the gift receiver
@@ -18,26 +18,41 @@
 /// * `limit` - The maximum number of gifts to be returned; must be positive and can't be greater than 100. For optimal performance, the number of returned objects is chosen by TDLib and can be smaller than the specified limit
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
-pub async fn get_received_gifts(owner_id: crate::enums::MessageSender, collection_id: i32, exclude_unsaved: bool, exclude_saved: bool, exclude_unlimited: bool, exclude_upgradable: bool, exclude_non_upgradable: bool, exclude_upgraded: bool, exclude_without_colors: bool, exclude_hosted: bool, sort_by_price: bool, offset: String, limit: i32, client_id: i32) -> Result<crate::enums::ReceivedGifts, crate::types::Error> {
+pub async fn get_received_gifts(
+    owner_id: crate::enums::MessageSender,
+    collection_id: i32,
+    exclude_unsaved: bool,
+    exclude_saved: bool,
+    exclude_unlimited: bool,
+    exclude_upgradable: bool,
+    exclude_non_upgradable: bool,
+    exclude_upgraded: bool,
+    exclude_without_colors: bool,
+    exclude_hosted: bool,
+    sort_by_price: bool,
+    offset: String,
+    limit: i32,
+    client_id: i32,
+) -> Result<crate::enums::ReceivedGifts, crate::types::Error> {
     let request = json!({
-        "@type": "getReceivedGifts",
-        "owner_id": owner_id,
-        "collection_id": collection_id,
-        "exclude_unsaved": exclude_unsaved,
-        "exclude_saved": exclude_saved,
-        "exclude_unlimited": exclude_unlimited,
-        "exclude_upgradable": exclude_upgradable,
-        "exclude_non_upgradable": exclude_non_upgradable,
-        "exclude_upgraded": exclude_upgraded,
-        "exclude_without_colors": exclude_without_colors,
-        "exclude_hosted": exclude_hosted,
-        "sort_by_price": sort_by_price,
-        "offset": offset,
-        "limit": limit,
-        });
+    "@type": "getReceivedGifts",
+    "owner_id": owner_id,
+    "collection_id": collection_id,
+    "exclude_unsaved": exclude_unsaved,
+    "exclude_saved": exclude_saved,
+    "exclude_unlimited": exclude_unlimited,
+    "exclude_upgradable": exclude_upgradable,
+    "exclude_non_upgradable": exclude_non_upgradable,
+    "exclude_upgraded": exclude_upgraded,
+    "exclude_without_colors": exclude_without_colors,
+    "exclude_hosted": exclude_hosted,
+    "sort_by_price": sort_by_price,
+    "offset": offset,
+    "limit": limit,
+    });
     let response = send_request(client_id, request).await;
     if response["@type"] == "error" {
-        return Err(serde_json::from_value(response).unwrap())
+        return Err(serde_json::from_value(response).unwrap());
     }
     Ok(serde_json::from_value(response).unwrap())
 }

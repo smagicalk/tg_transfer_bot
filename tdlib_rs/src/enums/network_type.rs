@@ -1,7 +1,6 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
 pub enum NetworkType {
@@ -12,7 +11,10 @@ pub enum NetworkType {
     #[serde(rename(serialize = "networkTypeMobile", deserialize = "networkTypeMobile"))]
     Mobile,
     /// A mobile roaming network
-    #[serde(rename(serialize = "networkTypeMobileRoaming", deserialize = "networkTypeMobileRoaming"))]
+    #[serde(rename(
+        serialize = "networkTypeMobileRoaming",
+        deserialize = "networkTypeMobileRoaming"
+    ))]
     MobileRoaming,
     /// A Wi-Fi network
     #[serde(rename(serialize = "networkTypeWiFi", deserialize = "networkTypeWiFi"))]

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a fact-check added to the message by an independent checker
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct FactCheck {

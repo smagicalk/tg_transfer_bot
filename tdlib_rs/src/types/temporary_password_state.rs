@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Returns information about the availability of a temporary password, which can be used for payments
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct TemporaryPasswordState {

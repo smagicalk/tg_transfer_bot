@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The password reset request was declined
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ResetPasswordResultDeclined {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A giveaway with public winners has been completed for the chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageGiveawayWinners {

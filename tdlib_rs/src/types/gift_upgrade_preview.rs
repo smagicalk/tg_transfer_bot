@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains examples of possible upgraded gifts for the given regular gift
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GiftUpgradePreview {

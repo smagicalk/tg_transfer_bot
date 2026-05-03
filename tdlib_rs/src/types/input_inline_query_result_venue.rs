@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents information about a venue
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputInlineQueryResultVenue {

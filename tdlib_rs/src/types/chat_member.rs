@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a user or a chat as a member of another chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatMember {

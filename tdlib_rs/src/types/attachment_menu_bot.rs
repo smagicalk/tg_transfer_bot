@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a bot, which can be added to attachment or side menu
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AttachmentMenuBot {

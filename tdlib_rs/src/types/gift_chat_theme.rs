@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a chat theme based on an upgraded gift
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct GiftChatTheme {

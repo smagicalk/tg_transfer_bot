@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A digit-only authentication code is delivered via Firebase Authentication to the official Android application
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct AuthenticationCodeTypeFirebaseAndroid {

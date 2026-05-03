@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A document message (a general file)
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct PushMessageContentDocument {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The transaction is a withdrawal of earned Toncoins to Fragment
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct TonTransactionTypeFragmentWithdrawal {

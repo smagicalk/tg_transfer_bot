@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains a chat revenue transactions
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

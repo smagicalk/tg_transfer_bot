@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A detailed statistics about a supergroup chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatStatisticsSupergroup {

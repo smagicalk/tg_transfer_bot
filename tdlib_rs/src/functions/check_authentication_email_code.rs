@@ -1,19 +1,22 @@
+use crate::send_request;
 #[allow(clippy::all)]
-    use serde_json::json;
-    use crate::send_request;
+use serde_json::json;
 /// Checks the authentication of an email address. Works only when the current authorization state is authorizationStateWaitEmailCode
 /// # Arguments
 /// * `code` - Email address authentication to check
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
-pub async fn check_authentication_email_code(code: crate::enums::EmailAddressAuthentication, client_id: i32) -> Result<(), crate::types::Error> {
+pub async fn check_authentication_email_code(
+    code: crate::enums::EmailAddressAuthentication,
+    client_id: i32,
+) -> Result<(), crate::types::Error> {
     let request = json!({
-        "@type": "checkAuthenticationEmailCode",
-        "code": code,
-        });
+    "@type": "checkAuthenticationEmailCode",
+    "code": code,
+    });
     let response = send_request(client_id, request).await;
     if response["@type"] == "error" {
-        return Err(serde_json::from_value(response).unwrap())
+        return Err(serde_json::from_value(response).unwrap());
     }
     Ok(())
 }

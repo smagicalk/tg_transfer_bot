@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The number of online group members has changed. This update with non-zero number of online group members is sent only for currently opened chats.
 /// There is no guarantee that it is sent just after the number of online users has changed
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// File with the date it was uploaded
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct DatedFile {

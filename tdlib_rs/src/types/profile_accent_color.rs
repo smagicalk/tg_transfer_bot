@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about supported accent color for user profile photo background
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ProfileAccentColor {

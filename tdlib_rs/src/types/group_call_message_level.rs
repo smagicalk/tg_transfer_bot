@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a level of features for a message sent in a live story group call
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GroupCallMessageLevel {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Approval of suggested post has failed, because the user which proposed the post had no enough funds
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageSuggestedPostApprovalFailed {

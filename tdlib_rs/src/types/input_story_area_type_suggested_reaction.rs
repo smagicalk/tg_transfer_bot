@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An area pointing to a suggested reaction
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputStoryAreaTypeSuggestedReaction {

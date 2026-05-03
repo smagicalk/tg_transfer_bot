@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// New message was received through a push notification
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct NotificationTypeNewPushMessage {

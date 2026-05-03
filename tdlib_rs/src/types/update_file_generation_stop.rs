@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// File generation is no longer needed
 #[serde_as]
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

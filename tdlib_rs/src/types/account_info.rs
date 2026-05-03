@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains basic information about another user who started a chat with the current user
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AccountInfo {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a user who had or will have a birthday soon
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct CloseBirthdayUser {

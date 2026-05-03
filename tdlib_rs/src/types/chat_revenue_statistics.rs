@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A detailed statistics about revenue earned from sponsored messages in a chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatRevenueStatistics {

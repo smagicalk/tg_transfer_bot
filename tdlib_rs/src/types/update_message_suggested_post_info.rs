@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Information about suggested post of a message was changed
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateMessageSuggestedPostInfo {

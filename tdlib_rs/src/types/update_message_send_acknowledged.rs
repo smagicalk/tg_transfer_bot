@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A request to send a message has reached the Telegram server. This doesn't mean that the message will be sent successfully.
 /// This update is sent only if the option "use_quick_ack" is set to true. This update may be sent multiple times for the same message
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]

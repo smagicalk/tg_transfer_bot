@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an emoji to be shown instead of the Telegram Premium badge
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct EmojiStatus {

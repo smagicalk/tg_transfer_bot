@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about the total amount of data that was used to send and receive files
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct NetworkStatisticsEntryFile {

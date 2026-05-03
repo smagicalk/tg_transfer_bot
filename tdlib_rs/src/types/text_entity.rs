@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a part of the text that needs to be formatted in some unusual way
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct TextEntity {

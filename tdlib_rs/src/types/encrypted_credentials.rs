@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains encrypted Telegram Passport data credentials
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct EncryptedCredentials {

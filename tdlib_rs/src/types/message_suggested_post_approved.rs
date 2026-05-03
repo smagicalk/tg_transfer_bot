@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A suggested post was approved
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct MessageSuggestedPostApproved {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The transaction is a purchase of a regular gift; relevant for regular users and bots only
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct StarTransactionTypeGiftPurchase {

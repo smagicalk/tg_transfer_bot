@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a file added to file download list
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct FileDownload {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents the results of the inline query. Use sendInlineQueryResultMessage to send the result of the query
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

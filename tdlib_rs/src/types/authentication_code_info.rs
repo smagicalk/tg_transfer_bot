@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Information about the authentication code that was sent
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct AuthenticationCodeInfo {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a topic in a channel direct messages chat administered by the current user
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

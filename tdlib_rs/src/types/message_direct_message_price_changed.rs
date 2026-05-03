@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A price for direct messages was changed in the channel chat
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct MessageDirectMessagePriceChanged {

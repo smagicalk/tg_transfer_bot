@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains privacy settings for message read date in private chats. Read dates are always shown to the users that can see online status of the current user regardless of this setting
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ReadDatePrivacySettings {

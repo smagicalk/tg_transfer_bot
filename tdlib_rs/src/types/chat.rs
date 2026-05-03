@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A chat. (Can be a private chat, basic group, supergroup, or secret chat)
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

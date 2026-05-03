@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a Web App found by its short name
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct FoundWebApp {

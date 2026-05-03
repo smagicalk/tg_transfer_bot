@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The payload for a callback button requiring password
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct CallbackQueryPayloadDataWithPassword {

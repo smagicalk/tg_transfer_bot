@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A Telegram Stars were received by the current user from a giveaway
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageGiveawayPrizeStars {

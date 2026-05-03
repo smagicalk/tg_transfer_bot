@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about one session in a Telegram application used by the current user. Sessions must be shown to the user in the returned order
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

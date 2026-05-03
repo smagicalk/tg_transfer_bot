@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an animation file. The animation must be encoded in GIF or MPEG4 format
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Animation {

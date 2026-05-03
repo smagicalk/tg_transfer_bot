@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The media is hidden until the invoice is paid
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PaidMediaPreview {

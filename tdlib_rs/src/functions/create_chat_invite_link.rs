@@ -1,6 +1,6 @@
+use crate::send_request;
 #[allow(clippy::all)]
-    use serde_json::json;
-    use crate::send_request;
+use serde_json::json;
 /// Creates a new invite link for a chat. Available for basic groups, supergroups, and channels. Requires administrator privileges and can_invite_users right in the chat
 /// # Arguments
 /// * `chat_id` - Chat identifier
@@ -10,18 +10,25 @@
 /// * `creates_join_request` - Pass true if users joining the chat via the link need to be approved by chat administrators. In this case, member_limit must be 0
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
-pub async fn create_chat_invite_link(chat_id: i64, name: String, expiration_date: i32, member_limit: i32, creates_join_request: bool, client_id: i32) -> Result<crate::enums::ChatInviteLink, crate::types::Error> {
+pub async fn create_chat_invite_link(
+    chat_id: i64,
+    name: String,
+    expiration_date: i32,
+    member_limit: i32,
+    creates_join_request: bool,
+    client_id: i32,
+) -> Result<crate::enums::ChatInviteLink, crate::types::Error> {
     let request = json!({
-        "@type": "createChatInviteLink",
-        "chat_id": chat_id,
-        "name": name,
-        "expiration_date": expiration_date,
-        "member_limit": member_limit,
-        "creates_join_request": creates_join_request,
-        });
+    "@type": "createChatInviteLink",
+    "chat_id": chat_id,
+    "name": name,
+    "expiration_date": expiration_date,
+    "member_limit": member_limit,
+    "creates_join_request": creates_join_request,
+    });
     let response = send_request(client_id, request).await;
     if response["@type"] == "error" {
-        return Err(serde_json::from_value(response).unwrap())
+        return Err(serde_json::from_value(response).unwrap());
     }
     Ok(serde_json::from_value(response).unwrap())
 }

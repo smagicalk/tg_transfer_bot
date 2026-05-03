@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes settings for greeting messages that are automatically sent by a Telegram Business account as response to incoming messages in an inactive private chat
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct BusinessGreetingMessageSettings {

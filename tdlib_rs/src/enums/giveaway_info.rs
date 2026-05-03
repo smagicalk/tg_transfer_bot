@@ -1,7 +1,6 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
 pub enum GiveawayInfo {
@@ -9,6 +8,9 @@ pub enum GiveawayInfo {
     #[serde(rename(serialize = "giveawayInfoOngoing", deserialize = "giveawayInfoOngoing"))]
     Ongoing(crate::types::GiveawayInfoOngoing),
     /// Describes a completed giveaway
-    #[serde(rename(serialize = "giveawayInfoCompleted", deserialize = "giveawayInfoCompleted"))]
+    #[serde(rename(
+        serialize = "giveawayInfoCompleted",
+        deserialize = "giveawayInfoCompleted"
+    ))]
     Completed(crate::types::GiveawayInfoCompleted),
 }

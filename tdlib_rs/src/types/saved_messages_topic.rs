@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a Saved Messages topic
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

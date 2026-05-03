@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains statistics about interactions with a message sent in the chat or a story posted on behalf of the chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatStatisticsInteractionInfo {

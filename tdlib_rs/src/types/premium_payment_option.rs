@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an option for buying Telegram Premium to a user
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PremiumPaymentOption {

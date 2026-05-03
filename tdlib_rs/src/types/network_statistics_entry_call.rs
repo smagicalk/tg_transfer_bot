@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about the total amount of data that was used for calls
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct NetworkStatisticsEntryCall {

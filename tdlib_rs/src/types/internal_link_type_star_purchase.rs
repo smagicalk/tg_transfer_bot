@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The link is a link to the Telegram Star purchase section of the application
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InternalLinkTypeStarPurchase {

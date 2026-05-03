@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An offer to purchase a gift was rejected or expired
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageUpgradedGiftPurchaseOfferRejected {

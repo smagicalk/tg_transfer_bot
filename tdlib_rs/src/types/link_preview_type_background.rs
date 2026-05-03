@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The link is a link to a background. Link preview title and description are available only for filled backgrounds
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct LinkPreviewTypeBackground {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A request can't be completed unless application verification is performed; for official mobile applications only.
 /// The method setApplicationVerificationToken must be called once the verification is completed or failed
 #[serde_as]

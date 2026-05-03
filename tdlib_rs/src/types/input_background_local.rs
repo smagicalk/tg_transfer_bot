@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A background from a local file
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputBackgroundLocal {

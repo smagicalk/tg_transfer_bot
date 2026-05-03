@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains auto-download settings presets for the current user
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AutoDownloadSettingsPresets {

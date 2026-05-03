@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Email address reset has already been requested. Call resetAuthenticationEmailAddress to check whether immediate reset is possible
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct EmailAddressResetStatePending {

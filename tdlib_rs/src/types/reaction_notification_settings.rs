@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about notification settings for reactions
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

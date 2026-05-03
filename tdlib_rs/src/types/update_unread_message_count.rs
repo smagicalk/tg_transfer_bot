@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Number of unread messages in a chat list has changed. This update is sent only if the message database is used
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateUnreadMessageCount {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A chat was removed from a chat list
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateChatRemovedFromList {

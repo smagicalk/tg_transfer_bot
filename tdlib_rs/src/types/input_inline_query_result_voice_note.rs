@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a link to an opus-encoded audio file within an OGG container, single channel audio
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputInlineQueryResultVoiceNote {

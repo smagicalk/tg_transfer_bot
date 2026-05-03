@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains approximate storage usage statistics, excluding files of unknown file type
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StorageStatisticsFast {

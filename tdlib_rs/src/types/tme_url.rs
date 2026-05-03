@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a URL linking to an internal Telegram entity
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct TmeUrl {

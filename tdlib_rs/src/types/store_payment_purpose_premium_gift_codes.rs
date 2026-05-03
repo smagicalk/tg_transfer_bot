@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The user boosting a chat by creating Telegram Premium gift codes for other users
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StorePaymentPurposePremiumGiftCodes {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a tag used in Saved Messages or a Saved Messages topic
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct SavedMessagesTag {

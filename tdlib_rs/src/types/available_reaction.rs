@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents an available reaction
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct AvailableReaction {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The transaction is a deposit of Telegram Stars from a giveaway; relevant for regular users only
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StarTransactionTypeGiveawayDeposit {

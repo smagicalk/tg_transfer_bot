@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a bot
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct BotInfo {

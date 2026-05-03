@@ -1,21 +1,25 @@
+use crate::send_request;
 #[allow(clippy::all)]
-    use serde_json::json;
-    use crate::send_request;
+use serde_json::json;
 /// Returns information about a topic in a forum supergroup chat or a chat with a bot with topics
 /// # Arguments
 /// * `chat_id` - Identifier of the chat
 /// * `forum_topic_id` - Forum topic identifier
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
-pub async fn get_forum_topic(chat_id: i64, forum_topic_id: i32, client_id: i32) -> Result<crate::enums::ForumTopic, crate::types::Error> {
+pub async fn get_forum_topic(
+    chat_id: i64,
+    forum_topic_id: i32,
+    client_id: i32,
+) -> Result<crate::enums::ForumTopic, crate::types::Error> {
     let request = json!({
-        "@type": "getForumTopic",
-        "chat_id": chat_id,
-        "forum_topic_id": forum_topic_id,
-        });
+    "@type": "getForumTopic",
+    "chat_id": chat_id,
+    "forum_topic_id": forum_topic_id,
+    });
     let response = send_request(client_id, request).await;
     if response["@type"] == "error" {
-        return Err(serde_json::from_value(response).unwrap())
+        return Err(serde_json::from_value(response).unwrap());
     }
     Ok(serde_json::from_value(response).unwrap())
 }

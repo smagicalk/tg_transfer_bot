@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A message with an invoice; can be used only by bots
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputMessageInvoice {

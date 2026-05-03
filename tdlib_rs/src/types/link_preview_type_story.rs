@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The link is a link to a story. Link preview description is unavailable
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct LinkPreviewTypeStory {

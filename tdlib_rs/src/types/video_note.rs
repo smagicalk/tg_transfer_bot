@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a video note. The video must be equal in width and height, cropped to a circle, and stored in MPEG4 format
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct VideoNote {

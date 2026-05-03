@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A suggested post was refunded
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageSuggestedPostRefunded {

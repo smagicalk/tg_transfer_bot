@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a link to a WEBP, TGS, or WEBM sticker
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputInlineQueryResultSticker {

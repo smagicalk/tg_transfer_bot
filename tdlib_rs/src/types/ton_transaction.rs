@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a transaction changing the amount of owned Toncoins
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct TonTransaction {

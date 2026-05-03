@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a link to an animated GIF or an animated (i.e., without sound) H.264/MPEG-4 AVC video
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputInlineQueryResultAnimation {

@@ -1,7 +1,6 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
 pub enum PaidMedia {
@@ -15,6 +14,9 @@ pub enum PaidMedia {
     #[serde(rename(serialize = "paidMediaVideo", deserialize = "paidMediaVideo"))]
     Video(crate::types::PaidMediaVideo),
     /// The media is unsupported
-    #[serde(rename(serialize = "paidMediaUnsupported", deserialize = "paidMediaUnsupported"))]
+    #[serde(rename(
+        serialize = "paidMediaUnsupported",
+        deserialize = "paidMediaUnsupported"
+    ))]
     Unsupported,
 }

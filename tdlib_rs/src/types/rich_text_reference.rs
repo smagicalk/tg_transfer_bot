@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A reference to a richTexts object on the same page
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct RichTextReference {

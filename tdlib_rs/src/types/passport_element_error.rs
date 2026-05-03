@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains the description of an error in a Telegram Passport element
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct PassportElementError {

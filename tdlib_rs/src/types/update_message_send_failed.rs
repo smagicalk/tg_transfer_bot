@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A message failed to send. Be aware that some messages being sent can be irrecoverably deleted, in which case updateDeleteMessages will be received instead of this update
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateMessageSendFailed {

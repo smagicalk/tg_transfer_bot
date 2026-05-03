@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Send away messages only in the specified time span
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct BusinessAwayMessageScheduleCustom {

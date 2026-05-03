@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The gift was obtained by upgrading of a previously received gift
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UpgradedGiftOriginUpgrade {

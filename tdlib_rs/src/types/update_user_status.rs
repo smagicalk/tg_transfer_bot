@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The user went online or offline
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateUserStatus {

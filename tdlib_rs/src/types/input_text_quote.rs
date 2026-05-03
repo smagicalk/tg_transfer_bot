@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes manually chosen quote from another message
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputTextQuote {

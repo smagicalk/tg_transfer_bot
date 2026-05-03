@@ -1,6 +1,6 @@
+use crate::send_request;
 #[allow(clippy::all)]
-    use serde_json::json;
-    use crate::send_request;
+use serde_json::json;
 /// Sets the parameters for TDLib initialization. Works only when the current authorization state is authorizationStateWaitTdlibParameters
 /// # Arguments
 /// * `use_test_dc` - Pass true to use Telegram test environment instead of the production environment
@@ -19,27 +19,43 @@
 /// * `application_version` - Application version; must be non-empty
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
-pub async fn set_tdlib_parameters(use_test_dc: bool, database_directory: String, files_directory: String, database_encryption_key: String, use_file_database: bool, use_chat_info_database: bool, use_message_database: bool, use_secret_chats: bool, api_id: i32, api_hash: String, system_language_code: String, device_model: String, system_version: String, application_version: String, client_id: i32) -> Result<(), crate::types::Error> {
+pub async fn set_tdlib_parameters(
+    use_test_dc: bool,
+    database_directory: String,
+    files_directory: String,
+    database_encryption_key: String,
+    use_file_database: bool,
+    use_chat_info_database: bool,
+    use_message_database: bool,
+    use_secret_chats: bool,
+    api_id: i32,
+    api_hash: String,
+    system_language_code: String,
+    device_model: String,
+    system_version: String,
+    application_version: String,
+    client_id: i32,
+) -> Result<(), crate::types::Error> {
     let request = json!({
-        "@type": "setTdlibParameters",
-        "use_test_dc": use_test_dc,
-        "database_directory": database_directory,
-        "files_directory": files_directory,
-        "database_encryption_key": database_encryption_key,
-        "use_file_database": use_file_database,
-        "use_chat_info_database": use_chat_info_database,
-        "use_message_database": use_message_database,
-        "use_secret_chats": use_secret_chats,
-        "api_id": api_id,
-        "api_hash": api_hash,
-        "system_language_code": system_language_code,
-        "device_model": device_model,
-        "system_version": system_version,
-        "application_version": application_version,
-        });
+    "@type": "setTdlibParameters",
+    "use_test_dc": use_test_dc,
+    "database_directory": database_directory,
+    "files_directory": files_directory,
+    "database_encryption_key": database_encryption_key,
+    "use_file_database": use_file_database,
+    "use_chat_info_database": use_chat_info_database,
+    "use_message_database": use_message_database,
+    "use_secret_chats": use_secret_chats,
+    "api_id": api_id,
+    "api_hash": api_hash,
+    "system_language_code": system_language_code,
+    "device_model": device_model,
+    "system_version": system_version,
+    "application_version": application_version,
+    });
     let response = send_request(client_id, request).await;
     if response["@type"] == "error" {
-        return Err(serde_json::from_value(response).unwrap())
+        return Err(serde_json::from_value(response).unwrap());
     }
     Ok(())
 }

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a story
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Story {

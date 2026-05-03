@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The group call is accessible through a message of the type messageGroupCall
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputGroupCallMessage {

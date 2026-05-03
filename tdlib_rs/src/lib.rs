@@ -15,12 +15,10 @@ pub mod enums;
 pub mod functions;
 pub mod types;
 
-
-
+use crate::enums::Update;
 use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::sync::atomic::{AtomicU32, Ordering};
-use crate::enums::Update;
 
 static EXTRA_COUNTER: AtomicU32 = AtomicU32::new(0);
 static OBSERVER: Lazy<observer::Observer> = Lazy::new(observer::Observer::new);
@@ -75,5 +73,3 @@ pub async fn send_request(client_id: i32, mut request: Value) -> Value {
 
     receiver.await.unwrap()
 }
-
-

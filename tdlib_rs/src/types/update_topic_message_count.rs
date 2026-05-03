@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Number of messages in a topic has changed; for Saved Messages and channel direct messages chat topics only
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateTopicMessageCount {

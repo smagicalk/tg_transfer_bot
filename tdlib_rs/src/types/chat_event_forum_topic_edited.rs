@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A forum topic was edited
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatEventForumTopicEdited {

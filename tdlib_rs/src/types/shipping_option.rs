@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// One shipping option
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ShippingOption {

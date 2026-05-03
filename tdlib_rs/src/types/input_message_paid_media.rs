@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A message with paid media; can be used only in channel chats with supergroupFullInfo.has_paid_media_allowed
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputMessagePaidMedia {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes state of the stake dice
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StakeDiceState {

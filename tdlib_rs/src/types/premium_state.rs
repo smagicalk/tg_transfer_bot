@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains state of Telegram Premium subscription and promotion videos for Premium features
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PremiumState {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The user allowed the bot to send messages
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageBotWriteAccessAllowed {

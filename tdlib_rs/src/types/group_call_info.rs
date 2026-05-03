@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a just created or just joined group call
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GroupCallInfo {

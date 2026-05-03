@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The payment was done using a third-party payment provider
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PaymentReceiptTypeRegular {

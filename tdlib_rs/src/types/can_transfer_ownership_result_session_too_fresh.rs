@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The session was created recently, user needs to wait
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct CanTransferOwnershipResultSessionTooFresh {

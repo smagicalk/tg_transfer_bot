@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Smart Glocal payment provider
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PaymentProviderSmartGlocal {

@@ -1,6 +1,6 @@
+use crate::send_request;
 #[allow(clippy::all)]
-    use serde_json::json;
-    use crate::send_request;
+use serde_json::json;
 /// Posts a new story on behalf of a chat; requires can_post_stories administrator right for supergroup and channel chats. Returns a temporary story
 /// # Arguments
 /// * `chat_id` - Identifier of the chat that will post the story. Pass Saved Messages chat identifier when posting a story on behalf of the current user
@@ -15,23 +15,35 @@
 /// * `protect_content` - Pass true if the content of the story must be protected from forwarding and screenshotting
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
-pub async fn post_story(chat_id: i64, content: crate::enums::InputStoryContent, areas: Option<crate::types::InputStoryAreas>, caption: Option<crate::types::FormattedText>, privacy_settings: crate::enums::StoryPrivacySettings, album_ids: Vec<i32>, active_period: i32, from_story_full_id: Option<crate::types::StoryFullId>, is_posted_to_chat_page: bool, protect_content: bool, client_id: i32) -> Result<crate::enums::Story, crate::types::Error> {
+pub async fn post_story(
+    chat_id: i64,
+    content: crate::enums::InputStoryContent,
+    areas: Option<crate::types::InputStoryAreas>,
+    caption: Option<crate::types::FormattedText>,
+    privacy_settings: crate::enums::StoryPrivacySettings,
+    album_ids: Vec<i32>,
+    active_period: i32,
+    from_story_full_id: Option<crate::types::StoryFullId>,
+    is_posted_to_chat_page: bool,
+    protect_content: bool,
+    client_id: i32,
+) -> Result<crate::enums::Story, crate::types::Error> {
     let request = json!({
-        "@type": "postStory",
-        "chat_id": chat_id,
-        "content": content,
-        "areas": areas,
-        "caption": caption,
-        "privacy_settings": privacy_settings,
-        "album_ids": album_ids,
-        "active_period": active_period,
-        "from_story_full_id": from_story_full_id,
-        "is_posted_to_chat_page": is_posted_to_chat_page,
-        "protect_content": protect_content,
-        });
+    "@type": "postStory",
+    "chat_id": chat_id,
+    "content": content,
+    "areas": areas,
+    "caption": caption,
+    "privacy_settings": privacy_settings,
+    "album_ids": album_ids,
+    "active_period": active_period,
+    "from_story_full_id": from_story_full_id,
+    "is_posted_to_chat_page": is_posted_to_chat_page,
+    "protect_content": protect_content,
+    });
     let response = send_request(client_id, request).await;
     if response["@type"] == "error" {
-        return Err(serde_json::from_value(response).unwrap())
+        return Err(serde_json::from_value(response).unwrap());
     }
     Ok(serde_json::from_value(response).unwrap())
 }

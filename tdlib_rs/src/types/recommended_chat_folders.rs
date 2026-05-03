@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains a list of recommended chat folders
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct RecommendedChatFolders {

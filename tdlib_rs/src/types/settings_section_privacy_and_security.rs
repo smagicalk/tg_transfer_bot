@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The privacy and security section
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct SettingsSectionPrivacyAndSecurity {

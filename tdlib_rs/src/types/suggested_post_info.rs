@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a suggested post. If the post can be approved or declined, then changes to the post can be also suggested. Use sendMessage with reply to the message
 /// and suggested post information to suggest message changes. Use addOffer to suggest price or time changes
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

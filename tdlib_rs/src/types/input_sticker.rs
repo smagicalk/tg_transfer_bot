@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A sticker to be added to a sticker set
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputSticker {

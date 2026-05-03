@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a link to an MP3 audio file
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InputInlineQueryResultAudio {

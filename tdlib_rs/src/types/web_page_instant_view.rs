@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an instant view page for a web page
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct WebPageInstantView {

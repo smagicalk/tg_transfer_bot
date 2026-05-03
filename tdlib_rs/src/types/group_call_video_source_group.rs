@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a group of video synchronization source identifiers
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GroupCallVideoSourceGroup {

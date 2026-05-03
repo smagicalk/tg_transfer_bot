@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// TDLib needs the user's authentication code sent to an email address to authorize. Call checkAuthenticationEmailCode to provide the code
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AuthorizationStateWaitEmailCode {

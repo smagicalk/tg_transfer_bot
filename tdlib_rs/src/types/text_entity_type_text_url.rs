@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A text description shown instead of a raw URL
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct TextEntityTypeTextUrl {

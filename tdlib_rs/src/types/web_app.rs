@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a Web App. Use getInternalLink with internalLinkTypeWebApp to share the Web App
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct WebApp {

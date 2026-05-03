@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a bot connected to a business account
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct BusinessConnectedBot {

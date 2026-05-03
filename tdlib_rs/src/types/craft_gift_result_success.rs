@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Crafting was successful
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct CraftGiftResultSuccess {

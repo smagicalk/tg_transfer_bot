@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A HTTP transparent proxy server
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ProxyTypeHttp {

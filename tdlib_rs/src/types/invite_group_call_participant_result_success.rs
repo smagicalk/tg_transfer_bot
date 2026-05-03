@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The user was invited and a service message of the type messageGroupCall was sent which can be used in declineGroupCallInvitation to cancel the invitation
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InviteGroupCallParticipantResultSuccess {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a list of affiliate programs that were connected to an affiliate
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ConnectedAffiliatePrograms {

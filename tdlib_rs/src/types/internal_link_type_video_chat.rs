@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The link is a link to a video chat. Call searchPublicChat with the given chat username, and then joinVideoChat with the given invite hash to process the link
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InternalLinkTypeVideoChat {

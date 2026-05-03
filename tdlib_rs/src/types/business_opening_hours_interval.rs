@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an interval of time when the business is open
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct BusinessOpeningHoursInterval {

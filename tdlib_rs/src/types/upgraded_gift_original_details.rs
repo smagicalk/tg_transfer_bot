@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes the original details about the gift
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpgradedGiftOriginalDetails {

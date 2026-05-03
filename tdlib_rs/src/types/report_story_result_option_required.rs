@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The user must choose an option to report the story and repeat request with the chosen option
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ReportStoryResultOptionRequired {

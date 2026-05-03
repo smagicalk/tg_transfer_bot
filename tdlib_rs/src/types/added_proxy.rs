@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a proxy server added to the list of proxies
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct AddedProxy {

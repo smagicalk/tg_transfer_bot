@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents one language pack string
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct LanguagePackString {

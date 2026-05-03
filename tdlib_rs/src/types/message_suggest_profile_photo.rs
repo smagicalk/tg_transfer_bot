@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A profile photo was suggested to a user in a private chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageSuggestProfilePhoto {

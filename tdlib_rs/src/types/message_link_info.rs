@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a link to a message or a forum topic in a chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageLinkInfo {

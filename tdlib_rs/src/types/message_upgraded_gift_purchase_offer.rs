@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An offer to purchase an upgraded gift was sent or received
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageUpgradedGiftPurchaseOffer {

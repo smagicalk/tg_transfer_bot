@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Information about a group call participant was changed. The updates are sent only after the group call is received through getGroupCall and only if the call is joined or being joined
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateGroupCallParticipant {

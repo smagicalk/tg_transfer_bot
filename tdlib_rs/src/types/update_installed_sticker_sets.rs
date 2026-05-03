@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The list of installed sticker sets was updated
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

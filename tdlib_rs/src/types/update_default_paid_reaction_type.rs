@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The type of default paid reaction has changed
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateDefaultPaidReactionType {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A message has been successfully sent
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateMessageSendSucceeded {

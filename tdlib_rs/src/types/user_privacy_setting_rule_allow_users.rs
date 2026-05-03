@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A rule to allow certain specified users to do something
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UserPrivacySettingRuleAllowUsers {

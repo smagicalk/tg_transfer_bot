@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains a custom keyboard layout to quickly reply to bots
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ReplyMarkupShowKeyboard {

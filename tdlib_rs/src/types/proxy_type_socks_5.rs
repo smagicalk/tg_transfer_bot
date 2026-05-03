@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A SOCKS5 proxy server
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ProxyTypeSocks5 {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An area with information about weather
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputStoryAreaTypeWeather {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A bot (see https:core.telegram.org/bots)
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UserTypeBot {

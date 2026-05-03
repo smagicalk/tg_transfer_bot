@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A chat member was restricted/unrestricted or banned/unbanned, or the list of their restrictions has changed
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatEventMemberRestricted {

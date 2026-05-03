@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a round of an auction
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AuctionRound {

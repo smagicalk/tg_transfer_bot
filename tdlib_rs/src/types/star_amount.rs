@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a possibly non-integer Telegram Star amount
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StarAmount {

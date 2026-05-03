@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a price required to pay to upgrade a gift
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GiftUpgradePrice {

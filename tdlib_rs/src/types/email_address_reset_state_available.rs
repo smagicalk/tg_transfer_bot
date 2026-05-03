@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Email address can be reset after the given period. Call resetAuthenticationEmailAddress to reset it and allow the user to authorize with a code sent to the user's phone number
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct EmailAddressResetStateAvailable {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a message to be replied in the same chat and forum topic
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputMessageReplyToMessage {

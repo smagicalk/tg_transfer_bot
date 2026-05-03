@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains the storage usage statistics for a specific chat
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StorageStatisticsByChat {

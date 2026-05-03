@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A button that requests users to be shared by the current user; available only in private chats. Use the method shareUsersWithBot to complete the request
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct KeyboardButtonTypeRequestUsers {

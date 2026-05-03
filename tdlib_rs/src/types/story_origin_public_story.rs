@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The original story was a public story that was posted by a known chat
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct StoryOriginPublicStory {

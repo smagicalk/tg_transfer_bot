@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a boost applied to a chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatBoost {

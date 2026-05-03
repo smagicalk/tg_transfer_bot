@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an image in JPEG format
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PhotoSize {

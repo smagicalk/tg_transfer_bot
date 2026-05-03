@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A token for Tizen Push Service
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct DeviceTokenTizenPush {

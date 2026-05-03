@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes parameters for age verification of the current user
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AgeVerificationParameters {

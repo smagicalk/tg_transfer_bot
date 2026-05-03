@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a button to be shown instead of bot commands menu button
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct BotMenuButton {

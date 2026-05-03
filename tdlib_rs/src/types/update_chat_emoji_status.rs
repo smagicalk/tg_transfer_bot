@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Chat emoji status has changed
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateChatEmojiStatus {

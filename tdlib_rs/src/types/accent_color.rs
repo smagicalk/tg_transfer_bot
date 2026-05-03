@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about supported accent color for user/chat name, background of empty chat photo, replies to messages and link previews
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AccentColor {

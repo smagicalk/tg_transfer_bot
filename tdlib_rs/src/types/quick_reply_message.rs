@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a message that can be used for quick reply
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

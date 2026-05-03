@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An object of this type can be returned on every function call, in case of an error
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Error {

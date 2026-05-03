@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a message to be replied that is from a different chat or a forum topic; not supported in secret chats
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputMessageReplyToExternalMessage {

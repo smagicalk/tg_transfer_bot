@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A button that opens a specified URL
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InlineKeyboardButtonTypeUrl {

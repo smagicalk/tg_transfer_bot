@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes parameters used to join a group call
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct GroupCallJoinParameters {

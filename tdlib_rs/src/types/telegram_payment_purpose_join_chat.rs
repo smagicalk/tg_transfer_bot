@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The user joins a chat and subscribes to regular payments in Telegram Stars
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct TelegramPaymentPurposeJoinChat {

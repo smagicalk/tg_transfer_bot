@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A poll in quiz mode, which has exactly one correct answer option and can be answered only once
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PollTypeQuiz {

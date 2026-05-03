@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a recently speaking participant in a group call
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct GroupCallRecentSpeaker {

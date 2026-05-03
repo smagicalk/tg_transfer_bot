@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a background set for a specific chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatBackground {

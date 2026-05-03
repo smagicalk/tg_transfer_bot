@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a withdrawal of earnings through Fragment
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatRevenueTransactionTypeFragmentWithdrawal {

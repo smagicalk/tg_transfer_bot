@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The list of trending sticker sets was updated or some of them were viewed
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateTrendingStickerSets {

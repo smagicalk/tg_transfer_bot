@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The call was ended because it has been upgraded to a group call
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct CallDiscardReasonUpgradeToGroupCall {

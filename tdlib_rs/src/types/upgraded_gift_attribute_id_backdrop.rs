@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Identifier of a gift backdrop
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UpgradedGiftAttributeIdBackdrop {

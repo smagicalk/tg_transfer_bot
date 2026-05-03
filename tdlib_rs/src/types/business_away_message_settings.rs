@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes settings for messages that are automatically sent by a Telegram Business account when it is away
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct BusinessAwayMessageSettings {

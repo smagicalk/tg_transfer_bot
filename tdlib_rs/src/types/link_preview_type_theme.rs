@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The link is a link to a cloud theme. TDLib has no theme support yet
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct LinkPreviewTypeTheme {

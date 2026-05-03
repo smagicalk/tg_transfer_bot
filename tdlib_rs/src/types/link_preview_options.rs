@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Options to be used for generation of a link preview
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct LinkPreviewOptions {

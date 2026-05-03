@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Instructs application to force a reply to this message
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ReplyMarkupForceReply {

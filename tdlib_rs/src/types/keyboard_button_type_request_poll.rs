@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A button that allows the user to create and send a poll when pressed; available only in private chats
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct KeyboardButtonTypeRequestPoll {

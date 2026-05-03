@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A cubic Bézier curve to a given point
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct VectorPathCommandCubicBezierCurve {

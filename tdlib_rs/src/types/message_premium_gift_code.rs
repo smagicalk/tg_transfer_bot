@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A Telegram Premium gift code was created for the user
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a list of public forwards and reposts as a story of a message or a story
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PublicForwards {

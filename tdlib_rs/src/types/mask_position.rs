@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Position on a photo where a mask is placed
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MaskPosition {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A chat member extended their subscription to the chat
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ChatEventMemberSubscriptionExtended {

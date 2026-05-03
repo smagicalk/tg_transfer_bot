@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains a description of the required Telegram Passport element that was requested by a service
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PassportRequiredElement {

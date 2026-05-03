@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A custom suggestion to be shown at the top of the chat list
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct SuggestedActionCustom {

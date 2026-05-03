@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The payment form is for a regular payment
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct PaymentFormTypeRegular {

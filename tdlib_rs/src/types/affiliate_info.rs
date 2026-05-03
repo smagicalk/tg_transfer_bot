@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about an affiliate that received commission from a Telegram Star transaction
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct AffiliateInfo {

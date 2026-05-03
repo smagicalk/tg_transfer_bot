@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Notification settings for some type of chats were updated
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateScopeNotificationSettings {

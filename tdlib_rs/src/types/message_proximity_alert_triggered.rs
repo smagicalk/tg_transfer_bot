@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A user in the chat came within proximity alert range
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MessageProximityAlertTriggered {

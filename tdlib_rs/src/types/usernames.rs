@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes usernames assigned to a user, a supergroup, or a channel
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Usernames {

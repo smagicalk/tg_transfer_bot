@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a post to suggest
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InputSuggestedPostInfo {

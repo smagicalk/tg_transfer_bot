@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes album of stories
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct StoryAlbum {

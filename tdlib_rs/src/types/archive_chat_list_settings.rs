@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains settings for automatic moving of chats to and from the Archive chat lists
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ArchiveChatListSettings {

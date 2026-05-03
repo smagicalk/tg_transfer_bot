@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// A service notification from the server was received. Upon receiving this the application must show a popup with the content of the notification
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpdateServiceNotification {

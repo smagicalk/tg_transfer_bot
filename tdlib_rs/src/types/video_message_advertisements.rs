@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains a list of advertisements to be shown while a video from a message is watched
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct VideoMessageAdvertisements {

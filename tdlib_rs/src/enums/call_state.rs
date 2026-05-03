@@ -1,7 +1,6 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
 pub enum CallState {
@@ -9,7 +8,10 @@ pub enum CallState {
     #[serde(rename(serialize = "callStatePending", deserialize = "callStatePending"))]
     Pending(crate::types::CallStatePending),
     /// The call has been answered and encryption keys are being exchanged
-    #[serde(rename(serialize = "callStateExchangingKeys", deserialize = "callStateExchangingKeys"))]
+    #[serde(rename(
+        serialize = "callStateExchangingKeys",
+        deserialize = "callStateExchangingKeys"
+    ))]
     ExchangingKeys,
     /// The call is ready to use
     #[serde(rename(serialize = "callStateReady", deserialize = "callStateReady"))]

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes an animated or custom representation of an emoji
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct AnimatedEmoji {

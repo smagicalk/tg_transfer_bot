@@ -33,4 +33,3 @@ pub(crate) fn receive(timeout: f64) -> Option<String> {
             .map(|response| CStr::from_ptr(response).to_string_lossy().into_owned())
     }
 }
-

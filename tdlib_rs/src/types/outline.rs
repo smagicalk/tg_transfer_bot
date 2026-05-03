@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents outline of an image
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Outline {

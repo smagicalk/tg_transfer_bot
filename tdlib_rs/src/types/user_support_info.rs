@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains custom information about the user
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct UserSupportInfo {

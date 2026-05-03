@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains parameters of the application theme
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct ThemeParameters {

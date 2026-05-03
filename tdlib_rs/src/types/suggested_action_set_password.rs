@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Suggests the user to set a 2-step verification password to be able to log in again
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct SuggestedActionSetPassword {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes a symbol shown on the pattern of an upgraded gift
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UpgradedGiftSymbol {

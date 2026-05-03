@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains information about a user who has failed to be added to a chat
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct FailedToAddMember {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Contains a bot's answer to a callback query
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct CallbackQueryAnswer {

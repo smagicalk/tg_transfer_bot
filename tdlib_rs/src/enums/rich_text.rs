@@ -1,7 +1,6 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
 pub enum RichText {
@@ -18,7 +17,10 @@ pub enum RichText {
     #[serde(rename(serialize = "richTextUnderline", deserialize = "richTextUnderline"))]
     Underline(Box<crate::types::RichTextUnderline>),
     /// A strikethrough rich text
-    #[serde(rename(serialize = "richTextStrikethrough", deserialize = "richTextStrikethrough"))]
+    #[serde(rename(
+        serialize = "richTextStrikethrough",
+        deserialize = "richTextStrikethrough"
+    ))]
     Strikethrough(Box<crate::types::RichTextStrikethrough>),
     /// A fixed-width rich text
     #[serde(rename(serialize = "richTextFixed", deserialize = "richTextFixed"))]
@@ -27,7 +29,10 @@ pub enum RichText {
     #[serde(rename(serialize = "richTextUrl", deserialize = "richTextUrl"))]
     Url(Box<crate::types::RichTextUrl>),
     /// A rich text email link
-    #[serde(rename(serialize = "richTextEmailAddress", deserialize = "richTextEmailAddress"))]
+    #[serde(rename(
+        serialize = "richTextEmailAddress",
+        deserialize = "richTextEmailAddress"
+    ))]
     EmailAddress(Box<crate::types::RichTextEmailAddress>),
     /// A subscript rich text
     #[serde(rename(serialize = "richTextSubscript", deserialize = "richTextSubscript"))]

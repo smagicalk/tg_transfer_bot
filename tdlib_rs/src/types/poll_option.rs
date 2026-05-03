@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Describes one answer option of a poll
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct PollOption {

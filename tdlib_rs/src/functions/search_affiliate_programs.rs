@@ -1,6 +1,6 @@
+use crate::send_request;
 #[allow(clippy::all)]
-    use serde_json::json;
-    use crate::send_request;
+use serde_json::json;
 /// Searches affiliate programs that can be connected to the given affiliate
 /// # Arguments
 /// * `affiliate` - The affiliate for which affiliate programs are searched for
@@ -9,17 +9,23 @@
 /// * `limit` - The maximum number of affiliate programs to return
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
-pub async fn search_affiliate_programs(affiliate: crate::enums::AffiliateType, sort_order: crate::enums::AffiliateProgramSortOrder, offset: String, limit: i32, client_id: i32) -> Result<crate::enums::FoundAffiliatePrograms, crate::types::Error> {
+pub async fn search_affiliate_programs(
+    affiliate: crate::enums::AffiliateType,
+    sort_order: crate::enums::AffiliateProgramSortOrder,
+    offset: String,
+    limit: i32,
+    client_id: i32,
+) -> Result<crate::enums::FoundAffiliatePrograms, crate::types::Error> {
     let request = json!({
-        "@type": "searchAffiliatePrograms",
-        "affiliate": affiliate,
-        "sort_order": sort_order,
-        "offset": offset,
-        "limit": limit,
-        });
+    "@type": "searchAffiliatePrograms",
+    "affiliate": affiliate,
+    "sort_order": sort_order,
+    "offset": offset,
+    "limit": limit,
+    });
     let response = send_request(client_id, request).await;
     if response["@type"] == "error" {
-        return Err(serde_json::from_value(response).unwrap())
+        return Err(serde_json::from_value(response).unwrap());
     }
     Ok(serde_json::from_value(response).unwrap())
 }

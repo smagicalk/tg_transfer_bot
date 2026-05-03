@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// The link is an unknown tg: link. Call getDeepLinkInfo to process the link
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct InternalLinkTypeUnknownDeepLink {

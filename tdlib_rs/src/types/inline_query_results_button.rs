@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Represents a button to be shown above inline query results
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InlineQueryResultsButton {

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// Suggests the user to add login email address. Call isLoginEmailAddressRequired, and then setLoginEmailAddress or checkLoginEmailAddressCode to change the login email address
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct SuggestedActionSetLoginEmailAddress {

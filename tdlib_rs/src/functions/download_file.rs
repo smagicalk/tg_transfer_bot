@@ -1,6 +1,6 @@
+use crate::send_request;
 #[allow(clippy::all)]
-    use serde_json::json;
-    use crate::send_request;
+use serde_json::json;
 /// Downloads a file from the cloud. Download progress and completion of the download will be notified through updateFile updates
 /// # Arguments
 /// * `file_id` - Identifier of the file to download
@@ -10,18 +10,25 @@
 /// * `synchronous` - Pass true to return response only after the file download has succeeded, has failed, has been canceled, or a new downloadFile request with different offset/limit parameters was sent; pass false to return file state immediately, just after the download has been started
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
-pub async fn download_file(file_id: i32, priority: i32, offset: i64, limit: i64, synchronous: bool, client_id: i32) -> Result<crate::enums::File, crate::types::Error> {
+pub async fn download_file(
+    file_id: i32,
+    priority: i32,
+    offset: i64,
+    limit: i64,
+    synchronous: bool,
+    client_id: i32,
+) -> Result<crate::enums::File, crate::types::Error> {
     let request = json!({
-        "@type": "downloadFile",
-        "file_id": file_id,
-        "priority": priority,
-        "offset": offset,
-        "limit": limit,
-        "synchronous": synchronous,
-        });
+    "@type": "downloadFile",
+    "file_id": file_id,
+    "priority": priority,
+    "offset": offset,
+    "limit": limit,
+    "synchronous": synchronous,
+    });
     let response = send_request(client_id, request).await;
     if response["@type"] == "error" {
-        return Err(serde_json::from_value(response).unwrap())
+        return Err(serde_json::from_value(response).unwrap());
     }
     Ok(serde_json::from_value(response).unwrap())
 }

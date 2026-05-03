@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-
 /// An area pointing to a suggested reaction. App needs to show a clickable reaction on the area and call setStoryReaction when the are is clicked
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct StoryAreaTypeSuggestedReaction {

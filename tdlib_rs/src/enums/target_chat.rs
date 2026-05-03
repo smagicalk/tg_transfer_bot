@@ -1,7 +1,6 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
 pub enum TargetChat {
@@ -12,6 +11,9 @@ pub enum TargetChat {
     #[serde(rename(serialize = "targetChatChosen", deserialize = "targetChatChosen"))]
     Chosen(crate::types::TargetChatChosen),
     /// The chat needs to be open with the provided internal link
-    #[serde(rename(serialize = "targetChatInternalLink", deserialize = "targetChatInternalLink"))]
+    #[serde(rename(
+        serialize = "targetChatInternalLink",
+        deserialize = "targetChatInternalLink"
+    ))]
     InternalLink(Box<crate::types::TargetChatInternalLink>),
 }
