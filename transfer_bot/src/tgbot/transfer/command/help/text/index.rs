@@ -59,7 +59,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
         "命令：".to_owned(),
         short_and_long(
             format!(
-                "{} <pause|resume|stop> <job_id>",
+                "{} <p|r|s|st> <job_id>",
                 command_root("job", CommandStyle::Short)
             ),
             format!(

@@ -20,6 +20,7 @@ pub use transfer_cmd::transfer_command;
 /// callback payload 路由。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CallbackRoute {
+    Help,
     Downloads,
     Job,
     Unknown,
@@ -36,6 +37,7 @@ pub async fn transfer_callback_query(
     let route = classify_callback_route(&update.payload);
 
     match route {
+        CallbackRoute::Help => help::help_callback_query(update, client_id).await,
         CallbackRoute::Downloads => downloads::downloads_callback_query(update, client_id).await,
         CallbackRoute::Job => job::job_callback_query(update, client_id).await,
         CallbackRoute::Unknown => {
@@ -56,6 +58,11 @@ pub async fn transfer_callback_query(
 /// 根据 callback payload 前缀分类路由。
 fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> CallbackRoute {
     match payload {
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if help::is_help_callback_data(&data.data) =>
+        {
+            CallbackRoute::Help
+        }
         tdlib_rs::enums::CallbackQueryPayload::Data(data)
             if downloads::is_downloads_callback_data(&data.data) =>
         {
@@ -78,6 +85,10 @@ mod tests {
     // callback 分发只看短前缀，具体参数合法性由各命令模块自行校验。
     #[test]
     fn test_classify_callback_route() {
+        assert_eq!(
+            classify_callback_route(&payload("h:transfer")),
+            CallbackRoute::Help
+        );
         assert_eq!(
             classify_callback_route(&payload("d:r:run:8:1")),
             CallbackRoute::Downloads

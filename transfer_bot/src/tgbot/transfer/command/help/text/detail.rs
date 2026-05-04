@@ -222,7 +222,7 @@ fn build_job_detail() -> String {
         "命令：".to_owned(),
         short_and_long(
             format!(
-                "{} <pause|resume|stop> <job_id>",
+                "{} <p|r|s|st> <job_id>",
                 command_root("job", CommandStyle::Short)
             ),
             format!(

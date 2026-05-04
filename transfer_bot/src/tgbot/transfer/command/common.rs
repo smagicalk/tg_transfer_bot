@@ -194,8 +194,8 @@ mod tests {
         assert_eq!(job_command("p", 42, CommandStyle::Short), "/j p 42");
         assert_eq!(job_command("st", 42, CommandStyle::Short), "/j st 42");
         assert_eq!(
-            config_set_command("transfer_job_concurrency", 2, CommandStyle::Long),
-            "/config set transfer_job_concurrency 2"
+            config_set_command("job_concurrency", 2, CommandStyle::Long),
+            "/config set job_concurrency 2"
         );
         assert_eq!(help_command(Some("job"), CommandStyle::Short), "/h job");
     }
