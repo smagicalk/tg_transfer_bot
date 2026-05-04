@@ -19,6 +19,21 @@ pub(super) fn build_job_status_callback_data(job_id: i64) -> String {
     args::build_job_callback_data(args::JobCallbackAction::Status, job_id)
 }
 
+/// 生成单任务暂停按钮所需的 callback 数据。
+pub(super) fn build_job_pause_callback_data(job_id: i64) -> String {
+    args::build_job_callback_data(args::JobCallbackAction::Pause, job_id)
+}
+
+/// 生成单任务恢复按钮所需的 callback 数据。
+pub(super) fn build_job_resume_callback_data(job_id: i64) -> String {
+    args::build_job_callback_data(args::JobCallbackAction::Resume, job_id)
+}
+
+/// 生成单任务停止按钮所需的 callback 数据。
+pub(super) fn build_job_stop_callback_data(job_id: i64) -> String {
+    args::build_job_callback_data(args::JobCallbackAction::Stop, job_id)
+}
+
 /// `/job` 命令入口。
 /// 命令格式：`/job <pause|resume|stop|status> <job_id>`
 pub async fn job_command(

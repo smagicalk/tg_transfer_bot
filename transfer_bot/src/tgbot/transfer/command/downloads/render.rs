@@ -66,23 +66,29 @@ pub(super) fn format_downloads_text(
         };
 
         lines.push(format!(
-            "{}\n状态：{}\n进度：{}",
+            "{}\n{}",
             card::section(&format!("任务 #{}", snapshot.job.id)),
-            card::code(&snapshot.job.status),
-            card::code(format!("{}/{} ({}%)", finished, total, progress))
+            card::summary_line(
+                &snapshot.job.status,
+                Some(snapshot.job.id),
+                snapshot.job.target_chat_id
+            )
         ));
-        lines.push(format!(
-            "阶段：等待 {} | 下载 {} | 就绪 {} | 上传 {}",
-            card::code(snapshot.pending_count),
-            card::code(snapshot.preparing_count),
-            card::code(snapshot.prepared_count),
-            card::code(snapshot.uploading_count),
+        lines.push(card::field(
+            "进度",
+            format!("{}/{} ({}%)", finished, total, progress),
         ));
-        lines.push(format!(
-            "结果：成功 {} | 失败 {} | 已停 {}",
-            card::code(snapshot.success_count),
-            card::code(snapshot.failed_count),
-            card::code(snapshot.cancelled_count)
+        lines.push(card::field_pair(
+            "等待/下载",
+            format!("{}/{}", snapshot.pending_count, snapshot.preparing_count),
+            "就绪/上传",
+            format!("{}/{}", snapshot.prepared_count, snapshot.uploading_count),
+        ));
+        lines.push(card::field_pair(
+            "成功/失败",
+            format!("{}/{}", snapshot.success_count, snapshot.failed_count),
+            "已停",
+            snapshot.cancelled_count,
         ));
 
         if snapshot.active_download_files > 0 {
@@ -92,10 +98,9 @@ pub(super) fn format_downloads_text(
             ));
         }
 
-        lines.push(format!(
-            "目标：{}\n更新：{}",
-            card::code(snapshot.job.target_chat_id),
-            card::code(snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"))
+        lines.push(card::field(
+            "更新",
+            snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
         ));
     }
 

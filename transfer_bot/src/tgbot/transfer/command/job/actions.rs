@@ -314,7 +314,7 @@ fn format_job_action_text(title: &str, job_id: i64, status: &str, detail: &str) 
             card::code(status)
         ),
         card::DIVIDER.to_owned(),
-        format!("说明：{}", detail),
+        card::note(detail),
     ]
     .join("\n")
 }
@@ -330,30 +330,25 @@ fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
     };
     let mut lines = vec![
         "任务详情".to_owned(),
-        format!(
-            "job：{}  状态：{}  目标：{}",
-            card::job_ref(snapshot.job.id),
-            card::code(&snapshot.job.status),
-            card::code(snapshot.job.target_chat_id)
+        card::summary_line(
+            &snapshot.job.status,
+            Some(snapshot.job.id),
+            snapshot.job.target_chat_id,
         ),
         card::DIVIDER.to_owned(),
         card::section("进度"),
-        format!(
-            "总进度：{}",
-            card::code(format!("{}/{} ({}%)", finished, total, progress))
+        card::field("总进度", format!("{}/{} ({}%)", finished, total, progress)),
+        card::field_pair(
+            "等待/下载",
+            format!("{}/{}", snapshot.pending_count, snapshot.preparing_count),
+            "就绪/上传",
+            format!("{}/{}", snapshot.prepared_count, snapshot.uploading_count),
         ),
-        format!(
-            "阶段：等待 {} | 下载 {} | 就绪 {} | 上传 {}",
-            card::code(snapshot.pending_count),
-            card::code(snapshot.preparing_count),
-            card::code(snapshot.prepared_count),
-            card::code(snapshot.uploading_count)
-        ),
-        format!(
-            "结果：成功 {} | 失败 {} | 已停 {}",
-            card::code(snapshot.success_count),
-            card::code(snapshot.failed_count),
-            card::code(snapshot.cancelled_count)
+        card::field_pair(
+            "成功/失败",
+            format!("{}/{}", snapshot.success_count, snapshot.failed_count),
+            "已停",
+            snapshot.cancelled_count,
         ),
     ];
 
@@ -365,13 +360,13 @@ fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
     }
 
     lines.push(card::section("时间"));
-    lines.push(format!(
-        "创建：{}",
-        card::code(snapshot.job.created_at.format("%Y-%m-%d %H:%M:%S"))
+    lines.push(card::field(
+        "创建",
+        snapshot.job.created_at.format("%Y-%m-%d %H:%M:%S"),
     ));
-    lines.push(format!(
-        "更新：{}",
-        card::code(snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"))
+    lines.push(card::field(
+        "更新",
+        snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
     ));
     lines.join("\n")
 }

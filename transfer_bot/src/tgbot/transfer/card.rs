@@ -25,6 +25,50 @@ pub(in crate::tgbot::transfer) fn section(title: &str) -> String {
     format!("■ {}", title)
 }
 
+/// 构造普通说明行。
+///
+/// 说明文字不使用 code 实体，保留自然换行和可读性。
+pub(in crate::tgbot::transfer) fn note(value: &str) -> String {
+    format!("说明：{}", value)
+}
+
+/// 构造单个 `label：value` 字段。
+///
+/// 卡片正文大量使用短字段；统一入口可以避免不同模块出现半角冒号、空格等展示差异。
+pub(in crate::tgbot::transfer) fn field(label: &str, value: impl std::fmt::Display) -> String {
+    format!("{}：{}", label, code(value))
+}
+
+/// 构造同一行上的两个字段，适合状态/目标、进度/更新时间这类高频摘要。
+pub(in crate::tgbot::transfer) fn field_pair(
+    left_label: &str,
+    left_value: impl std::fmt::Display,
+    right_label: &str,
+    right_value: impl std::fmt::Display,
+) -> String {
+    format!(
+        "{}：{}  {}：{}",
+        left_label,
+        code(left_value),
+        right_label,
+        code(right_value)
+    )
+}
+
+/// 构造三段式状态摘要。
+///
+/// 用于等待、进度、结果卡片的第二行，保证用户第一眼能看到状态、job 和目标。
+pub(in crate::tgbot::transfer) fn summary_line(
+    status: &str,
+    job_id: Option<i64>,
+    target_chat_id: i64,
+) -> String {
+    match job_id {
+        Some(job_id) => status_job_target(status, job_id, target_chat_id),
+        None => status_target(status, target_chat_id),
+    }
+}
+
 /// 构造状态 + 目标行。
 pub(in crate::tgbot::transfer) fn status_target(status: &str, target_chat_id: i64) -> String {
     format!("状态：{}  目标：{}", code(status), code(target_chat_id))
@@ -100,13 +144,17 @@ fn escape_link_url(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{code, job_ref, link, result_block, section, source_block, status_job_target};
+    use super::{
+        code, field, field_pair, job_ref, link, note, result_block, section, source_block,
+        status_job_target, summary_line,
+    };
 
     // 卡片标记应保持简单稳定，供发送层解析为 TDLib 实体。
     #[test]
     fn test_card_markers() {
         assert_eq!(code("success"), "‹success›");
         assert_eq!(section("结果"), "■ 结果");
+        assert_eq!(note("等待刷新。"), "说明：等待刷新。");
         assert_eq!(job_ref(42), "‹#42›");
         assert_eq!(
             link("打开", "https://t.me/c/1/2"),
@@ -134,6 +182,15 @@ mod tests {
         assert_eq!(
             source_block("https://t.me/c/1/2"),
             vec!["■ 来源", "‹https://t.me/c/1/2›"]
+        );
+        assert_eq!(field("目标", -100), "目标：‹-100›");
+        assert_eq!(
+            field_pair("进度", "1/2", "更新", "10:00"),
+            "进度：‹1/2›  更新：‹10:00›"
+        );
+        assert_eq!(
+            summary_line("running", Some(42), -100),
+            "状态：‹running›  job：‹#42›  目标：‹-100›"
         );
     }
 

@@ -100,10 +100,7 @@ pub(in crate::tgbot::transfer) fn format_result_card_text(
 ) -> String {
     let mut lines = vec![
         title.to_owned(),
-        match job_id {
-            Some(job_id) => card::status_job_target("success", job_id, target_chat_id),
-            None => card::status_target("success", target_chat_id),
-        },
+        card::summary_line("success", job_id, target_chat_id),
         card::DIVIDER.to_owned(),
         card::result_block(result_link),
         String::new(),

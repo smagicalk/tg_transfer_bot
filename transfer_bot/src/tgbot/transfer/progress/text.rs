@@ -6,10 +6,12 @@ use crate::tgbot::transfer::{card, store, types};
 /// 构造任务尚未入库时的等待文本。
 pub(super) fn format_transfer_waiting_text(plan: &types::TransferPlan) -> String {
     let mut lines = vec![
-        "转存进度".to_owned(),
-        card::status_target("waiting", plan.target_chat_id),
+        "转存进度 · 等待".to_owned(),
+        card::summary_line("waiting", None, plan.target_chat_id),
         card::DIVIDER.to_owned(),
-        "说明：正在排队或抓取源消息。".to_owned(),
+        card::section("当前阶段"),
+        card::note("正在排队或抓取源消息，任务创建后会自动刷新为实时进度。"),
+        String::new(),
     ];
     lines.extend(card::source_link_block(&plan.source_link));
     lines.join("\n")
@@ -29,28 +31,30 @@ pub(super) fn format_transfer_progress_text(
     };
     let mut lines = vec![
         format!("转存进度 {}", card::job_ref(snapshot.job.id)),
-        format!(
-            "{}",
-            card::status_target(&snapshot.job.status, snapshot.job.target_chat_id)
+        card::summary_line(
+            &snapshot.job.status,
+            Some(snapshot.job.id),
+            snapshot.job.target_chat_id,
         ),
         card::DIVIDER.to_owned(),
-        format!(
-            "{}：{}",
-            card::section("进度"),
-            card::code(format!("{}/{} ({}%)", finished, total, progress))
+        card::section("进度"),
+        card::field_pair(
+            "总进度",
+            format!("{}/{} ({}%)", finished, total, progress),
+            "更新",
+            snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
         ),
-        format!(
-            "阶段：等待 {} | 下载 {} | 就绪 {} | 上传 {}",
-            card::code(snapshot.pending_count),
-            card::code(snapshot.preparing_count),
-            card::code(snapshot.prepared_count),
-            card::code(snapshot.uploading_count)
+        card::field_pair(
+            "等待/下载",
+            format!("{}/{}", snapshot.pending_count, snapshot.preparing_count),
+            "就绪/上传",
+            format!("{}/{}", snapshot.prepared_count, snapshot.uploading_count),
         ),
-        format!(
-            "结果：成功 {} | 失败 {} | 已停 {}",
-            card::code(snapshot.success_count),
-            card::code(snapshot.failed_count),
-            card::code(snapshot.cancelled_count)
+        card::field_pair(
+            "成功/失败",
+            format!("{}/{}", snapshot.success_count, snapshot.failed_count),
+            "已停",
+            snapshot.cancelled_count,
         ),
     ];
 
@@ -61,10 +65,7 @@ pub(super) fn format_transfer_progress_text(
         ));
     }
 
-    lines.push(format!(
-        "更新：{}",
-        card::code(snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"))
-    ));
+    lines.push(String::new());
     lines.extend(card::source_link_block(source_link));
     lines.join("\n")
 }
@@ -79,10 +80,7 @@ pub(super) fn format_transfer_final_text(
 ) -> String {
     let mut lines = vec![
         title.to_owned(),
-        match job_id {
-            Some(job_id) => card::status_job_target("success", job_id, target_chat_id),
-            None => card::status_target("success", target_chat_id),
-        },
+        card::summary_line("success", job_id, target_chat_id),
         card::DIVIDER.to_owned(),
         card::result_block(result_link),
         String::new(),
@@ -101,13 +99,11 @@ pub(super) fn format_transfer_control_text(
 ) -> String {
     let mut lines = vec![
         title.to_owned(),
-        format!(
-            "job：{}  目标：{}",
-            card::job_ref(job_id),
-            card::code(target_chat_id)
-        ),
+        card::summary_line("control", Some(job_id), target_chat_id),
         card::DIVIDER.to_owned(),
-        format!("说明：{}", detail),
+        card::section("说明"),
+        card::note(detail),
+        String::new(),
     ];
     lines.extend(card::source_block(source_link));
     lines.join("\n")
@@ -121,10 +117,11 @@ pub(super) fn format_transfer_error_text(
 ) -> String {
     let mut lines = vec![
         "转存失败".to_owned(),
-        card::status_target("failed", target_chat_id),
+        card::summary_line("failed", None, target_chat_id),
         card::DIVIDER.to_owned(),
         card::section("错误"),
         card::code(error),
+        String::new(),
     ];
     lines.extend(card::source_block(source_link));
     lines.join("\n")

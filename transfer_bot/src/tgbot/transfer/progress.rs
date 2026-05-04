@@ -64,6 +64,9 @@ pub(super) async fn update_transfer_progress_message(
         if text != last_text {
             let keyboard = build_transfer_progress_keyboard(
                 snapshot.as_ref().map(|snapshot| snapshot.job.id),
+                snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.job.status.as_str()),
                 &plan.source_link,
                 plan.target_chat_id,
             );
@@ -116,7 +119,12 @@ pub(super) async fn edit_transfer_progress_for_outcome(
                 *job_id,
                 "可以继续观察当前进度，或使用停止命令取消。",
             ),
-            build_transfer_progress_keyboard(Some(*job_id), source_link, target_chat_id),
+            build_transfer_progress_keyboard(
+                Some(*job_id),
+                Some(store::JOB_STATUS_RUNNING),
+                source_link,
+                target_chat_id,
+            ),
         ),
         Ok(workflow::TransferOutcome::Paused { job_id }) => (
             format_transfer_control_text(
@@ -126,7 +134,12 @@ pub(super) async fn edit_transfer_progress_for_outcome(
                 *job_id,
                 "恢复后会从已有子项状态继续处理。",
             ),
-            build_transfer_progress_keyboard(Some(*job_id), source_link, target_chat_id),
+            build_transfer_progress_keyboard(
+                Some(*job_id),
+                Some(store::JOB_STATUS_PAUSED),
+                source_link,
+                target_chat_id,
+            ),
         ),
         Ok(workflow::TransferOutcome::Cancelling { job_id }) => (
             format_transfer_control_text(
@@ -136,7 +149,12 @@ pub(super) async fn edit_transfer_progress_for_outcome(
                 *job_id,
                 "当前下载/上传调用会在安全点收尾。",
             ),
-            build_transfer_progress_keyboard(Some(*job_id), source_link, target_chat_id),
+            build_transfer_progress_keyboard(
+                Some(*job_id),
+                Some(store::JOB_STATUS_CANCELLING),
+                source_link,
+                target_chat_id,
+            ),
         ),
         Ok(workflow::TransferOutcome::Cancelled { job_id }) => (
             format_transfer_control_text(
@@ -146,7 +164,12 @@ pub(super) async fn edit_transfer_progress_for_outcome(
                 *job_id,
                 "文件引用已释放，后续由删除队列清理。",
             ),
-            build_transfer_progress_keyboard(Some(*job_id), source_link, target_chat_id),
+            build_transfer_progress_keyboard(
+                Some(*job_id),
+                Some(store::JOB_STATUS_CANCELLED),
+                source_link,
+                target_chat_id,
+            ),
         ),
         Ok(workflow::TransferOutcome::Completed { job_id, link }) => (
             format_transfer_final_text(

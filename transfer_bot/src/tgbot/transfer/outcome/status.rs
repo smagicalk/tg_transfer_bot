@@ -6,7 +6,10 @@ use super::super::command::common::{
     CommandStyle, downloads_command as build_downloads_command, job_command as build_job_command,
     lookup_command as build_lookup_command, transfer_command as build_transfer_command,
 };
-use super::super::command::{build_downloads_status_button_data, build_job_status_button_data};
+use super::super::command::{
+    build_downloads_status_button_data, build_job_pause_button_data, build_job_resume_button_data,
+    build_job_status_button_data, build_job_stop_button_data,
+};
 
 /// 发送“任务已暂停”的状态卡片。
 pub(in crate::tgbot::transfer) async fn send_paused_message(
@@ -29,8 +32,20 @@ pub(in crate::tgbot::transfer) async fn send_paused_message(
         crate::tgbot::send::build_callback_button(
             "查看任务详情",
             &build_job_status_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        crate::tgbot::send::build_callback_button(
+            "恢复",
+            &build_job_resume_button_data(job_id),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
+        crate::tgbot::send::build_callback_button(
+            "停止",
+            &build_job_stop_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ])
+    .row(vec![
         crate::tgbot::send::build_copy_button(
             "复制恢复",
             &build_job_command("r", job_id, CommandStyle::Short),
@@ -170,6 +185,18 @@ pub(in crate::tgbot::transfer) async fn send_running_message(
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         crate::tgbot::send::build_callback_button(
+            "暂停",
+            &build_job_pause_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        crate::tgbot::send::build_callback_button(
+            "停止",
+            &build_job_stop_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ])
+    .row(vec![
+        crate::tgbot::send::build_callback_button(
             "查看运行列表",
             &build_downloads_status_button_data("running", 8),
             tdlib_rs::enums::ButtonStyle::Default,
@@ -217,9 +244,11 @@ fn format_status_card_text(
 ) -> String {
     let mut lines = vec![
         title.to_owned(),
-        card::status_job_target(status, job_id, target_chat_id),
+        card::summary_line(status, Some(job_id), target_chat_id),
         card::DIVIDER.to_owned(),
-        format!("说明：{}", detail),
+        card::section("说明"),
+        card::note(detail),
+        String::new(),
     ];
     lines.extend(card::source_block(source_link));
     lines.join("\n")
