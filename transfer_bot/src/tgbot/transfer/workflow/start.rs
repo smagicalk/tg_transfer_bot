@@ -53,7 +53,10 @@ pub(super) async fn build_transfer_start(
             target_chat_id = plan.target_chat_id,
             "reuse successful transfer result"
         );
-        return Ok(TransferStart::Outcome(TransferOutcome::Reused { link }));
+        return Ok(TransferStart::Outcome(TransferOutcome::Reused {
+            job_id: old.id,
+            link,
+        }));
     }
 
     // 业务查重第二层：
@@ -151,7 +154,10 @@ async fn request_job_start(
             client_id,
         )
         .await?;
-        Ok(TransferStart::Outcome(TransferOutcome::Reused { link }))
+        Ok(TransferStart::Outcome(TransferOutcome::Reused {
+            job_id: old.id,
+            link,
+        }))
     } else {
         anyhow::bail!("duplicated request without reusable result link");
     }

@@ -1,7 +1,7 @@
 // 进度面板的轻量单元测试。
 // 这里只覆盖纯函数，避免测试依赖真实 TDLib 网络调用。
 
-use super::keyboard::build_transfer_result_keyboard;
+use super::keyboard::{build_transfer_progress_keyboard, build_transfer_result_keyboard};
 use super::text::format_progress_bytes;
 
 // 字节格式化用于实时下载进度面板，应保持和 `/downloads` 类似的展示风格。
@@ -15,9 +15,13 @@ fn test_format_progress_bytes() {
 // 最终结果按钮应按成功/失败切换列表筛选命令。
 #[test]
 fn test_build_transfer_result_keyboard_uses_result_state_filter() {
-    let success_keyboard =
-        build_transfer_result_keyboard("https://t.me/c/1/2", -100, Some("https://t.me/c/3/4"));
-    let fail_keyboard = build_transfer_result_keyboard("https://t.me/c/1/2", -100, None);
+    let success_keyboard = build_transfer_result_keyboard(
+        "https://t.me/c/1/2",
+        -100,
+        Some(42),
+        Some("https://t.me/c/3/4"),
+    );
+    let fail_keyboard = build_transfer_result_keyboard("https://t.me/c/1/2", -100, None, None);
 
     let success_last = success_keyboard
         .rows
@@ -30,8 +34,14 @@ fn test_build_transfer_result_keyboard_uses_result_state_filter() {
         .and_then(|row| row.last())
         .expect("fail keyboard must have last button");
 
-    assert_eq!(success_last.text, "复制完成列表");
-    assert_eq!(fail_last.text, "复制失败列表");
+    assert_eq!(success_last.text, "复制列表命令");
+    assert_eq!(fail_last.text, "复制列表命令");
+    assert_eq!(success_keyboard.rows[1][1].text, "查看完成列表");
+    assert_eq!(fail_keyboard.rows[1][1].text, "查看失败列表");
+    assert!(matches!(
+        success_keyboard.rows[1][1].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
 }
 
 // 非 HTTP(S) 定位信息不能生成“打开转存消息”按钮，否则客户端点击可能无反应。
@@ -40,6 +50,7 @@ fn test_build_transfer_result_keyboard_uses_copy_for_locator() {
     let keyboard = build_transfer_result_keyboard(
         "https://t.me/c/1/2",
         -5106953357,
+        Some(42),
         Some("chat_id=-5106953357 message_id=769654784"),
     );
 
@@ -59,8 +70,12 @@ fn test_build_transfer_result_keyboard_uses_copy_for_locator() {
 // HTTP(S) 结果链接保留“打开转存消息”按钮，由 Telegram 客户端负责跳转。
 #[test]
 fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
-    let keyboard =
-        build_transfer_result_keyboard("https://t.me/c/1/2", -100, Some("https://t.me/c/3/4"));
+    let keyboard = build_transfer_result_keyboard(
+        "https://t.me/c/1/2",
+        -100,
+        Some(42),
+        Some("https://t.me/c/3/4"),
+    );
 
     let first = keyboard
         .rows
@@ -72,5 +87,22 @@ fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
     assert!(matches!(
         first.r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Url(_)
+    ));
+}
+
+// 运行中进度面板应支持直接跳任务详情和运行列表，减少复制命令操作。
+#[test]
+fn test_build_transfer_progress_keyboard_has_callback_buttons() {
+    let keyboard = build_transfer_progress_keyboard(Some(42), "https://t.me/c/1/2", -100);
+
+    assert_eq!(keyboard.rows[0][0].text, "查看运行列表");
+    assert_eq!(keyboard.rows[1][0].text, "查看任务详情");
+    assert!(matches!(
+        keyboard.rows[0][0].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert!(matches!(
+        keyboard.rows[1][0].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }

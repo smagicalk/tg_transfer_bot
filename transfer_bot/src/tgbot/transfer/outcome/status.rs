@@ -6,6 +6,7 @@ use super::super::command::common::{
     CommandStyle, downloads_command as build_downloads_command, job_command as build_job_command,
     lookup_command as build_lookup_command, transfer_command as build_transfer_command,
 };
+use super::super::command::{build_downloads_status_button_data, build_job_status_button_data};
 
 /// 发送“任务已暂停”的状态卡片。
 pub(in crate::tgbot::transfer) async fn send_paused_message(
@@ -25,18 +26,30 @@ pub(in crate::tgbot::transfer) async fn send_paused_message(
         "可手动恢复或停止该任务。",
     ))
     .row(vec![
+        crate::tgbot::send::build_callback_button(
+            "查看任务详情",
+            &build_job_status_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
         crate::tgbot::send::build_copy_button(
             "复制恢复",
             &build_job_command("r", job_id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Primary,
+            tdlib_rs::enums::ButtonStyle::Default,
         ),
         crate::tgbot::send::build_copy_button(
             "复制停止",
             &build_job_command("s", job_id, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
+    ])
+    .row(vec![
+        crate::tgbot::send::build_callback_button(
+            "查看暂停列表",
+            &build_downloads_status_button_data("paused", 8),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
         crate::tgbot::send::build_copy_button(
-            "复制暂停列表",
+            "复制列表命令",
             &build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -63,17 +76,27 @@ pub(in crate::tgbot::transfer) async fn send_cancelling_message(
         "当前调用会在安全点收尾。",
     ))
     .row(vec![
+        crate::tgbot::send::build_callback_button(
+            "查看任务详情",
+            &build_job_status_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        crate::tgbot::send::build_callback_button(
+            "查看停止列表",
+            &build_downloads_status_button_data("cancelling", 8),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
         crate::tgbot::send::build_copy_button(
             "复制 job_id",
             &job_id.to_string(),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制停止列表",
-            &build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ])
+    .row(vec![crate::tgbot::send::build_copy_button(
+        "复制列表命令",
+        &build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )])
     .send(notify_chat_id, client_id)
     .await
 }
@@ -96,17 +119,27 @@ pub(in crate::tgbot::transfer) async fn send_cancelled_message(
         "文件引用已释放，后续由删除队列清理。",
     ))
     .row(vec![
+        crate::tgbot::send::build_callback_button(
+            "查看任务详情",
+            &build_job_status_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        crate::tgbot::send::build_callback_button(
+            "查看停止列表",
+            &build_downloads_status_button_data("cancelled", 8),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
         crate::tgbot::send::build_copy_button(
             "复制 job_id",
             &job_id.to_string(),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制停止列表",
-            &build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ])
+    .row(vec![crate::tgbot::send::build_copy_button(
+        "复制列表命令",
+        &build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )])
     .send(notify_chat_id, client_id)
     .await
 }
@@ -131,13 +164,30 @@ pub(in crate::tgbot::transfer) async fn send_running_message(
         &format!("建议：使用 {} 查看后台进度。", card::code("/d run")),
     ))
     .row(vec![
+        crate::tgbot::send::build_callback_button(
+            "查看任务详情",
+            &build_job_status_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        crate::tgbot::send::build_callback_button(
+            "查看运行列表",
+            &build_downloads_status_button_data("running", 8),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
         crate::tgbot::send::build_copy_button(
             "复制 job_id",
             &job_id.to_string(),
-            tdlib_rs::enums::ButtonStyle::Primary,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ])
+    .row(vec![
+        crate::tgbot::send::build_copy_button(
+            "复制暂停",
+            &build_job_command("p", job_id, CommandStyle::Short),
+            tdlib_rs::enums::ButtonStyle::Default,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制运行列表",
+            "复制运行列表命令",
             &build_downloads_command(Some("run"), None, None, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         ),

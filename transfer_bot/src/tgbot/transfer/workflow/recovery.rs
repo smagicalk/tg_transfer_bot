@@ -14,7 +14,9 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
     client_id: i32,
 ) -> anyhow::Result<()> {
     // 上次退出前已经请求停止的任务，启动时先收敛为 cancelled 并释放引用。
-    for job in store::list_cancelling_jobs().await? {
+    let cancelling_jobs = store::list_cancelling_jobs().await?;
+    let cancelling_count = cancelling_jobs.len();
+    for job in cancelling_jobs {
         tracing::info!(
             job_id = job.id,
             request_chat_id = job.request_chat_id,
@@ -31,6 +33,11 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
     }
 
     let jobs = store::list_recoverable_jobs().await?;
+    tracing::info!(
+        cancelling_finalized_count = cancelling_count,
+        recoverable_count = jobs.len(),
+        "transfer recovery scan completed"
+    );
     if jobs.is_empty() {
         tracing::info!("no recoverable transfer jobs");
         return Ok(());

@@ -5,6 +5,10 @@ use crate::tgbot::transfer::command::common::{
     CommandStyle, downloads_command as build_downloads_command, job_command as build_job_command,
     lookup_command as build_lookup_command, transfer_command as build_transfer_command,
 };
+use crate::tgbot::transfer::command::{
+    build_downloads_filter_button_data, build_downloads_status_button_data,
+    build_job_status_button_data,
+};
 
 /// 构造进度面板按钮。
 pub(super) fn build_transfer_progress_keyboard(
@@ -14,20 +18,25 @@ pub(super) fn build_transfer_progress_keyboard(
 ) -> tdlib_rs::types::ReplyMarkupInlineKeyboard {
     let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
     let mut rows = vec![vec![
-        crate::tgbot::send::build_copy_button(
-            "复制查询命令",
-            &lookup_command,
+        crate::tgbot::send::build_callback_button(
+            "查看运行列表",
+            &build_downloads_status_button_data("running", 8),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         crate::tgbot::send::build_copy_button(
-            "复制运行列表",
-            &build_downloads_command(Some("run"), None, None, CommandStyle::Short),
+            "复制查询命令",
+            &lookup_command,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ]];
 
     if let Some(job_id) = job_id {
         rows.push(vec![
+            crate::tgbot::send::build_callback_button(
+                "查看任务详情",
+                &build_job_status_button_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
             crate::tgbot::send::build_copy_button(
                 "复制暂停",
                 &build_job_command("p", job_id, CommandStyle::Short),
@@ -48,6 +57,7 @@ pub(super) fn build_transfer_progress_keyboard(
 pub(super) fn build_transfer_result_keyboard(
     source_link: &str,
     target_chat_id: i64,
+    job_id: Option<i64>,
     result_link: Option<&str>,
 ) -> tdlib_rs::types::ReplyMarkupInlineKeyboard {
     let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
@@ -77,6 +87,13 @@ pub(super) fn build_transfer_result_keyboard(
             },
         ));
     }
+    if let Some(job_id) = job_id {
+        first_row.push(crate::tgbot::send::build_callback_button(
+            "查看任务详情",
+            &build_job_status_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ));
+    }
     first_row.push(crate::tgbot::send::build_copy_button(
         "复制查询命令",
         &lookup_command,
@@ -88,23 +105,28 @@ pub(super) fn build_transfer_result_keyboard(
     } else {
         "fail"
     };
-    crate::tgbot::send::build_inline_keyboard(vec![
-        first_row,
-        vec![
-            crate::tgbot::send::build_copy_button(
-                "复制重新转存",
-                &retry_command,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            crate::tgbot::send::build_copy_button(
-                if result_link.is_some() {
-                    "复制完成列表"
-                } else {
-                    "复制失败列表"
-                },
-                &build_downloads_command(Some(list_filter), None, None, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-    ])
+    let list_label = if result_link.is_some() {
+        "查看完成列表"
+    } else {
+        "查看失败列表"
+    };
+    let mut second_row = vec![crate::tgbot::send::build_copy_button(
+        "复制重新转存",
+        &retry_command,
+        tdlib_rs::enums::ButtonStyle::Default,
+    )];
+    if let Some(callback_data) = build_downloads_filter_button_data(list_filter, 8) {
+        second_row.push(crate::tgbot::send::build_callback_button(
+            list_label,
+            &callback_data,
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ));
+    }
+    second_row.push(crate::tgbot::send::build_copy_button(
+        "复制列表命令",
+        &build_downloads_command(Some(list_filter), None, None, CommandStyle::Short),
+        tdlib_rs::enums::ButtonStyle::Default,
+    ));
+
+    crate::tgbot::send::build_inline_keyboard(vec![first_row, second_row])
 }

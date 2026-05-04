@@ -12,6 +12,7 @@ use super::common::{
     CommandStyle, job_command as build_job_command, lookup_command as build_lookup_command,
     resolve_target_chat_id, transfer_command as build_transfer_command,
 };
+use super::{build_downloads_status_button_data, build_job_status_button_data};
 
 /// `/lookup` 命令入口。
 /// 命令格式：`/lookup <link> [target_chat_id]`
@@ -72,6 +73,11 @@ pub async fn lookup_command(
                 tdlib_rs::enums::ButtonStyle::Primary
             },
         ));
+        result_row.push(send::build_callback_button(
+            "查看任务详情",
+            &build_job_status_button_data(job.id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ));
         result_row.push(send::build_copy_button(
             "复制查询命令",
             &lookup_command,
@@ -82,6 +88,7 @@ pub async fn lookup_command(
             "已找到历史转存结果",
             &source_link,
             target_chat_id,
+            Some(job.id),
             &link,
         ))
         .row(result_row)
@@ -109,6 +116,18 @@ pub async fn lookup_command(
             job.id,
             &job.status,
         ))
+        .row(vec![
+            send::build_callback_button(
+                "查看任务详情",
+                &build_job_status_button_data(job.id),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "返回列表",
+                &build_downloads_status_button_data(&job.status, 8),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ])
         .row(vec![
             send::build_copy_button(
                 "复制暂停",

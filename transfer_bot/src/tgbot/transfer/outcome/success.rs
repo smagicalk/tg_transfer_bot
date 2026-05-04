@@ -6,12 +6,14 @@ use super::super::command::common::{
     CommandStyle, downloads_command as build_downloads_command,
     lookup_command as build_lookup_command, transfer_command as build_transfer_command,
 };
+use super::super::command::{build_downloads_filter_button_data, build_job_status_button_data};
 
 /// 发送“命中历史结果 / 已完成”的结果卡片。
 pub(in crate::tgbot::transfer) async fn send_history_hit_message(
     title: &str,
     source_link: &str,
     target_chat_id: i64,
+    job_id: i64,
     result_link: &str,
     notify_chat_id: i64,
     client_id: i32,
@@ -39,6 +41,11 @@ pub(in crate::tgbot::transfer) async fn send_history_hit_message(
             tdlib_rs::enums::ButtonStyle::Primary
         },
     ));
+    result_row.push(crate::tgbot::send::build_callback_button(
+        "查看任务详情",
+        &build_job_status_button_data(job_id),
+        tdlib_rs::enums::ButtonStyle::Default,
+    ));
     result_row.push(crate::tgbot::send::build_copy_button(
         "复制查询命令",
         &lookup_command,
@@ -49,23 +56,35 @@ pub(in crate::tgbot::transfer) async fn send_history_hit_message(
         title,
         source_link,
         target_chat_id,
+        Some(job_id),
         result_link,
     ))
     .row(result_row)
-    .row(vec![
-        crate::tgbot::send::build_copy_button(
-            "复制重新转存",
-            &transfer_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制完成列表",
-            &build_downloads_command(Some("done"), None, None, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
+    .row(build_result_list_row(&transfer_command))
     .send(notify_chat_id, client_id)
     .await
+}
+
+/// 构造结果卡片第二行：重转、进入完成列表、复制列表命令。
+fn build_result_list_row(transfer_command: &str) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    let mut row = vec![crate::tgbot::send::build_copy_button(
+        "复制重新转存",
+        transfer_command,
+        tdlib_rs::enums::ButtonStyle::Default,
+    )];
+    if let Some(callback_data) = build_downloads_filter_button_data("done", 8) {
+        row.push(crate::tgbot::send::build_callback_button(
+            "查看完成列表",
+            &callback_data,
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ));
+    }
+    row.push(crate::tgbot::send::build_copy_button(
+        "复制列表命令",
+        &build_downloads_command(Some("done"), None, None, CommandStyle::Short),
+        tdlib_rs::enums::ButtonStyle::Default,
+    ));
+    row
 }
 
 /// 构造结果卡片正文。
@@ -76,11 +95,15 @@ pub(in crate::tgbot::transfer) fn format_result_card_text(
     title: &str,
     source_link: &str,
     target_chat_id: i64,
+    job_id: Option<i64>,
     result_link: &str,
 ) -> String {
     let mut lines = vec![
         title.to_owned(),
-        card::status_target("success", target_chat_id),
+        match job_id {
+            Some(job_id) => card::status_job_target("success", job_id, target_chat_id),
+            None => card::status_target("success", target_chat_id),
+        },
         card::DIVIDER.to_owned(),
         card::result_block(result_link),
         String::new(),
@@ -100,9 +123,11 @@ mod tests {
             "转存完成",
             "https://t.me/c/1/2",
             -5106953357,
+            Some(42),
             "https://t.me/c/5106953357/734",
         );
 
+        assert!(text.contains("job：‹#42›"));
         assert!(text.contains("【打开转存消息】(https://t.me/c/5106953357/734)"));
         assert!(text.contains("链接：‹https://t.me/c/5106953357/734›"));
     }
@@ -114,9 +139,11 @@ mod tests {
             "转存完成",
             "https://t.me/c/1/2",
             -5106953357,
+            Some(42),
             "chat_id=-5106953357 message_id=769654784",
         );
 
+        assert!(text.contains("job：‹#42›"));
         assert!(text.contains("无可跳转消息链接"));
         assert!(text.contains("定位：‹chat_id=-5106953357 message_id=769654784›"));
         assert!(!text.contains("【打开转存消息】("));

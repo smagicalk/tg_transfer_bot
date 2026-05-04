@@ -6,6 +6,7 @@ use crate::config::BotConfig;
 use crate::tgbot::send;
 use crate::tgbot::transfer::card;
 
+use super::build_downloads_status_button_data;
 use super::common::{CommandStyle, lookup_command, resolve_target_chat_id};
 use crate::tgbot::transfer::types::TransferPlan;
 
@@ -46,6 +47,11 @@ pub async fn transfer_command(
         format_transfer_accepted_text(&plan),
         request_chat_id,
         vec![vec![
+            send::build_callback_button(
+                "查看运行列表",
+                &build_downloads_status_button_data("running", 8),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
             send::build_copy_button(
                 "复制源链接",
                 &plan.source_link,
@@ -54,11 +60,6 @@ pub async fn transfer_command(
             send::build_copy_button(
                 "复制查询命令",
                 &lookup_command,
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_copy_button(
-                "复制运行列表",
-                "/d run",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ]],

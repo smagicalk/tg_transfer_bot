@@ -223,7 +223,10 @@ pub(super) async fn run_job_inner(
         {
             return finish_skipped_by_control(job.id).await;
         }
-        return Ok(TransferOutcome::Completed { link });
+        return Ok(TransferOutcome::Completed {
+            job_id: job.id,
+            link,
+        });
     }
 
     // 第二阶段：所有项准备成功后再上传。
@@ -282,7 +285,10 @@ pub(super) async fn run_job_inner(
                 is_album = upload_result.is_album,
                 "transfer job completed"
             );
-            Ok(TransferOutcome::Completed { link: result_link })
+            Ok(TransferOutcome::Completed {
+                job_id: job.id,
+                link: result_link,
+            })
         }
         Err(err) => {
             let err_str = format!("{:#}", err);

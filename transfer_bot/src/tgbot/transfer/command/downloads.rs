@@ -32,6 +32,19 @@ pub(super) fn build_downloads_return_list_callback_data(status: &str, limit: u64
     keyboard::build_downloads_filter_callback_data(job_status_downloads_filter(status), limit)
 }
 
+/// 给结果/错误卡片使用的“进入某个列表筛选”回调数据。
+///
+/// 参数仍使用 `/downloads` 的英文筛选值，方便按钮和手输命令保持同一套语义。
+pub(super) fn build_downloads_filter_value_callback_data(
+    filter_value: &str,
+    limit: u64,
+) -> Option<String> {
+    let filter = DownloadsFilter::parse(filter_value)?;
+    Some(keyboard::build_downloads_filter_callback_data(
+        filter, limit,
+    ))
+}
+
 /// `/downloads` 命令入口。
 /// 命令格式：`/downloads [filter] [limit] [page]`
 /// 示例：

@@ -74,11 +74,15 @@ pub(super) fn format_transfer_final_text(
     title: &str,
     source_link: &str,
     target_chat_id: i64,
+    job_id: Option<i64>,
     result_link: &str,
 ) -> String {
     let mut lines = vec![
         title.to_owned(),
-        card::status_target("success", target_chat_id),
+        match job_id {
+            Some(job_id) => card::status_job_target("success", job_id, target_chat_id),
+            None => card::status_target("success", target_chat_id),
+        },
         card::DIVIDER.to_owned(),
         card::result_block(result_link),
         String::new(),

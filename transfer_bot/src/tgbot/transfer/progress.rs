@@ -98,9 +98,15 @@ pub(super) async fn edit_transfer_progress_for_outcome(
     client_id: i32,
 ) -> anyhow::Result<()> {
     let (text, keyboard) = match result {
-        Ok(workflow::TransferOutcome::Reused { link }) => (
-            format_transfer_final_text("已存在历史转存结果", source_link, target_chat_id, link),
-            build_transfer_result_keyboard(source_link, target_chat_id, Some(link)),
+        Ok(workflow::TransferOutcome::Reused { job_id, link }) => (
+            format_transfer_final_text(
+                "已存在历史转存结果",
+                source_link,
+                target_chat_id,
+                Some(*job_id),
+                link,
+            ),
+            build_transfer_result_keyboard(source_link, target_chat_id, Some(*job_id), Some(link)),
         ),
         Ok(workflow::TransferOutcome::Running { job_id }) => (
             format_transfer_control_text(
@@ -142,13 +148,19 @@ pub(super) async fn edit_transfer_progress_for_outcome(
             ),
             build_transfer_progress_keyboard(Some(*job_id), source_link, target_chat_id),
         ),
-        Ok(workflow::TransferOutcome::Completed { link }) => (
-            format_transfer_final_text("转存完成", source_link, target_chat_id, link),
-            build_transfer_result_keyboard(source_link, target_chat_id, Some(link)),
+        Ok(workflow::TransferOutcome::Completed { job_id, link }) => (
+            format_transfer_final_text(
+                "转存完成",
+                source_link,
+                target_chat_id,
+                Some(*job_id),
+                link,
+            ),
+            build_transfer_result_keyboard(source_link, target_chat_id, Some(*job_id), Some(link)),
         ),
         Err(err) => (
             format_transfer_error_text(source_link, target_chat_id, &err.to_string()),
-            build_transfer_result_keyboard(source_link, target_chat_id, None),
+            build_transfer_result_keyboard(source_link, target_chat_id, None, None),
         ),
     };
 

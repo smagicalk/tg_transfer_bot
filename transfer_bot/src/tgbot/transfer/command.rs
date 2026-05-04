@@ -17,6 +17,33 @@ pub use job::job_command;
 pub use lookup::lookup_command;
 pub use transfer_cmd::transfer_command;
 
+/// 给转存结果/进度卡片生成“任务详情”按钮数据。
+///
+/// 外部模块只需要知道 job_id，不应依赖 `/job` 的内部参数枚举。
+pub(in crate::tgbot::transfer) fn build_job_status_button_data(job_id: i64) -> String {
+    job::build_job_status_callback_data(job_id)
+}
+
+/// 给转存结果/进度卡片生成“按任务状态返回列表”的按钮数据。
+///
+/// 状态到筛选器的映射由 `/downloads` 模块维护，避免各处重复写一套状态表。
+pub(in crate::tgbot::transfer) fn build_downloads_status_button_data(
+    status: &str,
+    limit: u64,
+) -> String {
+    downloads::build_downloads_return_list_callback_data(status, limit)
+}
+
+/// 给转存结果/错误卡片生成“按筛选值进入列表”的按钮数据。
+///
+/// `filter_value` 使用 `/downloads` 的英文参数值，例如 `done`、`fail`。
+pub(in crate::tgbot::transfer) fn build_downloads_filter_button_data(
+    filter_value: &str,
+    limit: u64,
+) -> Option<String> {
+    downloads::build_downloads_filter_value_callback_data(filter_value, limit)
+}
+
 /// callback payload 路由。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CallbackRoute {
@@ -80,7 +107,10 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
 
 #[cfg(test)]
 mod tests {
-    use super::{CallbackRoute, classify_callback_route};
+    use super::{
+        CallbackRoute, build_downloads_filter_button_data, build_downloads_status_button_data,
+        build_job_status_button_data, classify_callback_route,
+    };
 
     // callback 分发只看短前缀，具体参数合法性由各命令模块自行校验。
     #[test]
@@ -107,6 +137,29 @@ mod tests {
             )),
             CallbackRoute::Unsupported
         );
+    }
+
+    // 卡片按钮使用的 callback 包装应继续落到统一 callback 路由。
+    #[test]
+    fn test_card_callback_builders_route_back_to_commands() {
+        let job_data = build_job_status_button_data(42);
+        let running_data = build_downloads_status_button_data("running", 8);
+        let done_data =
+            build_downloads_filter_button_data("done", 8).expect("done filter must exist");
+
+        assert_eq!(
+            classify_callback_route(&payload(&job_data)),
+            CallbackRoute::Job
+        );
+        assert_eq!(
+            classify_callback_route(&payload(&running_data)),
+            CallbackRoute::Downloads
+        );
+        assert_eq!(
+            classify_callback_route(&payload(&done_data)),
+            CallbackRoute::Downloads
+        );
+        assert!(build_downloads_filter_button_data("unknown", 8).is_none());
     }
 
     fn payload(data: &str) -> tdlib_rs::enums::CallbackQueryPayload {

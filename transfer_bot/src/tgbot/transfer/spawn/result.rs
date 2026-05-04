@@ -16,11 +16,12 @@ pub(super) async fn send_transfer_outcome(
     client_id: i32,
 ) -> anyhow::Result<()> {
     match result {
-        Ok(workflow::TransferOutcome::Reused { link }) => {
+        Ok(workflow::TransferOutcome::Reused { job_id, link }) => {
             send_history_hit_message(
                 "已存在历史转存结果",
                 source_link,
                 target_chat_id,
+                job_id,
                 &link,
                 notify_chat_id,
                 client_id,
@@ -71,11 +72,12 @@ pub(super) async fn send_transfer_outcome(
             )
             .await
         }
-        Ok(workflow::TransferOutcome::Completed { link }) => {
+        Ok(workflow::TransferOutcome::Completed { job_id, link }) => {
             send_history_hit_message(
                 "转存完成",
                 source_link,
                 target_chat_id,
+                job_id,
                 &link,
                 notify_chat_id,
                 client_id,
@@ -87,6 +89,7 @@ pub(super) async fn send_transfer_outcome(
                 "转存失败",
                 source_link,
                 target_chat_id,
+                None,
                 err,
                 notify_chat_id,
                 client_id,
@@ -106,11 +109,12 @@ pub(super) async fn send_recovery_outcome(
     client_id: i32,
 ) -> anyhow::Result<()> {
     match result {
-        Ok(workflow::TransferOutcome::Reused { link }) => {
+        Ok(workflow::TransferOutcome::Reused { job_id, link }) => {
             send_history_hit_message(
                 "恢复任务命中历史结果",
                 source_link,
                 target_chat_id,
+                job_id,
                 &link,
                 notify_chat_id,
                 client_id,
@@ -161,11 +165,12 @@ pub(super) async fn send_recovery_outcome(
             )
             .await
         }
-        Ok(workflow::TransferOutcome::Completed { link }) => {
+        Ok(workflow::TransferOutcome::Completed { job_id, link }) => {
             send_history_hit_message(
                 "恢复任务完成",
                 source_link,
                 target_chat_id,
+                job_id,
                 &link,
                 notify_chat_id,
                 client_id,
@@ -177,6 +182,7 @@ pub(super) async fn send_recovery_outcome(
                 &format!("恢复任务失败，job_id={}", recovery_job_id),
                 source_link,
                 target_chat_id,
+                Some(recovery_job_id),
                 err,
                 notify_chat_id,
                 client_id,

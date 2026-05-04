@@ -27,7 +27,7 @@ pub(in crate::tgbot::transfer) use upload::refresh_stored_result_link;
 #[derive(Debug, Clone)]
 pub(super) enum TransferOutcome {
     /// 复用历史成功任务，直接返回已有链接。
-    Reused { link: String },
+    Reused { job_id: i64, link: String },
     /// 命中相同 source_link + target_chat_id 的进行中任务。
     Running { job_id: i64 },
     /// 任务已被用户暂停，等待手动恢复。
@@ -37,7 +37,7 @@ pub(super) enum TransferOutcome {
     /// 任务已被用户停止。
     Cancelled { job_id: i64 },
     /// 本次执行成功完成，并返回新生成链接。
-    Completed { link: String },
+    Completed { job_id: i64, link: String },
 }
 
 /// 执行单次转存任务（命令入口）。
