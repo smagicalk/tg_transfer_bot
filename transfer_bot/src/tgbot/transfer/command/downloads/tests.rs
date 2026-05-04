@@ -263,7 +263,7 @@ fn test_build_downloads_keyboard_has_refresh_row() {
     };
     let keyboard = build_downloads_keyboard(&args, 2, &[]);
 
-    assert_eq!(keyboard.rows.len(), 3);
+    assert_eq!(keyboard.rows.len(), 4);
     assert_eq!(keyboard.rows[1][0].text, "刷新");
     assert!(matches!(
         keyboard.rows[1][0].r#type,
@@ -272,7 +272,7 @@ fn test_build_downloads_keyboard_has_refresh_row() {
     assert_eq!(keyboard.rows[1][1].text, "复制当前命令");
 }
 
-// 第三行提供常用筛选按钮；当前筛选退化为复制命令，避免重复点造成无效编辑。
+// 第三行和第四行提供常用筛选按钮；当前筛选退化为复制命令，避免重复点造成无效编辑。
 #[test]
 fn test_build_downloads_keyboard_has_filter_row() {
     let args = DownloadsArgs {
@@ -287,11 +287,13 @@ fn test_build_downloads_keyboard_has_filter_row() {
         keyboard.rows[2][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[2][1].text, "处理中");
+    assert_eq!(keyboard.rows[2][1].text, "运行");
     assert!(matches!(
         keyboard.rows[2][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
     ));
+    assert_eq!(keyboard.rows[3][0].text, "暂停");
+    assert_eq!(keyboard.rows[3][3].text, "就绪");
 }
 
 // 构造最小任务快照，专门用于筛选器测试。

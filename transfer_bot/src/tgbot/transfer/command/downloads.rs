@@ -16,13 +16,20 @@ mod tests;
 
 use keyboard::{DownloadsCallbackAction, build_downloads_keyboard, parse_downloads_callback_data};
 use render::{compute_downloads_query_limit, compute_total_pages, format_downloads_text};
-use types::{DownloadsArgs, parse_downloads_args};
+use types::{DownloadsArgs, DownloadsFilter, parse_downloads_args};
 
 /// 判断 callback payload 是否属于 `/downloads`。
 ///
 /// 统一回调分发器只看前缀，具体参数是否合法仍由 `/downloads` 自己解析和回复。
 pub(super) fn is_downloads_callback_data(data: &str) -> bool {
     data.starts_with("d:")
+}
+
+/// 给任务详情卡片使用的“返回列表”回调数据。
+///
+/// 这里不向外暴露 `DownloadsFilter`，只让 `job` 模块拿到适合当前任务状态的列表入口。
+pub(super) fn build_downloads_return_list_callback_data(status: &str, limit: u64) -> String {
+    keyboard::build_downloads_filter_callback_data(job_status_downloads_filter(status), limit)
 }
 
 /// `/downloads` 命令入口。
@@ -142,4 +149,19 @@ async fn render_downloads_page(
     Ok(DownloadsRenderedPage {
         panel: send::ReplyPanel::card(text).rows(keyboard.rows),
     })
+}
+
+/// 根据任务状态选择最接近的 `/downloads` 筛选器。
+fn job_status_downloads_filter(status: &str) -> DownloadsFilter {
+    match status {
+        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING => DownloadsFilter::Running,
+        store::JOB_STATUS_PAUSED => DownloadsFilter::Paused,
+        store::JOB_STATUS_CANCELLING | store::JOB_STATUS_CANCEL_FINALIZING => {
+            DownloadsFilter::Cancelling
+        }
+        store::JOB_STATUS_CANCELLED => DownloadsFilter::Cancelled,
+        store::JOB_STATUS_SUCCESS => DownloadsFilter::Finished,
+        store::JOB_STATUS_FAILED | store::JOB_STATUS_PARTIAL => DownloadsFilter::Failed,
+        _ => DownloadsFilter::All,
+    }
 }

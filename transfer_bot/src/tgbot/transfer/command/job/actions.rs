@@ -10,6 +10,7 @@ use crate::tgbot::transfer::workflow;
 use super::super::common::{
     CommandStyle, downloads_command, format_bytes, job_command as build_job_command,
 };
+use super::super::downloads::build_downloads_return_list_callback_data;
 use super::args::{JobCallbackAction, build_job_callback_data};
 
 /// 暂停任务。
@@ -420,8 +421,13 @@ fn build_job_status_buttons(
             &build_job_callback_data(JobCallbackAction::Status, job_id),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
+        send::build_callback_button(
+            "返回列表",
+            &build_downloads_return_list_callback_data(status, 8),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
         send::build_copy_button(
-            "复制列表",
+            "复制列表命令",
             &downloads_command(
                 Some(job_status_list_filter(status)),
                 None,
@@ -535,6 +541,18 @@ mod tests {
 
         assert_eq!(buttons[0][0].text, "恢复");
         assert_eq!(buttons[0][1].text, "停止");
+    }
+
+    // 任务详情里的返回列表按钮应直接回到对应的 downloads 筛选入口。
+    #[test]
+    fn test_build_job_status_buttons_has_return_list_button() {
+        let buttons = build_job_status_buttons(&snapshot_with_status(store::JOB_STATUS_RUNNING));
+
+        assert_eq!(buttons[1][1].text, "返回列表");
+        assert!(matches!(
+            buttons[1][1].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+        ));
     }
 
     // 任务状态应映射到最接近的 downloads 筛选。

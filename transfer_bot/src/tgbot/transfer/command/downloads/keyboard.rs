@@ -162,7 +162,7 @@ pub(super) fn build_downloads_keyboard(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ]);
-    rows.push(build_filter_buttons(args));
+    rows.extend(build_filter_button_rows(args));
 
     tdlib_rs::types::ReplyMarkupInlineKeyboard { rows }
 }
@@ -200,31 +200,59 @@ fn build_job_detail_buttons(
 }
 
 /// 构建常用筛选按钮行。
-fn build_filter_buttons(args: &DownloadsArgs) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+///
+/// 拆成两行是为了把任务控制相关状态也露出来，同时避免单行按钮过密。
+fn build_filter_button_rows(
+    args: &DownloadsArgs,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     [
-        ("全部", DownloadsFilter::All),
-        ("处理中", DownloadsFilter::Running),
-        ("下载", DownloadsFilter::Downloading),
-        ("上传", DownloadsFilter::Uploading),
-        ("完成", DownloadsFilter::Finished),
-        ("失败", DownloadsFilter::Failed),
+        [
+            ("全部", DownloadsFilter::All),
+            ("运行", DownloadsFilter::Running),
+            ("下载", DownloadsFilter::Downloading),
+            ("上传", DownloadsFilter::Uploading),
+            ("完成", DownloadsFilter::Finished),
+            ("失败", DownloadsFilter::Failed),
+        ]
+        .as_slice(),
+        [
+            ("暂停", DownloadsFilter::Paused),
+            ("停止中", DownloadsFilter::Cancelling),
+            ("已停止", DownloadsFilter::Cancelled),
+            ("就绪", DownloadsFilter::Ready),
+        ]
+        .as_slice(),
     ]
     .into_iter()
-    .map(|(label, filter)| {
-        if filter == args.filter {
-            return send::build_copy_button(
-                label,
-                &build_downloads_page_command(filter, args.limit, 1, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            );
-        }
-        build_callback_button(
-            label,
-            &build_downloads_filter_callback_data(filter, args.limit),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )
+    .map(|filters| {
+        filters
+            .iter()
+            .copied()
+            .map(|(label, filter)| build_filter_button(label, filter, args))
+            .collect::<Vec<_>>()
     })
     .collect()
+}
+
+/// 构建单个筛选按钮。
+fn build_filter_button(
+    label: &str,
+    filter: DownloadsFilter,
+    args: &DownloadsArgs,
+) -> tdlib_rs::types::InlineKeyboardButton {
+    if filter == args.filter {
+        return send::build_copy_button(
+            label,
+            &build_downloads_page_command(filter, args.limit, 1, CommandStyle::Short),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        );
+    }
+
+    build_callback_button(
+        label,
+        &build_downloads_filter_callback_data(filter, args.limit),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )
 }
 
 /// 构建一个导航按钮。
