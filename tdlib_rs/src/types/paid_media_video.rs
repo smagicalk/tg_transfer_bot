@@ -1,0 +1,14 @@
+#[allow(clippy::all)]
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
+
+/// The media is a video
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct PaidMediaVideo {
+    /// The video
+    pub video: crate::types::Video,
+    /// Cover of the video; may be null if none
+    pub cover: Option<crate::types::Photo>,
+    /// Timestamp from which the video playing must start, in seconds
+    pub start_timestamp: i32,
+}

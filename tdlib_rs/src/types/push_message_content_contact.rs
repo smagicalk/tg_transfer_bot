@@ -1,0 +1,12 @@
+#[allow(clippy::all)]
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
+
+/// A message with a user contact
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct PushMessageContentContact {
+    /// Contact's name
+    pub name: String,
+    /// True, if the message is a pinned message with the specified content
+    pub is_pinned: bool,
+}

@@ -1,0 +1,22 @@
+use crate::send_request;
+#[allow(clippy::all)]
+use serde_json::json;
+/// Checks the validity of an invite link for a chat and returns information about the corresponding chat
+/// # Arguments
+/// * `invite_link` - Invite link to be checked
+/// * `client_id` - The client id to send the request to
+#[allow(clippy::too_many_arguments)]
+pub async fn check_chat_invite_link(
+    invite_link: String,
+    client_id: i32,
+) -> Result<crate::enums::ChatInviteLinkInfo, crate::types::Error> {
+    let request = json!({
+    "@type": "checkChatInviteLink",
+    "invite_link": invite_link,
+    });
+    let response = send_request(client_id, request).await;
+    if response["@type"] == "error" {
+        return Err(serde_json::from_value(response).unwrap());
+    }
+    Ok(serde_json::from_value(response).unwrap())
+}
