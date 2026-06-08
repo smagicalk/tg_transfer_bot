@@ -3,7 +3,7 @@
 
 use super::super::common::{
     CommandStyle, config_set_command, config_show_command, downloads_command,
-    help_command as help_command_text, job_command,
+    help_command as help_command_text, job_command, menu_command,
 };
 use super::topic::normalize_help_topic;
 use crate::tgbot::send;
@@ -55,6 +55,7 @@ pub(super) fn build_help_index_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeybo
         vec![
             help_nav_button("任务控制", "job", tdlib_rs::enums::ButtonStyle::Default),
             help_nav_button("运行配置", "config", tdlib_rs::enums::ButtonStyle::Default),
+            help_nav_button("交互菜单", "menu", tdlib_rs::enums::ButtonStyle::Default),
             help_nav_button("帮助说明", "help", tdlib_rs::enums::ButtonStyle::Default),
         ],
     ]
@@ -135,6 +136,19 @@ pub(super) fn build_help_detail_buttons(
             send::build_copy_button(
                 "复制详情示例",
                 &job_command("st", 123, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            help_index_button(),
+        ]],
+        "menu" => vec![vec![
+            send::build_copy_button(
+                "复制 /m",
+                &menu_command(CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_copy_button(
+                "复制 /menu",
+                &menu_command(CommandStyle::Long),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             help_index_button(),

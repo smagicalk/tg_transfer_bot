@@ -18,6 +18,11 @@ pub(super) fn is_help_callback_data(data: &str) -> bool {
     keyboard::is_help_callback_data(data)
 }
 
+/// 给其他命令页生成 help 页面切换按钮数据。
+pub(super) fn build_help_callback_data(topic: Option<&str>) -> String {
+    keyboard::build_help_callback_data(topic)
+}
+
 /// `/help` 命令入口。
 /// 默认返回命令目录；带命令名时返回该命令的详细帮助。
 pub async fn help_command(

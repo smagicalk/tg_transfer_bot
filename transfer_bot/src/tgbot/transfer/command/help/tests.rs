@@ -17,6 +17,7 @@ fn test_build_help_index_text_contains_commands() {
     assert!(text.contains("/config"));
     assert!(text.contains("/downloads"));
     assert!(text.contains("/job"));
+    assert!(text.contains("/menu"));
 }
 
 // 详细帮助应能分别展开不同命令。
@@ -42,6 +43,10 @@ fn test_build_help_detail_text() {
 
     let config = build_help_detail_text("config").unwrap();
     assert!(config.contains("/config set job_concurrency 4"));
+
+    let menu = build_help_detail_text("m").unwrap();
+    assert!(menu.contains("/menu"));
+    assert!(menu.contains("/cancel"));
 
     assert!(build_help_detail_text("unknown").is_err());
 }

@@ -115,6 +115,11 @@ pub(crate) fn help_command(topic: Option<&str>, style: CommandStyle) -> String {
     }
 }
 
+/// 构造 `/menu` 或 `/m` 命令。
+pub(crate) fn menu_command(style: CommandStyle) -> String {
+    command_name("menu", style).to_owned()
+}
+
 /// 以人类可读形式展示字节数。
 ///
 /// `/downloads` 和 `/job status` 都展示 TDLib 实时下载进度，统一放在命令公共层，
@@ -164,6 +169,8 @@ fn command_name(kind: &str, style: CommandStyle) -> &'static str {
         ("downloads", CommandStyle::Long) => "/downloads",
         ("job", CommandStyle::Short) => "/j",
         ("job", CommandStyle::Long) => "/job",
+        ("menu", CommandStyle::Short) => "/m",
+        ("menu", CommandStyle::Long) => "/menu",
         _ => unreachable!("unknown command kind"),
     }
 }
@@ -198,6 +205,8 @@ mod tests {
             "/config set job_concurrency 2"
         );
         assert_eq!(help_command(Some("job"), CommandStyle::Short), "/h job");
+        assert_eq!(menu_command(CommandStyle::Short), "/m");
+        assert_eq!(menu_command(CommandStyle::Long), "/menu");
     }
 
     // 帮助页同时展示长命令和短命令，保持这个格式方便用户直接复制。

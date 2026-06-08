@@ -348,7 +348,7 @@ async fn build_job_progress_snapshots(
 
     // 结果按创建时间倒序输出，和用户查看列表的直觉一致。
     let mut snapshots = count_map.into_values().collect::<Vec<_>>();
-    snapshots.sort_by(|left, right| right.job.created_at.cmp(&left.job.created_at));
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.job.created_at));
     Ok(snapshots)
 }
 

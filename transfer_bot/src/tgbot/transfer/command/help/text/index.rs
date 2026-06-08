@@ -3,7 +3,7 @@
 
 use super::super::super::common::{
     CommandStyle, command_root, downloads_command, help_command as help_command_text,
-    lookup_command, short_and_long, transfer_command,
+    lookup_command, menu_command, short_and_long, transfer_command,
 };
 use crate::tgbot::transfer::card;
 
@@ -40,6 +40,14 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
             downloads_command(None, None, None, CommandStyle::Long),
         ),
         "说明：查看任务列表、状态和真实下载进度。".to_owned(),
+        String::new(),
+        "交互菜单".to_owned(),
+        "命令：".to_owned(),
+        short_and_long(
+            menu_command(CommandStyle::Short),
+            menu_command(CommandStyle::Long),
+        ),
+        "说明：打开按钮式菜单，支持复制命令和引导输入转存参数。".to_owned(),
         String::new(),
         "运行配置".to_owned(),
         "命令：".to_owned(),
@@ -101,6 +109,10 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
         short_and_long(
             help_command_text(Some("job"), CommandStyle::Short),
             help_command_text(Some("job"), CommandStyle::Long),
+        ),
+        short_and_long(
+            help_command_text(Some("menu"), CommandStyle::Short),
+            help_command_text(Some("menu"), CommandStyle::Long),
         ),
         short_and_long(
             help_command_text(Some("help"), CommandStyle::Short),

@@ -138,6 +138,30 @@ pub async fn send_card_message_with_buttons_returning(
     .await
 }
 
+/// 向指定 chat 发送卡片风格文本并触发 ForceReply 输入框。
+///
+/// ForceReply 不能和 inline keyboard 同时存在，因此这里只负责“要求用户回复输入”这一类场景。
+pub async fn send_card_message_with_force_reply_returning(
+    text: String,
+    chat_id: i64,
+    placeholder: &str,
+    client_id: i32,
+) -> anyhow::Result<tdlib_rs::types::Message> {
+    let formatted_text = build_card_formatted_text(text)?;
+    send_formatted_text_message_returning(
+        formatted_text,
+        chat_id,
+        Some(tdlib_rs::enums::ReplyMarkup::ForceReply(
+            tdlib_rs::types::ReplyMarkupForceReply {
+                is_personal: true,
+                input_field_placeholder: placeholder.chars().take(64).collect(),
+            },
+        )),
+        client_id,
+    )
+    .await
+}
+
 /// 向指定 chat 发送便于复制的等宽文本，并附带按钮。
 /// 适合错误详情、诊断信息这类“主体要复制，附加动作也要点”的场景。
 pub async fn send_copyable_message_with_buttons(

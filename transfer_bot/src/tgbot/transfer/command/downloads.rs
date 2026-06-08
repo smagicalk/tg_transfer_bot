@@ -45,6 +45,13 @@ pub(super) fn build_downloads_filter_value_callback_data(
     ))
 }
 
+/// 给菜单页使用的下载筛选按钮数据。
+///
+/// 菜单只传英文筛选参数，不直接依赖 `/downloads` 内部枚举，保持命令模块之间低耦合。
+pub(super) fn build_downloads_menu_callback_data(filter_value: &str, limit: u64) -> Option<String> {
+    build_downloads_filter_value_callback_data(filter_value, limit)
+}
+
 /// `/downloads` 命令入口。
 /// 命令格式：`/downloads [filter] [limit] [page]`
 /// 示例：

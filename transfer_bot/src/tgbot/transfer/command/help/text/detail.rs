@@ -3,7 +3,7 @@
 
 use super::super::super::common::{
     CommandStyle, command_root, config_set_command, config_show_command, downloads_command,
-    help_command as help_command_text, job_command, lookup_command, short_and_long,
+    help_command as help_command_text, job_command, lookup_command, menu_command, short_and_long,
     transfer_command,
 };
 use super::super::topic::normalize_help_topic;
@@ -21,6 +21,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_detail_text(
         "config" => build_config_detail(),
         "downloads" => build_downloads_detail(),
         "job" => build_job_detail(),
+        "menu" => build_menu_detail(),
         _ => anyhow::bail!("unknown help topic: {}", command_name),
     };
     Ok(text)
@@ -266,6 +267,31 @@ fn build_job_detail() -> String {
             job_command("st", 123, CommandStyle::Short),
             job_command("status", 123, CommandStyle::Long),
         ),
+    ]
+    .join("\n")
+}
+
+/// 构造 `/menu` 的说明。
+fn build_menu_detail() -> String {
+    [
+        "menu".to_owned(),
+        "用途：打开按钮式交互菜单。".to_owned(),
+        "说明：菜单使用 inline keyboard 和 ForceReply，不需要额外 Web App。".to_owned(),
+        card::DIVIDER.to_owned(),
+        "命令：".to_owned(),
+        short_and_long(
+            menu_command(CommandStyle::Short),
+            menu_command(CommandStyle::Long),
+        ),
+        String::new(),
+        "可做操作：".to_owned(),
+        "转存：按钮引导输入源链接和目标 chat。".to_owned(),
+        "下载：直接选择筛选并进入分页列表。".to_owned(),
+        "任务：进入列表后查看详情、暂停、恢复、停止。".to_owned(),
+        "配置/查询/帮助：复制常用命令模板。".to_owned(),
+        String::new(),
+        "取消输入：".to_owned(),
+        card::code("/cancel"),
     ]
     .join("\n")
 }

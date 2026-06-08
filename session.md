@@ -1,65 +1,62 @@
-# 会话交接文档
+# tg_transfer_bot 会话恢复文档
 
 本文用于在另一台电脑或新会话中快速恢复 `tg_transfer_bot` 项目上下文。
 
 推荐恢复方式：
 
 ```text
-请先阅读 AGENTS.md、README.md 和 docs/SESSION_HANDOFF.md，然后继续 tg_transfer_bot 项目。
+请先阅读 AGENTS.md、README.md 和 session.md，然后继续 tg_transfer_bot 项目。
 ```
 
-## 最新会话状态（2026-04-30）
+## 最新状态
 
-当前分支：
+记录日期：2026-05-18
+
+当前开发分支：
 
 ```text
 dev
 ```
 
-最近完成并已提交：
+最近已提交：
 
 ```text
-63bb6ad 优化 Telegram 回复体验 / Improve Telegram reply UX
+7a7656d feat: 优化恢复摘要和卡片交互
+7cc04a3 feat: 优化转存卡片交互
+fafa07e feat: 优化 downloads/job 返回列表交互
+6739982 feat: 优化帮助命令导航
+3563be9 style: 格式化 tdlib 生成代码
 ```
 
-该提交包含：
+本轮最新提交 `7a7656d` 包含：
 
-- 将 `/transfer`、`/lookup`、`/downloads`、`/help`、`/config`、`/job`、结果卡片和错误卡片统一成卡片式回复。
-- 修复 Markdown 解析，改为 TDLib `parseTextEntities` Markdown v1，避免 `*加粗*` 原样显示。
-- 增加 `send/message/state.rs`，处理 TDLib 临时 `message_id` 到最终 `message_id` 的映射。
-- 编辑进度消息遇到 `Message not found` 时，会等待最终 `message_id` 并重试一次。
-- 结果链接只在 TDLib 返回 HTTP(S) 时显示“打开结果”；普通 chat/basic group 没有公开链接时显示“复制定位”。
-- 未知命令和参数错误现在会直接回复用户，不再只写日志。
-- 增加发送状态缓存、超时清理、结果按钮降级等测试。
+- 统一转存卡片字段样式，新增 `card::field`、`card::field_pair`、`card::note`、`card::summary_line`。
+- 优化进度面板、下载列表、任务详情、结果卡片和状态卡片展示。
+- 进度面板按任务状态显示交互按钮：运行中可暂停/停止，暂停可恢复/停止，已停止只保留详情和定位入口。
+- 启动恢复流程增加按请求 chat 聚合的“启动恢复摘要”，可直接进入运行、暂停、停止、全部列表。
+- 修正 `workflow` 直接依赖 `command::common` 的模块边界，改为 `command.rs` 受控包装函数。
+- 补充进度面板、恢复摘要、callback 路由等边界测试。
 
 提交前已验证：
 
 ```powershell
-$env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'
-cargo fmt -p transfer_bot -- --check
-cargo test -p transfer_bot -- --nocapture
-cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
+cargo fmt --all
+$env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'; cargo check -p transfer_bot
+$env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'; cargo test -p transfer_bot -- --nocapture
+$env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'; cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
 git diff --check
 ```
 
-验证结果：`cargo test -p transfer_bot` 为 `64 passed`。
-
-当前未提交变更：
+验证结果：
 
 ```text
-README.md
-docs/SESSION_HANDOFF.md
+cargo test -p transfer_bot: 113 passed
 ```
 
-`README.md` 已补充开发调用流程和核心函数索引，便于从入口函数一路读到下载、上传、恢复、GC。`docs/SESSION_HANDOFF.md` 即本文，记录本次会话最新状态。
+当前额外处理：
 
-本地运行/测试残留：
-
-```text
-transfer_bot/db.test.sqlite
-```
-
-该文件是测试生成的本地 SQLite，已被忽略，不应提交。
+- 用户要求删除 `docs` 文件夹及其文件。
+- 原 `docs/SESSION_HANDOFF.md` 的交接内容已迁移到根目录 `session.md`。
 
 ## 项目目标
 
@@ -71,36 +68,18 @@ transfer_bot/db.test.sqlite
 - 同一文件跨任务去重下载，避免重复下载同一个 `file_key`。
 - 同一 `source_link + target_chat_id` 的成功任务可复用结果链接。
 - 同一 `source_link + target_chat_id` 的活跃任务不重复创建。
-- 同一 `request_chat_id + request_message_id` 用于 TDLib/网络重复投递时的请求级幂等。
+- 同一 `request_chat_id + request_message_id` 用于 TDLib 或网络重复投递时的请求级幂等。
 - 任务支持启动恢复、下载进度查询、暂停、恢复、停止和延迟清理文件。
-
-## 当前分支和提交
-
-当前开发分支：
-
-```text
-dev
-```
-
-最近提交：
-
-```text
-63bb6ad 优化 Telegram 回复体验 / Improve Telegram reply UX
-27368cf 合并初始迁移字段 / Fold item ref flag into initial migration
-7a28aa9 添加会话交接文档 / Add session handoff documentation
-4ce3f57 修复恢复对齐并优化查询 / Fix recovery reconciliation and query projections
-c136133 改进日志：隐藏敏感信息并补充转存排查日志 / Improve safe transfer logging
-```
 
 ## 重要目录
 
 ```text
-transfer_bot/              主程序
-transfer_bot/src/db/       SeaORM 实体
-transfer_bot/src/tgbot/    Telegram/TDLib 交互逻辑
-transfer_bot/src/tgbot/transfer/  转存核心逻辑
-migration/                 SeaORM 迁移
-tdlib_rs/                  TDLib Rust 绑定，批量生成代码，通常不要手动改
+transfer_bot/                       主程序
+transfer_bot/src/db/                SeaORM 实体
+transfer_bot/src/tgbot/             Telegram/TDLib 交互逻辑
+transfer_bot/src/tgbot/transfer/    转存核心逻辑
+migration/                          SeaORM 迁移
+tdlib_rs/                           TDLib Rust 绑定，批量生成代码，通常不要手动改
 ```
 
 核心模块：
@@ -177,7 +156,7 @@ cancelled
 obsolete
 ```
 
-`obsolete` 表示恢复重新 spider 后，旧 item 对应的源消息已经不在当前链接结果里。该 item 不再参与后续下载/上传，并且文件引用会提前释放。
+`obsolete` 表示恢复重新 spider 后，旧 item 对应的源消息已经不在当前链接结果里。该 item 不再参与后续下载或上传，并且文件引用会提前释放。
 
 ## 核心执行流程
 
@@ -203,7 +182,7 @@ run_job_inner
 - 业务查重：`source_link + target_chat_id`
 - 请求幂等：`request_chat_id + request_message_id`
 
-这两层不要混用。
+这两层不要混用。请求幂等用于防网络波动重复投递；业务查重用于重复转存时返回已有结果或正在运行的任务。
 
 ## 恢复流程
 
@@ -220,6 +199,7 @@ workflow::recover_unfinished_jobs
 - `pending/running`：派发后台恢复任务。
 - `paused`：不会自动恢复，必须手动 `/j r <job_id>`。
 - 已完成状态不恢复。
+- 启动后会按请求 chat 发送恢复摘要，方便直接查看运行、暂停、停止和全部任务列表。
 
 单任务恢复：
 
@@ -239,7 +219,7 @@ run_job_inner
 - 新 spider 多出的消息：新增 `transfer_item`，增加新 `file_key` 引用。
 - 同一源消息但 `file_key` 变化：释放旧文件引用，引用新文件，重置 item 为 `pending`。
 - 新 spider 缺少的旧消息：标记为 `obsolete`，释放旧文件引用。
-- 已提前释放引用的 item 设置 `file_ref_released = true`，最终完成/取消时不会再次扣引用。
+- 已提前释放引用的 item 设置 `file_ref_released = true`，最终完成或取消时不会再次扣引用。
 
 ## 文件缓存和删除
 
@@ -286,6 +266,28 @@ workflow/upload.rs::upload_prepared
 
 注意：如果目标消息已经实际上传成功，但进程在写入数据库前崩溃，恢复后仍可能重复上传。这是上传阶段天然的幂等风险。
 
+## 回复和交互
+
+回复已经改为卡片式 `FormattedText`：
+
+- `card.rs` 输出卡片标记文本。
+- `send/message/content.rs` 将卡片标记转换为 TDLib 原生实体。
+- `‹...›` 会变成 code 实体。
+- `【文本】(url)` 会变成原生文本链接。
+- 第一行标题和 `■` 分区标题会加粗。
+
+结果链接规则：
+
+- 只有 HTTP(S) 链接才显示“打开转存消息”。
+- `tg://openmessage` 和纯 `chat_id/message_id` 定位只展示为可复制定位，避免 Telegram 客户端点了不跳转。
+
+进度面板：
+
+- `/transfer` 接收后先回复一条进度消息。
+- 后台任务更新时周期性 `editMessageText` 原地刷新。
+- 如果 TDLib 初始返回临时 `message_id` 导致 `Message not found`，发送层会等待最终 `message_id` 后重试。
+- 运行中可直接点暂停/停止；暂停可直接点恢复/停止；停止态只保留详情和定位。
+
 ## 命令概览
 
 短命令和长命令都支持，具体以代码中的 help 为准。
@@ -302,10 +304,16 @@ workflow/upload.rs::upload_prepared
 /j p <job_id>
 /j r <job_id>
 /j s <job_id>
+/j st <job_id>
 
 /lookup <link> [target_chat_id]
-/config
+/lk <link> [target_chat_id]
+
+/config show
+/cfg show
+
 /help
+/h
 ```
 
 `/downloads` 常用 filter：
@@ -336,7 +344,8 @@ $env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'
 常用检查：
 
 ```powershell
-cargo fmt -p transfer_bot -- --check
+cargo fmt --all
+$env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'; cargo check -p transfer_bot
 $env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'; cargo test -p transfer_bot -- --nocapture
 $env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'; cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
 cargo test -p migration
@@ -349,8 +358,6 @@ $env:LOCAL_TDLIB_PATH='F:/tdlib/td/tdlib'
 cargo run -p transfer_bot -- -c config.json
 ```
 
-如果 shell 出现 PowerShell 启动异常，可尝试让 Codex 工具命令使用 `login:false`。之前 `git log` 在 `login:false` 下可正常执行。
-
 ## 配置和本地状态
 
 不要提交真实配置：
@@ -360,6 +367,7 @@ config.json
 tg/
 *.sqlite
 logs/
+*.log
 ```
 
 仓库提供：
@@ -380,7 +388,7 @@ TDLib 登录、API 密钥等不建议通过命令动态修改。
 
 - 上传阶段缺少严格幂等：上传成功但数据库未写入时崩溃，恢复后可能重复上传。
 - 恢复对齐以重新 spider 的结果为准，符合当前用户偏好；如果未来需要“冻结首次抓取内容”，需要改成另一套策略。
-- `/downloads` 当前分页是命令参数分页，后续可以继续强化按钮翻页体验。
+- `/downloads` 当前已支持按钮翻页和筛选，但后续仍可以继续增强更复杂的按钮交互。
 - `tdlib_rs` 是生成代码，不应手动修改。
 - 继续做 schema 变更时必须新增 migration，并同步更新 SeaORM 实体和测试 fixture。
 
@@ -390,4 +398,5 @@ TDLib 登录、API 密钥等不建议通过命令动态修改。
 - 代码新增逻辑需要写清楚注释，尤其是并发、恢复、引用计数和状态机相关代码。
 - 不为了拆分而拆分，优先保持模块职责清晰。
 - 提交信息第一行要能在 GitHub 列表中看懂，正文使用中英双语说明。
-- 提交前尽量运行 `fmt`、`test`、`clippy`。
+- 提交前尽量运行 `fmt`、`check`、`test`、`clippy`。
+- `tdlib_rs` 不要动，除非明确要重新生成绑定。

@@ -3,9 +3,13 @@
 
 mod actions;
 mod args;
+mod callback;
+mod keyboard;
+mod render;
 
-use actions::{handle_job_callback, pause_job, resume_job, show_job_status, stop_job};
+use actions::{pause_job, resume_job, show_job_status, stop_job};
 use args::{JobAction, is_job_callback_data, parse_job_args, parse_job_callback_data};
+use callback::handle_job_callback;
 
 /// 判断 callback payload 是否属于 `/job`。
 pub(super) fn is_job_callback_payload(data: &str) -> bool {

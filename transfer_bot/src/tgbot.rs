@@ -117,11 +117,8 @@ pub async fn handle_update(
 
         // 当前仅处理文本消息。
         if let tdlib_rs::enums::MessageContent::MessageText(message_text) = message_content {
-            let text = message_text
-                .text
-                .text
-                .split_whitespace()
-                .collect::<Vec<&str>>();
+            let raw_text = message_text.text.text;
+            let text = raw_text.split_whitespace().collect::<Vec<&str>>();
             if text.is_empty() {
                 if let Some(client_id) = client_id {
                     crate::tgbot::send::send_text_message(
@@ -134,9 +131,25 @@ pub async fn handle_update(
                 return Ok(());
             }
 
+            if text[0] == "/cancel" {
+                let client_id = client_id.ok_or_else(|| anyhow::anyhow!("not found client_id"))?;
+                if tgbot::transfer::cancel_menu_input(chat_id, sender_id, client_id).await? {
+                    return Ok(());
+                }
+            }
+
             if text[0].starts_with("/") {
                 let client_id = client_id.ok_or_else(|| anyhow::anyhow!("not found client_id"))?;
                 let command = text[0];
+                if command != "/cancel" && tgbot::transfer::discard_menu_input(chat_id, sender_id) {
+                    tracing::debug!(
+                        command,
+                        chat_id,
+                        sender_id,
+                        message_id = message.id,
+                        "discarded pending menu input because command has priority"
+                    );
+                }
                 // 只记录命令名和消息定位信息，不记录参数中的链接，避免日志暴露私有消息入口。
                 tracing::info!(
                     command,
@@ -181,6 +194,9 @@ pub async fn handle_update(
                     // /job 命令入口。
                     // 手动暂停、恢复、停止指定转存任务。
                     "/job" | "/j" => tgbot::transfer::job_command(text, chat_id, client_id).await,
+                    // /menu 命令入口。
+                    // 提供按钮式交互入口，降低日常命令输入成本。
+                    "/menu" | "/m" => tgbot::transfer::menu_command(text, chat_id, client_id).await,
                     _ => {
                         tracing::warn!(
                             command,
@@ -204,6 +220,18 @@ pub async fn handle_update(
                     );
                     send_command_error_message(command, &err, chat_id, client_id).await?;
                 }
+            } else if let Some(client_id) = client_id
+                && tgbot::transfer::handle_menu_text_input(
+                    raw_text.as_str(),
+                    config.clone(),
+                    chat_id,
+                    message.id,
+                    sender_id,
+                    client_id,
+                )
+                .await?
+            {
+                return Ok(());
             }
         }
         return Ok(());

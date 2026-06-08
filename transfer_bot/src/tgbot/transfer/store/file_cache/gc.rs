@@ -72,6 +72,7 @@ pub(in crate::tgbot::transfer) async fn delete_file_cache(file_key: &str) -> any
 pub(in crate::tgbot::transfer) async fn mark_file_cache_delete_failed(
     file_key: &str,
     err: String,
+    retry_after: chrono::DateTime<chrono::FixedOffset>,
 ) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
     if let Some(model) = db::file_cache::Entity::find_by_id(file_key.to_owned())
@@ -82,6 +83,8 @@ pub(in crate::tgbot::transfer) async fn mark_file_cache_delete_failed(
         active.status = sea_orm::ActiveValue::Set(FILE_CACHE_STATUS_DELETE_FAILED.to_owned());
         active.last_error = sea_orm::ActiveValue::Set(Some(err));
         active.updated_at = sea_orm::ActiveValue::Set(now_utc8());
+        // 删除失败后延后重试，避免危险路径或磁盘错误在短 GC 间隔下反复刷日志。
+        active.delete_after = sea_orm::ActiveValue::Set(Some(retry_after));
         active.update(db_conn).await?;
     }
     Ok(())

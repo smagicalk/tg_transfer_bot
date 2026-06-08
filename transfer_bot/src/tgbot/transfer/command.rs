@@ -8,6 +8,7 @@ mod downloads;
 mod help;
 mod job;
 mod lookup;
+mod menu;
 mod transfer_cmd;
 
 pub use config_cmd::config_command;
@@ -15,6 +16,7 @@ pub use downloads::downloads_command;
 pub use help::help_command;
 pub use job::job_command;
 pub use lookup::lookup_command;
+pub use menu::{cancel_menu_input, discard_menu_input, handle_menu_text_input, menu_command};
 pub use transfer_cmd::transfer_command;
 
 /// 给转存结果/进度卡片生成“任务详情”按钮数据。
@@ -72,6 +74,8 @@ enum CallbackRoute {
     Help,
     Downloads,
     Job,
+    Config,
+    Menu,
     Unknown,
     Unsupported,
 }
@@ -89,6 +93,8 @@ pub async fn transfer_callback_query(
         CallbackRoute::Help => help::help_callback_query(update, client_id).await,
         CallbackRoute::Downloads => downloads::downloads_callback_query(update, client_id).await,
         CallbackRoute::Job => job::job_callback_query(update, client_id).await,
+        CallbackRoute::Config => config_cmd::config_callback_query(update, client_id).await,
+        CallbackRoute::Menu => menu::menu_callback_query(update, client_id).await,
         CallbackRoute::Unknown => {
             crate::tgbot::send::answer_callback_query(update.id, Some("未知按钮参数"), client_id)
                 .await
@@ -122,6 +128,16 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
         {
             CallbackRoute::Job
         }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if config_cmd::is_config_callback_data(&data.data) =>
+        {
+            CallbackRoute::Config
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if menu::is_menu_callback_data(&data.data) =>
+        {
+            CallbackRoute::Menu
+        }
         tdlib_rs::enums::CallbackQueryPayload::Data(_) => CallbackRoute::Unknown,
         _ => CallbackRoute::Unsupported,
     }
@@ -150,6 +166,14 @@ mod tests {
         assert_eq!(
             classify_callback_route(&payload("j:st:42")),
             CallbackRoute::Job
+        );
+        assert_eq!(
+            classify_callback_route(&payload("cfg:r")),
+            CallbackRoute::Config
+        );
+        assert_eq!(
+            classify_callback_route(&payload("m:home")),
+            CallbackRoute::Menu
         );
         assert_eq!(
             classify_callback_route(&payload("x:bad")),

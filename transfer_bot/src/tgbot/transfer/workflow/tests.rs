@@ -6,10 +6,11 @@ use super::super::store;
 use super::TransferOutcome;
 use super::control::apply_job_control;
 use super::guard::{acquire_job_guard, acquire_source_target_create_guard};
-use super::upload::{
+use super::result_link::{
     build_private_supergroup_message_link, extract_tdlib_message_id_from_stored_link,
-    fallback_result_message_locator, tdlib_message_id_to_visible_id, validate_album_kinds,
+    fallback_result_message_locator, tdlib_message_id_to_visible_id,
 };
+use super::upload::validate_album_kinds;
 use crate::db;
 use migration::MigratorTrait;
 use rand::RngExt;

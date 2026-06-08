@@ -10,6 +10,7 @@ mod control;
 mod gc;
 mod guard;
 mod recovery;
+mod result_link;
 mod runner;
 mod start;
 #[cfg(test)]
@@ -19,9 +20,9 @@ mod upload;
 pub(super) use gc::run_file_gc_loop;
 pub(super) use guard::is_job_running_in_process;
 pub(super) use recovery::{recover_unfinished_jobs, resume_one_job};
+pub(in crate::tgbot::transfer) use result_link::refresh_stored_result_link;
 use runner::run_job_inner;
 use start::{TransferStart, build_transfer_start};
-pub(in crate::tgbot::transfer) use upload::refresh_stored_result_link;
 
 /// 转存命令的执行结果。
 #[derive(Debug, Clone)]

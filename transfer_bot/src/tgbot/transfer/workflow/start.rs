@@ -10,7 +10,7 @@ use super::super::{spider, store};
 use super::TransferOutcome;
 use super::control::apply_job_control;
 use super::guard::{JobGuard, acquire_job_guard, acquire_source_target_create_guard};
-use super::upload::refresh_stored_result_link;
+use super::result_link::refresh_stored_result_link;
 
 /// 转存入口完成创建阶段后的下一步动作。
 pub(super) enum TransferStart {

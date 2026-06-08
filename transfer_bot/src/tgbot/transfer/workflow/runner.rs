@@ -14,7 +14,8 @@ use super::super::store::{
 };
 use super::TransferOutcome;
 use super::control::{apply_job_control, finish_skipped_by_control};
-use super::upload::{build_result_message_link, upload_prepared};
+use super::result_link::build_result_message_link;
+use super::upload::upload_prepared;
 
 /// 已持有 job 运行锁后的核心执行逻辑：
 /// 1. 准备所有上传内容（包括下载与缓存回填）

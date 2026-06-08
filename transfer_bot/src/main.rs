@@ -74,8 +74,11 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // 初始化转存运行配置。
-    // 这类参数原先使用环境变量读取，现在统一从 config.json 注入。
-    tgbot::transfer::init_runtime_config(config.transfer_config.clone());
+    // 运行时可调项来自 transfer_config；TDLib 文件目录只用于 GC 安全边界，不开放动态修改。
+    tgbot::transfer::init_runtime_config(
+        config.transfer_config.clone(),
+        config.tdlib_config.files_directory.clone(),
+    );
 
     // 创建 TDLib client，并写回到运行时配置。
     let client_id = tgbot::create_client().await?;

@@ -15,11 +15,12 @@ mod types;
 mod workflow;
 
 pub use command::{
-    config_command, downloads_command, help_command, job_command, lookup_command,
+    cancel_menu_input, config_command, discard_menu_input, downloads_command,
+    handle_menu_text_input, help_command, job_command, lookup_command, menu_command,
     transfer_callback_query, transfer_command,
 };
-pub(in crate::tgbot::transfer) use runtime::runtime_config;
 pub use runtime::{init_runtime_config, update_runtime_config};
+pub(in crate::tgbot::transfer) use runtime::{runtime_config, tdlib_files_directory};
 pub(in crate::tgbot::transfer) use spawn::{spawn_recovery_job, spawn_transfer_job};
 pub(in crate::tgbot::transfer) use workflow::refresh_stored_result_link;
 
