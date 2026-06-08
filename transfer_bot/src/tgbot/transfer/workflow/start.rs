@@ -31,8 +31,20 @@ pub(super) async fn build_transfer_start(
     plan: TransferPlan,
     client_id: i32,
 ) -> anyhow::Result<TransferStart> {
+    tracing::debug!(
+        request_chat_id = plan.request_chat_id,
+        request_message_id = plan.request_message_id,
+        target_chat_id = plan.target_chat_id,
+        "transfer start resolving"
+    );
     let _guard =
         acquire_source_target_create_guard(plan.source_link.clone(), plan.target_chat_id).await;
+    tracing::debug!(
+        request_chat_id = plan.request_chat_id,
+        request_message_id = plan.request_message_id,
+        target_chat_id = plan.target_chat_id,
+        "transfer source-target create guard acquired"
+    );
 
     // 业务查重第一层：
     // 同一个源链接转到同一个目标 chat，如果已经成功完成，直接返回历史结果。
@@ -166,7 +178,22 @@ async fn request_job_start(
 /// 抓取源消息并创建新的转存任务。
 async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Result<TransferStart> {
     // 抓取源消息（单条或相册）。
+    tracing::info!(
+        request_chat_id = plan.request_chat_id,
+        request_message_id = plan.request_message_id,
+        target_chat_id = plan.target_chat_id,
+        "spider source messages started"
+    );
     let bundle = spider::spider_message(plan.source_link.clone(), client_id).await?;
+    tracing::info!(
+        request_chat_id = plan.request_chat_id,
+        request_message_id = plan.request_message_id,
+        source_chat_id = bundle.source_chat_id,
+        source_message_id = bundle.source_message_id,
+        source_album_id = bundle.source_album_id,
+        message_count = bundle.messages.len(),
+        "spider source messages completed"
+    );
 
     // 创建主任务并对齐子项；创建完成后释放 source-target 锁，实际执行由 job_id 锁保护。
     let job = store::create_job(&plan, &bundle).await?;
@@ -185,14 +212,29 @@ async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Res
     match acquire_job_guard(job.id).await {
         Some(job_guard) => {
             if let Some(outcome) = apply_job_control(job.id).await? {
+                tracing::info!(
+                    job_id = job.id,
+                    "transfer job control applied before item creation"
+                );
                 Ok(TransferStart::Outcome(outcome))
             } else {
                 let _ = store::ensure_items_for_bundle(job.id, &bundle.messages).await?;
+                tracing::debug!(
+                    job_id = job.id,
+                    total_items = bundle.messages.len(),
+                    "transfer job items ensured"
+                );
                 Ok(TransferStart::Run(job, bundle.messages, job_guard))
             }
         }
-        None => Ok(TransferStart::Outcome(TransferOutcome::Running {
-            job_id: job.id,
-        })),
+        None => {
+            tracing::info!(
+                job_id = job.id,
+                "transfer job guard already held after creation"
+            );
+            Ok(TransferStart::Outcome(TransferOutcome::Running {
+                job_id: job.id,
+            }))
+        }
     }
 }

@@ -2,7 +2,7 @@
 // - 对外仅暴露 `/transfer` 命令处理函数
 // - 内部按职责拆分到子模块，降低单文件复杂度
 
-mod card;
+pub(in crate::tgbot) mod card;
 mod command;
 mod file;
 mod outcome;

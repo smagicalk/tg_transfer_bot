@@ -36,6 +36,12 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
         let progress_handle = progress_message_id.map(|message_id| {
             let progress_plan = plan.clone();
             let progress_done = progress_done.clone();
+            tracing::debug!(
+                notify_chat_id,
+                target_chat_id,
+                progress_message_id = message_id,
+                "transfer progress updater started"
+            );
             tokio::spawn(async move {
                 update_transfer_progress_message(
                     progress_plan,
@@ -62,6 +68,11 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
             handle.abort();
             // 等待 abort 生效，避免进度编辑请求晚于最终结果返回后覆盖最终面板。
             let _ = handle.await;
+            tracing::debug!(
+                notify_chat_id,
+                target_chat_id,
+                "transfer progress updater stopped"
+            );
         }
 
         if let Some(message_id) = progress_message_id
@@ -97,6 +108,11 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
             return;
         }
 
+        tracing::debug!(
+            notify_chat_id,
+            target_chat_id,
+            "sending separate transfer outcome message"
+        );
         // result 会被发送函数消费；先保存错误摘要，避免为了日志克隆完整结果。
         let result_error = result.as_ref().err().map(|err| format!("{:#}", err));
         let send_result = send_transfer_outcome(

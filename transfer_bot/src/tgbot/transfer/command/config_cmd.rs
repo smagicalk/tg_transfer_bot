@@ -212,28 +212,17 @@ pub(super) fn format_current_transfer_config_text(title: &str) -> String {
 fn format_transfer_config_text(title: &str, config: &config::TransferConfig) -> String {
     [
         title.to_owned(),
-        format!("状态：{}", card::code("runtime-config")),
+        format!("状态：{}", card::code("ready")),
         card::DIVIDER.to_owned(),
-        format!(
-            "并发：{}",
-            card::code(format!("job_concurrency = {}", config.job_concurrency))
+        card::section("运行参数"),
+        card::field("job_concurrency", config.job_concurrency),
+        card::field(
+            "file_delete_delay_minutes",
+            config.file_delete_delay_minutes,
         ),
-        format!(
-            "删除延迟：{} 分钟",
-            card::code(format!(
-                "file_delete_delay_minutes = {}",
-                config.file_delete_delay_minutes
-            ))
-        ),
-        format!(
-            "GC 间隔：{} 秒",
-            card::code(format!(
-                "file_gc_interval_seconds = {}",
-                config.file_gc_interval_seconds
-            ))
-        ),
+        card::field("file_gc_interval_seconds", config.file_gc_interval_seconds),
         "".to_owned(),
-        card::section("示例命令"),
+        card::section("命令"),
         short_and_long(
             config_show_command(CommandStyle::Short),
             config_show_command(CommandStyle::Long),
@@ -440,9 +429,10 @@ mod tests {
             file_gc_interval_seconds: 60,
         };
         let text = format_transfer_config_text("当前可调配置", &cfg);
-        assert!(text.contains("job_concurrency = 2"));
-        assert!(text.contains("file_delete_delay_minutes = 2"));
-        assert!(text.contains("file_gc_interval_seconds = 60"));
+        assert!(text.contains("job_concurrency：‹2›"));
+        assert!(text.contains("file_delete_delay_minutes：‹2›"));
+        assert!(text.contains("file_gc_interval_seconds：‹60›"));
+        assert!(text.contains("‹/cfg show›"));
     }
 
     // 配置 callback 使用短 payload，避免 Telegram callback data 过长。

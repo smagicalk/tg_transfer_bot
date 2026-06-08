@@ -19,8 +19,22 @@ pub mod logs;
 pub mod tgbot;
 pub mod utils;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// Tokio worker 线程栈大小。
+///
+/// TDLib 的 update 结构很深，`serde_json` 反序列化复杂消息或 reply markup 时可能压爆默认栈。
+/// 这里显式提高 worker 栈，避免 `/help` 这类带大量按钮的消息触发 `overflowed its stack`。
+const TOKIO_WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+fn main() -> anyhow::Result<()> {
+    // 手动创建 runtime，替代 `#[tokio::main]`，以便设置 worker 线程栈大小。
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(TOKIO_WORKER_STACK_SIZE)
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
     // 初始化 tracing（控制台 + 文件）输出。
     crate::logs::init_tracing();
     tracing::info!("transfer bot starting");
@@ -72,6 +86,11 @@ async fn main() -> anyhow::Result<()> {
         file_gc_interval_seconds = config.transfer_config.file_gc_interval_seconds,
         "runtime config loaded"
     );
+    // Telegram reply_markup 是 bot 能力；手机号/OCR 用户号登录时统一禁用按钮发送，避免客户端不显示但日志显示已发送。
+    tgbot::send::set_reply_markup_enabled(matches!(
+        &config.login_info,
+        crate::config::LoginInfo::Token(_)
+    ));
 
     // 初始化转存运行配置。
     // 运行时可调项来自 transfer_config；TDLib 文件目录只用于 GC 安全边界，不开放动态修改。
@@ -94,12 +113,24 @@ async fn main() -> anyhow::Result<()> {
     // 异步读取 TDLib 版本信息，用于诊断日志。
     let version_client_id = client_id;
     tokio::spawn(async move {
-        let _ = tgbot::get_version(version_client_id).await;
+        if let Err(err) = tgbot::get_version(version_client_id).await {
+            tracing::warn!(
+                client_id = version_client_id,
+                error = %err,
+                "load tdlib version failed"
+            );
+        }
     });
 
     // 主循环：持续接收并处理 TDLib update。
     tracing::info!("entering tdlib receive loop");
-    tgbot::receive(Arc::from(config)).await?;
+    if let Err(err) = tgbot::receive(Arc::from(config)).await {
+        // 正常情况下 receive loop 不会退出；一旦退出，需要在日志里留下明确原因。
+        tracing::error!(error = %err, "tdlib receive loop exited with error");
+        return Err(err);
+    }
+
+    tracing::warn!("tdlib receive loop exited without error");
 
     Ok(())
 }

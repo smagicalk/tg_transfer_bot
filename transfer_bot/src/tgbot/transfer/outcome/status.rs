@@ -248,15 +248,83 @@ fn format_status_card_text(
         card::DIVIDER.to_owned(),
         card::section("说明"),
         card::note(detail),
-        String::new(),
+        card::section("命令"),
     ];
+    lines.extend(status_command_lines(
+        status,
+        source_link,
+        target_chat_id,
+        job_id,
+    ));
+    lines.push(String::new());
     lines.extend(card::source_block(source_link));
     lines.join("\n")
 }
 
+/// 根据任务状态生成正文命令。
+///
+/// 按钮只在 bot token 模式稳定可用；正文命令是用户号模式和日志截图排查时的兜底入口。
+fn status_command_lines(
+    status: &str,
+    source_link: &str,
+    target_chat_id: i64,
+    job_id: i64,
+) -> Vec<String> {
+    let mut lines = vec![
+        card::command_line("详情", build_job_command("st", job_id, CommandStyle::Short)),
+        card::command_line(
+            "查询",
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+        ),
+    ];
+
+    match status {
+        "paused" => {
+            lines.push(card::command_line(
+                "恢复",
+                build_job_command("r", job_id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "停止",
+                build_job_command("s", job_id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "列表",
+                build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
+            ));
+        }
+        "cancelling" | "cancel_finalizing" | "cancelled" => {
+            lines.push(card::command_line(
+                "列表",
+                build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+            ));
+        }
+        _ => {
+            lines.push(card::command_line(
+                "暂停",
+                build_job_command("p", job_id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "停止",
+                build_job_command("s", job_id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "列表",
+                build_downloads_command(Some("run"), None, None, CommandStyle::Short),
+            ));
+        }
+    }
+
+    lines.push(card::command_line(
+        "重转",
+        build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+    ));
+    lines
+}
+
 #[cfg(test)]
 mod tests {
-    use super::format_status_card_text;
+    use super::{format_status_card_text, status_command_lines};
 
     // 后台状态卡片应使用 card 标记展示状态、job 和来源。
     #[test]
@@ -273,5 +341,20 @@ mod tests {
         assert!(text.contains("状态：‹running›"));
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("‹https://t.me/c/1/2›"));
+        assert!(text.contains("详情：‹/j st 42›"));
+        assert!(text.contains("列表：‹/d run›"));
+    }
+
+    // paused/cancelled 状态应生成对应列表和控制命令，不能继续展示无效暂停命令。
+    #[test]
+    fn test_status_command_lines_by_status() {
+        let paused = status_command_lines("paused", "https://t.me/c/1/2", -100, 42).join("\n");
+        let cancelled =
+            status_command_lines("cancelled", "https://t.me/c/1/2", -100, 42).join("\n");
+
+        assert!(paused.contains("恢复：‹/j r 42›"));
+        assert!(paused.contains("列表：‹/d pause›"));
+        assert!(cancelled.contains("列表：‹/d cancel›"));
+        assert!(!cancelled.contains("暂停：‹/j p 42›"));
     }
 }

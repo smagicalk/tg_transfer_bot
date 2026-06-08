@@ -47,7 +47,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
             menu_command(CommandStyle::Short),
             menu_command(CommandStyle::Long),
         ),
-        "说明：打开按钮式菜单，支持复制命令和引导输入转存参数。".to_owned(),
+        "说明：打开转存菜单；bot token 模式显示按钮，手机号/OCR 模式显示文本命令。".to_owned(),
         String::new(),
         "运行配置".to_owned(),
         "命令：".to_owned(),

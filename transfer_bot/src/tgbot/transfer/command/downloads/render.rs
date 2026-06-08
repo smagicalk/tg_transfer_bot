@@ -15,32 +15,27 @@ pub(super) fn format_downloads_text(
 ) -> String {
     let total_pages = compute_total_pages(total, args.limit);
     if snapshots.is_empty() {
+        let page_label = format!("{}/{}", args.page, total_pages);
+        let current_page_command = short_and_long(
+            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
+            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Long),
+        );
+        let current_page_line = format!("当前页：{}", current_page_command);
         return format!(
-            "下载列表为空\n筛选：{}\n页码：{}  每页：{}\n{}\n命令：{}\n说明：可切换筛选或稍后刷新。",
+            "下载列表为空\n筛选：{}  页码：{}  每页：{}\n{}\n{}\n{}\n{}",
             card::code(args.filter.label()),
-            card::code(format!("{}/{}", args.page, total_pages)),
+            card::code(page_label),
             card::code(args.limit),
             card::DIVIDER,
-            short_and_long(
-                build_downloads_page_command(
-                    args.filter,
-                    args.limit,
-                    args.page,
-                    CommandStyle::Short
-                ),
-                build_downloads_page_command(
-                    args.filter,
-                    args.limit,
-                    args.page,
-                    CommandStyle::Long
-                ),
-            )
+            card::section("命令"),
+            current_page_line,
+            card::note("可切换筛选或稍后刷新。")
         );
     }
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "下载列表\n筛选：{}\n页码：{}  每页：{}  总数：{}",
+        "下载列表 · {}\n页码：{}  每页：{}  总数：{}",
         card::code(args.filter.label()),
         card::code(format!("{}/{}", args.page, total_pages)),
         card::code(args.limit),
@@ -52,19 +47,13 @@ pub(super) fn format_downloads_text(
         short_and_long(
             build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
             build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Long),
-        )
+        ),
     ));
 
     for snapshot in snapshots {
         lines.push(card::DIVIDER.to_owned());
         let total = snapshot.job.total_items.max(0);
         let finished = snapshot.success_count + snapshot.failed_count + snapshot.cancelled_count;
-        let progress = if total <= 0 {
-            0
-        } else {
-            finished.saturating_mul(100) / total
-        };
-
         lines.push(format!(
             "{}\n{}",
             card::section(&format!("任务 #{}", snapshot.job.id)),
@@ -74,9 +63,10 @@ pub(super) fn format_downloads_text(
                 snapshot.job.target_chat_id
             )
         ));
+        lines.push(card::field("总进度", format!("{}/{}", finished, total)));
         lines.push(card::field(
-            "进度",
-            format!("{}/{} ({}%)", finished, total, progress),
+            "完成率",
+            card::progress_bar(finished.into(), total.into()),
         ));
         lines.push(card::field_pair(
             "等待/下载",
@@ -92,15 +82,16 @@ pub(super) fn format_downloads_text(
         ));
 
         if snapshot.active_download_files > 0 {
-            lines.push(format!(
-                "真实下载：{}",
-                card::code(format_live_download(snapshot))
-            ));
+            lines.push(format!("真实下载：{}", format_live_download(snapshot)));
         }
 
         lines.push(card::field(
             "更新",
             snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
+        ));
+        lines.push(card::command_line(
+            "命令",
+            super::super::common::job_command("st", snapshot.job.id, CommandStyle::Short),
         ));
     }
 
@@ -132,11 +123,11 @@ fn format_live_download(snapshot: &store::JobProgressSnapshot) -> String {
         let progress = snapshot.active_downloaded_bytes.saturating_mul(100)
             / snapshot.active_download_total_bytes.max(1);
         return format!(
-            "{} {}/{} ({}%)",
+            "{} {}/{}\n{}",
             prefix,
             format_bytes(snapshot.active_downloaded_bytes),
             format_bytes(snapshot.active_download_total_bytes),
-            progress
+            card::progress_bar_percent(progress)
         );
     }
 

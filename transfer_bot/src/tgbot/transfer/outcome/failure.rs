@@ -1,6 +1,7 @@
 // 转存失败回复卡片。
-// 失败详情使用可复制等宽文本，便于直接复制错误堆栈继续排查。
+// 正文使用统一卡片风格，错误详情单独用等宽代码块，兼顾美观和排查便利。
 
+use super::super::card;
 use super::super::command::common::{
     CommandStyle, downloads_command as build_downloads_command,
     lookup_command as build_lookup_command, transfer_command as build_transfer_command,
@@ -19,9 +20,14 @@ pub(in crate::tgbot::transfer) async fn send_failure_message(
 ) -> anyhow::Result<()> {
     let retry_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Short);
     let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
-    crate::tgbot::send::ReplyPanel::copyable(format!(
-        "{}\n━━━━━━━━━━━━\nsource_link={}\ntarget_chat_id={}\nretry_command={}\n━━━━━━━━━━━━\n{:#}",
-        title, source_link, target_chat_id, retry_command, err
+    crate::tgbot::send::ReplyPanel::card(format_failure_card_text(
+        title,
+        source_link,
+        target_chat_id,
+        job_id,
+        &retry_command,
+        &lookup_command,
+        &err,
     ))
     .row(build_failure_buttons(
         job_id,
@@ -74,9 +80,40 @@ fn build_failure_buttons(
     row
 }
 
+/// 构造失败卡片正文。
+///
+/// 用户号模式下按钮会被发送层丢弃，因此重试、查询和失败列表命令必须出现在正文里。
+fn format_failure_card_text(
+    title: &str,
+    source_link: &str,
+    target_chat_id: i64,
+    job_id: Option<i64>,
+    retry_command: &str,
+    lookup_command: &str,
+    err: &anyhow::Error,
+) -> String {
+    let mut lines = vec![
+        title.to_owned(),
+        card::summary_line("failed", job_id, target_chat_id),
+        card::DIVIDER.to_owned(),
+        card::section("错误"),
+        card::pre_code(format!("{:#}", err)),
+        card::section("命令"),
+        card::command_line("重试", retry_command),
+        card::command_line("查询", lookup_command),
+        card::command_line(
+            "列表",
+            build_downloads_command(Some("fail"), None, None, CommandStyle::Short),
+        ),
+        String::new(),
+    ];
+    lines.extend(card::source_block(source_link));
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::build_failure_buttons;
+    use super::{build_failure_buttons, format_failure_card_text};
 
     // 恢复失败已知 job_id 时，应能从失败卡片直接跳任务详情和失败列表。
     #[test]
@@ -89,5 +126,27 @@ mod tests {
             button.r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         )));
+    }
+
+    // 失败正文应保留重试命令、查询命令和完整错误，用户号模式下也能继续操作。
+    #[test]
+    fn test_format_failure_card_text() {
+        let err = anyhow::anyhow!("network failed");
+        let text = format_failure_card_text(
+            "转存失败",
+            "https://t.me/c/1/2",
+            -100,
+            Some(42),
+            "/t https://t.me/c/1/2 -100",
+            "/lk https://t.me/c/1/2 -100",
+            &err,
+        );
+
+        assert!(text.contains("状态：‹failed›"));
+        assert!(text.contains("job：‹#42›"));
+        assert!(text.contains("«network failed»"));
+        assert!(text.contains("重试：‹/t https://t.me/c/1/2 -100›"));
+        assert!(text.contains("查询：‹/lk https://t.me/c/1/2 -100›"));
+        assert!(text.contains("列表：‹/d fail›"));
     }
 }

@@ -10,6 +10,8 @@ pub mod send;
 pub mod transfer;
 
 use crate::tgbot;
+use crate::tgbot::transfer::card;
+use base64::{Engine as _, engine::general_purpose};
 pub use error::*;
 pub use login::*;
 use std::time::SystemTime;
@@ -44,7 +46,12 @@ pub async fn get_version(client_id: i32) -> anyhow::Result<()> {
 
 // 设置 TDLib 日志级别。
 pub async fn set_log(client_id: i32) {
-    let _ = tdlib_rs::functions::set_log_verbosity_level(1, client_id).await;
+    match tdlib_rs::functions::set_log_verbosity_level(1, client_id).await {
+        Ok(_) => tracing::debug!(client_id, verbosity_level = 1, "tdlib log level configured"),
+        Err(err) => {
+            tracing::warn!(client_id, error = ?err, "configure tdlib log level failed");
+        }
+    }
 }
 
 // 主循环：持续接收 TDLib update 并异步处理。
@@ -52,8 +59,15 @@ pub async fn receive(config: std::sync::Arc<crate::config::BotConfig>) -> anyhow
     loop {
         let receive = tokio::task::spawn_blocking(tdlib_rs::receive).await?;
         match receive {
-            None => {}
+            None => {
+                // TDLib receive 超时返回 None 是正常空轮询；放在 trace，避免默认日志刷屏。
+                tracing::trace!("tdlib receive returned no update");
+            }
             Some((msg_update, _client_id)) => {
+                tracing::trace!(
+                    update_kind = update_kind(&msg_update),
+                    "tdlib update received"
+                );
                 let config = config.clone();
                 tokio::spawn(async move {
                     let res = handle_update(msg_update, config.clone()).await;
@@ -83,10 +97,24 @@ pub async fn handle_update(
 
     // 发送成功/失败更新：用于把 sendMessage 返回的临时 message_id 对齐到最终 message_id。
     if let Update::MessageSendSucceeded(update_send_succeeded) = update {
+        tracing::debug!(
+            chat_id = update_send_succeeded.message.chat_id,
+            old_message_id = update_send_succeeded.old_message_id,
+            final_message_id = update_send_succeeded.message.id,
+            "tdlib message send succeeded"
+        );
         crate::tgbot::send::observe_message_send_succeeded(update_send_succeeded);
         return Ok(());
     }
     if let Update::MessageSendFailed(update_send_failed) = update {
+        tracing::warn!(
+            chat_id = update_send_failed.message.chat_id,
+            old_message_id = update_send_failed.old_message_id,
+            failed_message_id = update_send_failed.message.id,
+            error_code = update_send_failed.error.code,
+            error_message = %update_send_failed.error.message,
+            "tdlib message send failed"
+        );
         crate::tgbot::send::observe_message_send_failed(update_send_failed);
         return Ok(());
     }
@@ -98,6 +126,13 @@ pub async fn handle_update(
 
         // 忽略进程启动前消息，避免重复处理。
         if message.date < *START_TS {
+            tracing::debug!(
+                chat_id,
+                message_id = message.id,
+                message_date = message.date,
+                start_ts = *START_TS,
+                "ignored historical message"
+            );
             return Ok(());
         }
 
@@ -109,6 +144,14 @@ pub async fn handle_update(
 
         // 仅允许管理员 chat 且发送者也在管理员列表中。
         if !(config.admin_ids.contains(&chat_id) && config.admin_ids.contains(&sender_id)) {
+            tracing::debug!(
+                chat_id,
+                sender_id,
+                message_id = message.id,
+                chat_allowed = config.admin_ids.contains(&chat_id),
+                sender_allowed = config.admin_ids.contains(&sender_id),
+                "ignored non-admin message"
+            );
             return Ok(());
         }
 
@@ -117,9 +160,21 @@ pub async fn handle_update(
 
         // 当前仅处理文本消息。
         if let tdlib_rs::enums::MessageContent::MessageText(message_text) = message_content {
+            tracing::debug!(
+                chat_id,
+                sender_id,
+                message_id = message.id,
+                "admin text message received"
+            );
             let raw_text = message_text.text.text;
             let text = raw_text.split_whitespace().collect::<Vec<&str>>();
             if text.is_empty() {
+                tracing::debug!(
+                    chat_id,
+                    sender_id,
+                    message_id = message.id,
+                    "ignored empty admin text message"
+                );
                 if let Some(client_id) = client_id {
                     crate::tgbot::send::send_text_message(
                         "未收到文本内容。".to_owned(),
@@ -195,8 +250,18 @@ pub async fn handle_update(
                     // 手动暂停、恢复、停止指定转存任务。
                     "/job" | "/j" => tgbot::transfer::job_command(text, chat_id, client_id).await,
                     // /menu 命令入口。
-                    // 提供按钮式交互入口，降低日常命令输入成本。
-                    "/menu" | "/m" => tgbot::transfer::menu_command(text, chat_id, client_id).await,
+                    // TDLib 的 reply_markup 只支持 bot 账号；用户号登录时改走纯文本菜单，避免提示“点按钮”但实际没有按钮。
+                    "/menu" | "/m" => {
+                        let supports_reply_markup =
+                            matches!(config.login_info, crate::config::LoginInfo::Token(_));
+                        tgbot::transfer::menu_command(
+                            text,
+                            chat_id,
+                            client_id,
+                            supports_reply_markup,
+                        )
+                        .await
+                    }
                     _ => {
                         tracing::warn!(
                             command,
@@ -219,6 +284,14 @@ pub async fn handle_update(
                         "admin command failed"
                     );
                     send_command_error_message(command, &err, chat_id, client_id).await?;
+                } else {
+                    tracing::debug!(
+                        command,
+                        chat_id,
+                        sender_id,
+                        message_id = message.id,
+                        "admin command completed"
+                    );
                 }
             } else if let Some(client_id) = client_id
                 && tgbot::transfer::handle_menu_text_input(
@@ -231,20 +304,53 @@ pub async fn handle_update(
                 )
                 .await?
             {
+                tracing::debug!(
+                    chat_id,
+                    sender_id,
+                    message_id = message.id,
+                    "admin text message consumed by menu input"
+                );
                 return Ok(());
+            } else {
+                tracing::debug!(
+                    chat_id,
+                    sender_id,
+                    message_id = message.id,
+                    "admin text message ignored because it is not a command and no menu input is active"
+                );
             }
+        } else {
+            tracing::debug!(
+                chat_id,
+                sender_id,
+                message_id = message.id,
+                content_kind = message_content_kind(&message_content),
+                "ignored non-text admin message"
+            );
         }
         return Ok(());
     }
 
     // inline keyboard 回调：用于 `/downloads` 分页和 `/job` 原地控制。
-    if let Update::NewCallbackQuery(update_callback_query) = update {
+    if let Update::NewCallbackQuery(mut update_callback_query) = update {
+        decode_callback_query_payload(&mut update_callback_query);
+
         // 只接受管理员在管理员聊天里点击的按钮。
         if !(config.admin_ids.contains(&update_callback_query.chat_id)
             && config
                 .admin_ids
                 .contains(&update_callback_query.sender_user_id))
         {
+            tracing::debug!(
+                chat_id = update_callback_query.chat_id,
+                sender_user_id = update_callback_query.sender_user_id,
+                message_id = update_callback_query.message_id,
+                chat_allowed = config.admin_ids.contains(&update_callback_query.chat_id),
+                sender_allowed = config
+                    .admin_ids
+                    .contains(&update_callback_query.sender_user_id),
+                "ignored non-admin callback query"
+            );
             return Ok(());
         }
 
@@ -278,16 +384,99 @@ pub async fn handle_update(
     Ok(())
 }
 
+/// 解码 TDLib callback payload。
+///
+/// TDLib schema 里的 callback `data` 是 bytes：
+/// - 发送 JSON 请求时必须写 base64。
+/// - 收到 update 时 TDLib 也会把 bytes 表示为 base64。
+///
+/// 业务路由只认识 `m:home`、`d:r:all:8:1` 这类短字符串，因此入口统一解码。
+fn decode_callback_query_payload(update: &mut tdlib_rs::enums::UpdateNewCallbackQuery) {
+    if let tdlib_rs::enums::CallbackQueryPayload::Data(data) = &mut update.payload {
+        match general_purpose::STANDARD.decode(&data.data) {
+            Ok(decoded) => match String::from_utf8(decoded) {
+                Ok(decoded_text) => {
+                    tracing::debug!(
+                        chat_id = update.chat_id,
+                        sender_user_id = update.sender_user_id,
+                        message_id = update.message_id,
+                        "callback payload decoded"
+                    );
+                    data.data = decoded_text;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        chat_id = update.chat_id,
+                        sender_user_id = update.sender_user_id,
+                        message_id = update.message_id,
+                        error = %err,
+                        "callback payload is not valid utf8"
+                    );
+                }
+            },
+            Err(err) => {
+                // 兼容历史测试或未来 TDLib 绑定变更：如果拿到的已经是明文 payload，不强制失败。
+                tracing::debug!(
+                    chat_id = update.chat_id,
+                    sender_user_id = update.sender_user_id,
+                    message_id = update.message_id,
+                    error = %err,
+                    "callback payload is not base64, keep original"
+                );
+            }
+        }
+    }
+}
+
+/// 返回 TDLib update 的粗粒度类型名。
+///
+/// trace 日志只需要知道 update 是否进入机器人，不打印完整 update，避免泄露消息内容。
+fn update_kind(update: &Update) -> &'static str {
+    match update {
+        Update::AuthorizationState(_) => "authorization_state",
+        Update::NewMessage(_) => "new_message",
+        Update::NewCallbackQuery(_) => "new_callback_query",
+        Update::MessageSendAcknowledged(_) => "message_send_acknowledged",
+        Update::MessageSendSucceeded(_) => "message_send_succeeded",
+        Update::MessageSendFailed(_) => "message_send_failed",
+        Update::File(_) => "file",
+        _ => "other",
+    }
+}
+
+/// 返回消息内容类型名，用于 debug 排查“为什么消息没有被当成命令处理”。
+fn message_content_kind(content: &tdlib_rs::enums::MessageContent) -> &'static str {
+    match content {
+        tdlib_rs::enums::MessageContent::MessageText(_) => "text",
+        tdlib_rs::enums::MessageContent::MessageAnimation(_) => "animation",
+        tdlib_rs::enums::MessageContent::MessageAudio(_) => "audio",
+        tdlib_rs::enums::MessageContent::MessageDocument(_) => "document",
+        tdlib_rs::enums::MessageContent::MessagePhoto(_) => "photo",
+        tdlib_rs::enums::MessageContent::MessageVideo(_) => "video",
+        tdlib_rs::enums::MessageContent::MessageVideoNote(_) => "video_note",
+        tdlib_rs::enums::MessageContent::MessageVoiceNote(_) => "voice_note",
+        _ => "other",
+    }
+}
+
 /// 回复未知命令，避免用户输入错误时只在日志里可见。
 async fn send_unknown_command_message(
     command: &str,
     chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    crate::tgbot::send::ReplyPanel::markdown(format!(
-        "*未知命令*\n命令：`{}`\n━━━━━━━━━━━━\n说明：使用 `/h` 查看可用命令。",
-        markdown_inline_code(command)
-    ))
+    crate::tgbot::send::ReplyPanel::card(
+        [
+            "未知命令".to_owned(),
+            format!("状态：{}", card::code("invalid-command")),
+            card::DIVIDER.to_owned(),
+            card::section("输入"),
+            card::command_line("命令", command),
+            card::section("下一步"),
+            card::command_line("帮助", "/h"),
+        ]
+        .join("\n"),
+    )
     .row(vec![crate::tgbot::send::build_copy_button(
         "复制 /h",
         "/h",
@@ -307,11 +496,20 @@ async fn send_command_error_message(
     chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    crate::tgbot::send::ReplyPanel::markdown(format!(
-        "*命令执行失败*\n命令：`{}`\n━━━━━━━━━━━━\n错误：`{}`\n说明：可复制 `/h` 查看命令格式。",
-        markdown_inline_code(command),
-        markdown_inline_code(&err.to_string())
-    ))
+    crate::tgbot::send::ReplyPanel::card(
+        [
+            "命令执行失败".to_owned(),
+            format!("状态：{}", card::code("failed")),
+            card::DIVIDER.to_owned(),
+            card::section("输入"),
+            card::command_line("命令", command),
+            card::section("错误"),
+            card::pre_code(format!("{:#}", err)),
+            card::section("下一步"),
+            card::command_line("帮助", "/h"),
+        ]
+        .join("\n"),
+    )
     .row(vec![
         crate::tgbot::send::build_copy_button(
             "复制 /h",
@@ -328,7 +526,57 @@ async fn send_command_error_message(
     .await
 }
 
-/// 转义 Markdown 行内代码里的反引号，避免用户输入破坏回复格式。
-fn markdown_inline_code(text: &str) -> String {
-    text.replace('`', "'")
+#[cfg(test)]
+mod tests {
+    use base64::{Engine as _, engine::general_purpose};
+
+    use super::decode_callback_query_payload;
+
+    // TDLib JSON 协议会用 base64 表示 callback bytes；入口应解回业务短 payload。
+    #[test]
+    fn test_decode_callback_query_payload() {
+        let mut update = tdlib_rs::enums::UpdateNewCallbackQuery {
+            id: 1,
+            sender_user_id: 2,
+            chat_id: 3,
+            message_id: 4,
+            chat_instance: 5,
+            payload: tdlib_rs::enums::CallbackQueryPayload::Data(
+                tdlib_rs::types::CallbackQueryPayloadData {
+                    data: general_purpose::STANDARD.encode("m:home"),
+                },
+            ),
+        };
+
+        decode_callback_query_payload(&mut update);
+
+        let tdlib_rs::enums::CallbackQueryPayload::Data(data) = update.payload else {
+            panic!("payload must be data");
+        };
+        assert_eq!(data.data, "m:home");
+    }
+
+    // 兼容已有测试构造的明文 payload，避免单元测试和未来绑定差异直接崩掉。
+    #[test]
+    fn test_decode_callback_query_payload_keeps_plain_text() {
+        let mut update = tdlib_rs::enums::UpdateNewCallbackQuery {
+            id: 1,
+            sender_user_id: 2,
+            chat_id: 3,
+            message_id: 4,
+            chat_instance: 5,
+            payload: tdlib_rs::enums::CallbackQueryPayload::Data(
+                tdlib_rs::types::CallbackQueryPayloadData {
+                    data: "m:home".to_owned(),
+                },
+            ),
+        };
+
+        decode_callback_query_payload(&mut update);
+
+        let tdlib_rs::enums::CallbackQueryPayload::Data(data) = update.payload else {
+            panic!("payload must be data");
+        };
+        assert_eq!(data.data, "m:home");
+    }
 }

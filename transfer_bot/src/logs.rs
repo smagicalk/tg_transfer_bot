@@ -16,7 +16,9 @@ pub fn init_tracing() {
     // 从环境变量读取日志过滤规则；没有则使用默认规则。
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // 默认只输出业务关键流程，避免 SeaORM SQL 与 TDLib 进度更新刷屏。
-        // 需要排查细节时可通过 RUST_LOG 覆盖，例如：RUST_LOG=debug。
+        // 需要排查细节时可通过 RUST_LOG 覆盖：
+        // - RUST_LOG=transfer_bot=debug,info 查看消息过滤、按钮路由、发送回执
+        // - RUST_LOG=transfer_bot=trace,info 查看 TDLib update 与文件进度
         tracing_subscriber::EnvFilter::new("info,sea_orm=warn,sqlx=warn,tokio=warn")
     });
 

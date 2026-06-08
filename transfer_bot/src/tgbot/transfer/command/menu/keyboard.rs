@@ -461,24 +461,32 @@ mod tests {
     // 下载按钮应直接复用 downloads callback，不让菜单重复实现分页逻辑。
     #[test]
     fn test_downloads_buttons_use_downloads_callback() {
+        use base64::{Engine as _, engine::general_purpose};
+
         let rows = build_menu_buttons(MenuPage::Downloads, &[]);
 
-        assert!(matches!(
-            &rows[0][0].r#type,
-            tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback)
-                if callback.data.starts_with("d:")
-        ));
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
+        else {
+            panic!("downloads button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert!(decoded.starts_with("d:"));
     }
 
     // 帮助页按钮应直接走 help callback，不需要用户复制命令再发送。
     #[test]
     fn test_help_buttons_use_help_callback() {
+        use base64::{Engine as _, engine::general_purpose};
+
         let rows = build_menu_buttons(MenuPage::Help, &[]);
 
-        assert!(matches!(
-            &rows[0][0].r#type,
-            tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback)
-                if callback.data.starts_with("h:")
-        ));
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
+        else {
+            panic!("help button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert!(decoded.starts_with("h:"));
     }
 }

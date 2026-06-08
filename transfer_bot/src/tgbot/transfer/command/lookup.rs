@@ -205,6 +205,11 @@ fn format_lookup_active_text(
             "可直接复制暂停/停止命令，或使用 {} 查看运行列表。",
             card::code("/d run")
         ),
+        card::section("命令"),
+        card::command_line("详情", build_job_command("st", job_id, CommandStyle::Short)),
+        card::command_line("暂停", build_job_command("p", job_id, CommandStyle::Short)),
+        card::command_line("停止", build_job_command("s", job_id, CommandStyle::Short)),
+        card::command_line("列表", "/d run"),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
@@ -219,6 +224,15 @@ fn format_lookup_miss_text(source_link: &str, target_chat_id: i64) -> String {
         card::DIVIDER.to_owned(),
         card::section("下一步"),
         "复制转存命令后重新发起任务。".to_owned(),
+        card::section("命令"),
+        card::command_line(
+            "转存",
+            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+        ),
+        card::command_line(
+            "查询",
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+        ),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));

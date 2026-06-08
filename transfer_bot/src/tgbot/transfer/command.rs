@@ -88,6 +88,13 @@ pub async fn transfer_callback_query(
     client_id: i32,
 ) -> anyhow::Result<()> {
     let route = classify_callback_route(&update.payload);
+    tracing::debug!(
+        route = ?route,
+        chat_id = update.chat_id,
+        sender_user_id = update.sender_user_id,
+        message_id = update.message_id,
+        "transfer callback query routed"
+    );
 
     match route {
         CallbackRoute::Help => help::help_callback_query(update, client_id).await,
@@ -96,10 +103,22 @@ pub async fn transfer_callback_query(
         CallbackRoute::Config => config_cmd::config_callback_query(update, client_id).await,
         CallbackRoute::Menu => menu::menu_callback_query(update, client_id).await,
         CallbackRoute::Unknown => {
+            tracing::warn!(
+                chat_id = update.chat_id,
+                sender_user_id = update.sender_user_id,
+                message_id = update.message_id,
+                "unknown transfer callback payload"
+            );
             crate::tgbot::send::answer_callback_query(update.id, Some("未知按钮参数"), client_id)
                 .await
         }
         CallbackRoute::Unsupported => {
+            tracing::warn!(
+                chat_id = update.chat_id,
+                sender_user_id = update.sender_user_id,
+                message_id = update.message_id,
+                "unsupported transfer callback payload"
+            );
             crate::tgbot::send::answer_callback_query(
                 update.id,
                 Some("暂不支持这种按钮类型"),
@@ -224,6 +243,22 @@ mod tests {
         );
         assert!(build_downloads_filter_button_data("unknown", 8).is_none());
         assert_eq!(build_downloads_short_command(Some("run")), "/d run");
+    }
+
+    // 当前所有 callback 前缀必须互不覆盖，否则统一路由会把按钮分发到错误模块。
+    #[test]
+    fn test_callback_prefixes_are_unique_by_route() {
+        let samples = [
+            ("h:transfer", CallbackRoute::Help),
+            ("d:f:run:8:1", CallbackRoute::Downloads),
+            ("j:p:42", CallbackRoute::Job),
+            ("cfg:a:gc:10", CallbackRoute::Config),
+            ("m:t", CallbackRoute::Menu),
+        ];
+
+        for (data, expected_route) in samples {
+            assert_eq!(classify_callback_route(&payload(data)), expected_route);
+        }
     }
 
     fn payload(data: &str) -> tdlib_rs::enums::CallbackQueryPayload {

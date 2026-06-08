@@ -275,8 +275,9 @@ fn build_job_detail() -> String {
 fn build_menu_detail() -> String {
     [
         "menu".to_owned(),
-        "用途：打开按钮式交互菜单。".to_owned(),
-        "说明：菜单使用 inline keyboard 和 ForceReply，不需要额外 Web App。".to_owned(),
+        "用途：打开转存菜单。".to_owned(),
+        "说明：bot token 模式使用 inline keyboard；手机号/OCR 用户号模式会自动降级为文本命令菜单。"
+            .to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
         short_and_long(
@@ -285,7 +286,7 @@ fn build_menu_detail() -> String {
         ),
         String::new(),
         "可做操作：".to_owned(),
-        "转存：按钮引导输入源链接和目标 chat。".to_owned(),
+        "转存：bot 模式可按钮引导输入；用户号模式直接复制正文命令。".to_owned(),
         "下载：直接选择筛选并进入分页列表。".to_owned(),
         "任务：进入列表后查看详情、暂停、恢复、停止。".to_owned(),
         "配置/查询/帮助：复制常用命令模板。".to_owned(),

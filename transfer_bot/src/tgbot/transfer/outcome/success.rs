@@ -103,6 +103,19 @@ pub(in crate::tgbot::transfer) fn format_result_card_text(
         card::summary_line("success", job_id, target_chat_id),
         card::DIVIDER.to_owned(),
         card::result_block(result_link),
+        card::section("命令"),
+        card::command_line(
+            "查询",
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+        ),
+        card::command_line(
+            "重转",
+            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+        ),
+        card::command_line(
+            "列表",
+            build_downloads_command(Some("done"), None, None, CommandStyle::Short),
+        ),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
@@ -127,6 +140,9 @@ mod tests {
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("【打开转存消息】(https://t.me/c/5106953357/734)"));
         assert!(text.contains("链接：‹https://t.me/c/5106953357/734›"));
+        assert!(text.contains("查询：‹/lk https://t.me/c/1/2 -5106953357›"));
+        assert!(text.contains("重转：‹/t https://t.me/c/1/2 -5106953357›"));
+        assert!(text.contains("列表：‹/d done›"));
     }
 
     // 不可打开的定位信息只能作为代码展示，不能伪装成可点击链接。

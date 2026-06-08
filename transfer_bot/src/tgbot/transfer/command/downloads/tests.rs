@@ -141,6 +141,8 @@ fn test_build_downloads_keyboard_has_job_detail_buttons() {
 // 任务详情按钮应使用短 callback payload，方便和 `/job` 统一路由。
 #[test]
 fn test_build_downloads_keyboard_job_detail_callback_data() {
+    use base64::{Engine as _, engine::general_purpose};
+
     let args = DownloadsArgs {
         filter: DownloadsFilter::All,
         limit: 8,
@@ -153,7 +155,8 @@ fn test_build_downloads_keyboard_job_detail_callback_data() {
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
         other => panic!("unexpected button type: {:?}", other),
     };
-    assert_eq!(data, "j:st:1");
+    let decoded = String::from_utf8(general_purpose::STANDARD.decode(data).unwrap()).unwrap();
+    assert_eq!(decoded, "j:st:1");
 }
 
 // 空列表时不应生成任务详情按钮行。

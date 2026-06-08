@@ -1,6 +1,10 @@
 // 转存进度面板的文案渲染。
 // 本模块只负责把任务快照和执行结果转换成 card 标记文本，不触碰 TDLib 调用。
 
+use crate::tgbot::transfer::command::common::{
+    CommandStyle, downloads_command as build_downloads_command, job_command as build_job_command,
+    lookup_command as build_lookup_command, transfer_command as build_transfer_command,
+};
 use crate::tgbot::transfer::{card, store, types};
 
 /// 构造任务尚未入库时的等待文本。
@@ -24,11 +28,6 @@ pub(super) fn format_transfer_progress_text(
 ) -> String {
     let total = snapshot.job.total_items.max(0);
     let finished = snapshot.success_count + snapshot.failed_count + snapshot.cancelled_count;
-    let progress = if total <= 0 {
-        0
-    } else {
-        finished.saturating_mul(100) / total
-    };
     let mut lines = vec![
         format!("转存进度 {}", card::job_ref(snapshot.job.id)),
         card::summary_line(
@@ -38,12 +37,9 @@ pub(super) fn format_transfer_progress_text(
         ),
         card::DIVIDER.to_owned(),
         card::section("进度"),
-        card::field_pair(
-            "总进度",
-            format!("{}/{} ({}%)", finished, total, progress),
-            "更新",
-            snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
-        ),
+        card::field("总进度", format!("{}/{}", finished, total)),
+        card::field("完成率", card::progress_bar(finished.into(), total.into())),
+        card::field("更新", snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S")),
         card::field_pair(
             "等待/下载",
             format!("{}/{}", snapshot.pending_count, snapshot.preparing_count),
@@ -61,8 +57,61 @@ pub(super) fn format_transfer_progress_text(
     if snapshot.active_download_files > 0 {
         lines.push(format!(
             "真实下载：{}",
-            card::code(format_progress_live_download(snapshot))
+            format_progress_live_download(snapshot)
         ));
+    }
+
+    // 进度按钮在用户号登录模式下不可见；正文保留命令，确保仍可手动控制任务。
+    lines.push(card::section("命令"));
+    lines.push(card::command_line(
+        "详情",
+        build_job_command("st", snapshot.job.id, CommandStyle::Short),
+    ));
+    lines.push(card::command_line(
+        "查询",
+        build_lookup_command(
+            source_link,
+            snapshot.job.target_chat_id,
+            CommandStyle::Short,
+        ),
+    ));
+    match snapshot.job.status.as_str() {
+        store::JOB_STATUS_PAUSED => {
+            lines.push(card::command_line(
+                "恢复",
+                build_job_command("r", snapshot.job.id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "停止",
+                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "列表",
+                build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
+            ));
+        }
+        store::JOB_STATUS_CANCELLING
+        | store::JOB_STATUS_CANCEL_FINALIZING
+        | store::JOB_STATUS_CANCELLED => {
+            lines.push(card::command_line(
+                "列表",
+                build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+            ));
+        }
+        _ => {
+            lines.push(card::command_line(
+                "暂停",
+                build_job_command("p", snapshot.job.id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "停止",
+                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "列表",
+                build_downloads_command(Some("run"), None, None, CommandStyle::Short),
+            ));
+        }
     }
 
     lines.push(String::new());
@@ -83,6 +132,19 @@ pub(super) fn format_transfer_final_text(
         card::summary_line("success", job_id, target_chat_id),
         card::DIVIDER.to_owned(),
         card::result_block(result_link),
+        card::section("命令"),
+        card::command_line(
+            "查询",
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+        ),
+        card::command_line(
+            "重转",
+            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+        ),
+        card::command_line(
+            "列表",
+            build_downloads_command(Some("done"), None, None, CommandStyle::Short),
+        ),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
@@ -103,6 +165,11 @@ pub(super) fn format_transfer_control_text(
         card::DIVIDER.to_owned(),
         card::section("说明"),
         card::note(detail),
+        card::section("命令"),
+        card::command_line("详情", build_job_command("st", job_id, CommandStyle::Short)),
+        card::command_line("暂停", build_job_command("p", job_id, CommandStyle::Short)),
+        card::command_line("恢复", build_job_command("r", job_id, CommandStyle::Short)),
+        card::command_line("停止", build_job_command("s", job_id, CommandStyle::Short)),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
@@ -120,7 +187,20 @@ pub(super) fn format_transfer_error_text(
         card::summary_line("failed", None, target_chat_id),
         card::DIVIDER.to_owned(),
         card::section("错误"),
-        card::code(error),
+        card::pre_code(error),
+        card::section("命令"),
+        card::command_line(
+            "重试",
+            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+        ),
+        card::command_line(
+            "查询",
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+        ),
+        card::command_line(
+            "列表",
+            build_downloads_command(Some("fail"), None, None, CommandStyle::Short),
+        ),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
@@ -134,11 +214,11 @@ fn format_progress_live_download(snapshot: &store::JobProgressSnapshot) -> Strin
         let progress = snapshot.active_downloaded_bytes.saturating_mul(100)
             / snapshot.active_download_total_bytes.max(1);
         return format!(
-            "{} {}/{} ({}%)",
+            "{} {}/{}\n{}",
             prefix,
             format_progress_bytes(snapshot.active_downloaded_bytes),
             format_progress_bytes(snapshot.active_download_total_bytes),
-            progress
+            card::progress_bar_percent(progress)
         );
     }
 

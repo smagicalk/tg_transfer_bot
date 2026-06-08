@@ -15,7 +15,7 @@ mod text;
 
 use input::MenuInputKind;
 use keyboard::{MenuPage, MenuRequestAction, build_menu_buttons, parse_menu_callback_data};
-use text::{build_menu_text, build_transfer_prompt_text};
+use text::{build_menu_text, build_transfer_prompt_text, build_user_account_menu_text};
 
 /// 判断 callback payload 是否属于 `/menu`。
 pub(super) fn is_menu_callback_data(data: &str) -> bool {
@@ -29,7 +29,18 @@ pub async fn menu_command(
     _text: Vec<&str>,
     request_chat_id: i64,
     client_id: i32,
+    supports_reply_markup: bool,
 ) -> anyhow::Result<()> {
+    if !supports_reply_markup {
+        tracing::info!(
+            request_chat_id,
+            "menu command uses text fallback because current login mode cannot show reply markup"
+        );
+        return send::ReplyPanel::card(build_user_account_menu_text())
+            .send(request_chat_id, client_id)
+            .await;
+    }
+
     send_menu_page(MenuPage::Home, request_chat_id, client_id).await
 }
 

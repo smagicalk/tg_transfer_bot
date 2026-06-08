@@ -75,6 +75,39 @@ $env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
 cargo run -p transfer_bot -- -c config.json
 ```
 
+### 日志排查
+
+默认日志会同时输出到控制台和仓库根目录的 `tg_transfer.log`。默认级别适合日常运行，只保留启动、登录、命令、任务、上传和清理等主流程。
+
+如果机器人“没有反应”，先打开 debug 级别运行：
+
+```powershell
+$env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
+$env:RUST_LOG = "transfer_bot=debug,info,sea_orm=warn,sqlx=warn,tokio=warn"
+cargo run -p transfer_bot -- -c config.json
+```
+
+需要追踪 TDLib update 或真实文件进度时，再临时打开 trace：
+
+```powershell
+$env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
+$env:RUST_LOG = "transfer_bot=trace,info,sea_orm=warn,sqlx=warn,tokio=warn"
+cargo run -p transfer_bot -- -c config.json
+```
+
+常用日志关键词：
+
+| 关键词 | 含义 |
+| --- | --- |
+| `tdlib authorization ready` | TDLib 登录成功，session 有效 |
+| `starting transfer background services` | 转存后台服务已启动 |
+| `admin command received` | 管理员命令已进入命令分发 |
+| `ignored historical message` | 忽略启动前的历史消息 |
+| `ignored non-admin message` | chat 或 sender 不在 `admin_ids` |
+| `ignored non-text admin message` | 管理员发了非文本消息，不能当命令处理 |
+| `transfer callback query routed` | 按钮回调已进入对应命令模块 |
+| `tdlib receive loop exited with error` | 主接收循环异常退出，需要看 error 字段 |
+
 如果使用加密配置，可以先生成密文：
 
 ```powershell

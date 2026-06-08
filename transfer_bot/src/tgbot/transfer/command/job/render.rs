@@ -2,9 +2,12 @@
 // 只负责把任务快照转换成卡片文本，不执行数据库写入或 TDLib 调用。
 
 use crate::tgbot::transfer::card;
-use crate::tgbot::transfer::store::JobProgressSnapshot;
+use crate::tgbot::transfer::store::{self, JobProgressSnapshot};
 
-use super::super::common::format_bytes;
+use super::super::common::{
+    CommandStyle, downloads_command as build_downloads_command, format_bytes,
+    job_command as build_job_command,
+};
 
 /// 构造 `/job` 动作结果卡片。
 pub(super) fn format_job_action_text(
@@ -30,11 +33,6 @@ pub(super) fn format_job_action_text(
 pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
     let total = snapshot.job.total_items.max(0);
     let finished = snapshot.success_count + snapshot.failed_count + snapshot.cancelled_count;
-    let progress = if total <= 0 {
-        0
-    } else {
-        finished.saturating_mul(100) / total
-    };
     let mut lines = vec![
         "任务详情".to_owned(),
         card::summary_line(
@@ -44,7 +42,8 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
         ),
         card::DIVIDER.to_owned(),
         card::section("进度"),
-        card::field("总进度", format!("{}/{} ({}%)", finished, total, progress)),
+        card::field("总进度", format!("{}/{}", finished, total)),
+        card::field("完成率", card::progress_bar(finished.into(), total.into())),
         card::field_pair(
             "等待/下载",
             format!("{}/{}", snapshot.pending_count, snapshot.preparing_count),
@@ -60,10 +59,7 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
     ];
 
     if snapshot.active_download_files > 0 {
-        lines.push(format!(
-            "真实下载：{}",
-            card::code(format_job_live_download(snapshot))
-        ));
+        lines.push(format!("真实下载：{}", format_job_live_download(snapshot)));
     }
 
     lines.push(card::section("时间"));
@@ -75,6 +71,50 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
         "更新",
         snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
     ));
+    // 按钮在用户号登录模式下会被发送层统一禁用，因此正文也必须保留可复制命令。
+    lines.push(card::section("命令"));
+    lines.push(card::command_line(
+        "详情",
+        build_job_command("st", snapshot.job.id, CommandStyle::Short),
+    ));
+    match snapshot.job.status.as_str() {
+        store::JOB_STATUS_PAUSED => {
+            lines.push(card::command_line(
+                "恢复",
+                build_job_command("r", snapshot.job.id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "停止",
+                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "列表",
+                build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
+            ));
+        }
+        store::JOB_STATUS_CANCELLING
+        | store::JOB_STATUS_CANCEL_FINALIZING
+        | store::JOB_STATUS_CANCELLED => {
+            lines.push(card::command_line(
+                "列表",
+                build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+            ));
+        }
+        _ => {
+            lines.push(card::command_line(
+                "暂停",
+                build_job_command("p", snapshot.job.id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "停止",
+                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+            ));
+            lines.push(card::command_line(
+                "列表",
+                build_downloads_command(Some("run"), None, None, CommandStyle::Short),
+            ));
+        }
+    }
     lines.join("\n")
 }
 
@@ -85,11 +125,11 @@ pub(super) fn format_job_live_download(snapshot: &JobProgressSnapshot) -> String
         let progress = snapshot.active_downloaded_bytes.saturating_mul(100)
             / snapshot.active_download_total_bytes.max(1);
         return format!(
-            "{} {}/{} ({}%)",
+            "{} {}/{}\n{}",
             prefix,
             format_bytes(snapshot.active_downloaded_bytes),
             format_bytes(snapshot.active_download_total_bytes),
-            progress
+            card::progress_bar_percent(progress)
         );
     }
 
@@ -133,8 +173,13 @@ mod tests {
         assert!(text.contains("任务详情"));
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("状态：‹running›"));
-        assert!(text.contains("总进度：‹1/3 (33%)›"));
+        assert!(text.contains("总进度：‹1/3›"));
+        assert!(text.contains("完成率：‹|||||||------------- 33%›"));
         assert!(text.contains("■ 时间"));
+        assert!(text.contains("■ 命令"));
+        assert!(text.contains("暂停：‹/j p 42›"));
+        assert!(text.contains("停止：‹/j s 42›"));
+        assert!(text.contains("列表：‹/d run›"));
     }
 
     // 真实下载摘要应和下载列表保持同一风格。
@@ -147,7 +192,7 @@ mod tests {
 
         assert_eq!(
             format_job_live_download(&snapshot),
-            "1 个文件 1.0 KB/2.0 KB (50%)"
+            "1 个文件 1.0 KB/2.0 KB\n||||||||||---------- 50%"
         );
     }
 

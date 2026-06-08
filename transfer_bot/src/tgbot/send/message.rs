@@ -5,6 +5,8 @@ mod content;
 mod raw;
 mod state;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use super::buttons::build_inline_keyboard;
 use content::{
     build_card_formatted_text, build_copyable_formatted_text, build_plain_formatted_text,
@@ -20,6 +22,23 @@ pub use state::{
     observe_message_send_failed, observe_message_send_succeeded, wait_for_sent_message,
     wait_for_sent_message_id,
 };
+
+/// 当前账号是否支持发送 reply_markup。
+///
+/// TDLib 文档将 `sendMessage.reply_markup` 标注为 bot 能力；用户号登录时即使请求里带了按钮，
+/// Telegram 客户端也不会稳定展示。默认开启，主程序读取配置后会按登录模式覆盖。
+static REPLY_MARKUP_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// 设置当前发送层是否允许携带 reply_markup。
+pub fn set_reply_markup_enabled(enabled: bool) {
+    REPLY_MARKUP_ENABLED.store(enabled, Ordering::Relaxed);
+    tracing::info!(enabled, "tdlib reply markup capability configured");
+}
+
+/// 查询当前发送层是否允许携带 reply_markup。
+pub(in crate::tgbot::send) fn is_reply_markup_enabled() -> bool {
+    REPLY_MARKUP_ENABLED.load(Ordering::Relaxed)
+}
 
 /// 向指定 chat 发送纯文本消息。
 pub async fn send_text_message(text: String, chat_id: i64, client_id: i32) -> anyhow::Result<()> {

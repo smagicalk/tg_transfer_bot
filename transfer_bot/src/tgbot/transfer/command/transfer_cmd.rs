@@ -7,7 +7,7 @@ use crate::tgbot::send;
 use crate::tgbot::transfer::card;
 
 use super::build_downloads_status_button_data;
-use super::common::{CommandStyle, lookup_command, resolve_target_chat_id};
+use super::common::{CommandStyle, downloads_command, lookup_command, resolve_target_chat_id};
 use crate::tgbot::transfer::types::TransferPlan;
 
 /// `/transfer` 命令入口。
@@ -81,6 +81,15 @@ fn format_transfer_accepted_text(plan: &TransferPlan) -> String {
         card::DIVIDER.to_owned(),
         card::section("进度"),
         "后台会自动下载并上传，本消息会持续刷新。".to_owned(),
+        card::section("命令"),
+        card::command_line(
+            "查询",
+            lookup_command(&plan.source_link, plan.target_chat_id, CommandStyle::Short),
+        ),
+        card::command_line(
+            "列表",
+            downloads_command(Some("run"), None, None, CommandStyle::Short),
+        ),
         String::new(),
     ]
     .into_iter()

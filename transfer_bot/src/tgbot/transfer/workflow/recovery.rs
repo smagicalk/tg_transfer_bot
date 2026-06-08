@@ -251,6 +251,10 @@ fn format_recovery_startup_text(summary: &RecoveryStartupSummary) -> String {
         card::section("任务"),
         format!("示例 job：{}", card::code(sample_jobs)),
         card::note(note),
+        card::section("命令"),
+        card::command_line("运行列表", build_downloads_short_command(Some("run"))),
+        card::command_line("暂停列表", build_downloads_short_command(Some("pause"))),
+        card::command_line("全部任务", build_downloads_short_command(Some("all"))),
     ]
     .join("\n")
 }
@@ -274,6 +278,7 @@ mod tests {
         assert!(text.contains("恢复中：‹2›"));
         assert!(text.contains("已收敛停止：‹1›"));
         assert!(text.contains("示例 job：‹#11, #12›"));
+        assert!(text.contains("运行列表：‹/d run›"));
     }
 
     // 只有停止任务被收敛时，摘要不应误导用户“后台已派发恢复任务”。

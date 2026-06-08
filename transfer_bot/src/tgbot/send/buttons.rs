@@ -1,6 +1,8 @@
 // Telegram inline keyboard 构建工具。
 // 这里不发送消息，只负责生成按钮和键盘结构。
 
+use base64::{Engine as _, engine::general_purpose};
+
 /// 构造一颗 inline keyboard。
 pub fn build_inline_keyboard(
     rows: Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>,
@@ -36,14 +38,15 @@ pub fn build_callback_button(
     data: &str,
     style: tdlib_rs::enums::ButtonStyle,
 ) -> tdlib_rs::types::InlineKeyboardButton {
+    // TDLib schema 中 callback `data` 是 bytes，JSON 协议要求用 base64 字符串承载。
+    // 业务层仍然使用可读的短 payload，统一在这里编码，避免各命令模块重复处理。
+    let encoded_data = general_purpose::STANDARD.encode(data.as_bytes());
     tdlib_rs::types::InlineKeyboardButton {
         text: text.to_owned(),
         icon_custom_emoji_id: 0,
         style,
         r#type: tdlib_rs::enums::InlineKeyboardButtonType::Callback(
-            tdlib_rs::types::InlineKeyboardButtonTypeCallback {
-                data: data.to_owned(),
-            },
+            tdlib_rs::types::InlineKeyboardButtonTypeCallback { data: encoded_data },
         ),
     }
 }
@@ -77,19 +80,24 @@ pub fn is_openable_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use base64::{Engine as _, engine::general_purpose};
+
     use super::{build_callback_button, is_openable_url};
 
-    // callback 按钮应保留短 payload，供命令分发器识别。
+    // callback 按钮发送给 TDLib 时必须是 base64，因为 TDLib JSON 的 bytes 字段不接受裸字符串。
     #[test]
     fn test_build_callback_button() {
         let button =
             build_callback_button("刷新", "j:st:42", tdlib_rs::enums::ButtonStyle::Primary);
 
         assert_eq!(button.text, "刷新");
-        assert!(matches!(
-            button.r#type,
-            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
-        ));
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = button.r#type else {
+            panic!("button must be callback");
+        };
+        assert_eq!(
+            general_purpose::STANDARD.decode(callback.data).unwrap(),
+            b"j:st:42"
+        );
     }
 
     // 业务层只把 HTTP(S) 当成稳定结果链接，避免旧 tg://openmessage 再次进入打开按钮。

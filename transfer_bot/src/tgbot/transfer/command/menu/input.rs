@@ -74,6 +74,16 @@ impl MenuInputKind {
             Self::LookupDefault => "请回复源链接，目标 chat 将使用配置默认值。",
         }
     }
+
+    /// 日志中使用的输入流程名，避免直接打印 Debug 后未来重命名影响排查关键词。
+    fn log_name(self) -> &'static str {
+        match self {
+            Self::Transfer => "transfer",
+            Self::TransferDefault => "transfer_default",
+            Self::Lookup => "lookup",
+            Self::LookupDefault => "lookup_default",
+        }
+    }
 }
 
 /// 菜单输入阶段。
@@ -116,6 +126,12 @@ pub(super) fn start_menu_input(chat_id: i64, user_id: i64, kind: MenuInputKind) 
             updated_at: Instant::now(),
         },
     );
+    tracing::debug!(
+        chat_id,
+        user_id,
+        input_kind = kind.log_name(),
+        "menu input draft started"
+    );
 }
 
 /// 取消一个菜单输入流程。
@@ -123,7 +139,11 @@ pub(super) fn cancel_menu_input(chat_id: i64, user_id: i64) -> bool {
     let mut drafts = MENU_INPUT_DRAFTS
         .lock()
         .expect("menu input draft mutex poisoned");
-    drafts.remove(&(chat_id, user_id)).is_some()
+    let removed = drafts.remove(&(chat_id, user_id)).is_some();
+    if removed {
+        tracing::debug!(chat_id, user_id, "menu input draft cancelled");
+    }
+    removed
 }
 
 /// 处理菜单输入。
@@ -146,6 +166,12 @@ pub(super) async fn handle_menu_input(
     let draft = match take_current_draft(key) {
         DraftTakeResult::Active(draft) => draft,
         DraftTakeResult::Expired => {
+            tracing::debug!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                "menu input draft expired"
+            );
             send::ReplyPanel::card(build_transfer_prompt_text(
                 "输入已过期",
                 "上一次菜单输入已超过 10 分钟，请重新打开 /m。",
@@ -159,11 +185,26 @@ pub(super) async fn handle_menu_input(
             .await?;
             return Ok(true);
         }
-        DraftTakeResult::None => return Ok(false),
+        DraftTakeResult::None => {
+            tracing::trace!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                "menu input draft not found"
+            );
+            return Ok(false);
+        }
     };
 
     match draft.step {
         MenuInputStep::SourceLink { kind } => {
+            tracing::debug!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                input_kind = kind.log_name(),
+                "menu input source link received"
+            );
             if !looks_like_telegram_link(input) {
                 put_draft(
                     key,
@@ -171,6 +212,13 @@ pub(super) async fn handle_menu_input(
                         step: MenuInputStep::SourceLink { kind },
                         updated_at: Instant::now(),
                     },
+                );
+                tracing::debug!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    input_kind = kind.log_name(),
+                    "menu input source link rejected"
                 );
                 send::send_card_message_with_force_reply_returning(
                     build_transfer_prompt_text(
@@ -197,6 +245,13 @@ pub(super) async fn handle_menu_input(
                             updated_at: Instant::now(),
                         },
                     );
+                    tracing::debug!(
+                        request_chat_id,
+                        sender_user_id,
+                        request_message_id,
+                        input_kind = kind.log_name(),
+                        "menu input default target missing, asking target chat"
+                    );
                     send::send_card_message_with_force_reply_returning(
                         build_transfer_prompt_text(
                             "缺少默认目标",
@@ -214,6 +269,14 @@ pub(super) async fn handle_menu_input(
                     input.to_owned(),
                     target_chat_id.to_string(),
                 ];
+                tracing::debug!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    target_chat_id,
+                    input_kind = kind.log_name(),
+                    "menu input resolved default target"
+                );
                 run_existing_command(
                     kind,
                     command_owned,
@@ -236,6 +299,13 @@ pub(super) async fn handle_menu_input(
                     updated_at: Instant::now(),
                 },
             );
+            tracing::debug!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                input_kind = kind.log_name(),
+                "menu input asking target chat"
+            );
             send::send_card_message_with_force_reply_returning(
                 build_transfer_prompt_text(
                     "目标 chat",
@@ -249,6 +319,13 @@ pub(super) async fn handle_menu_input(
             Ok(true)
         }
         MenuInputStep::TargetChat { kind, source_link } => {
+            tracing::debug!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                input_kind = kind.log_name(),
+                "menu input target chat received"
+            );
             let target_arg = if input.eq_ignore_ascii_case("default") {
                 None
             } else if input.parse::<i64>().is_ok() {
@@ -260,6 +337,13 @@ pub(super) async fn handle_menu_input(
                         step: MenuInputStep::TargetChat { kind, source_link },
                         updated_at: Instant::now(),
                     },
+                );
+                tracing::debug!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    input_kind = kind.log_name(),
+                    "menu input target chat rejected"
                 );
                 send::send_card_message_with_force_reply_returning(
                     build_transfer_prompt_text(
@@ -278,6 +362,14 @@ pub(super) async fn handle_menu_input(
             if let Some(target_arg) = target_arg {
                 command_owned.push(target_arg);
             }
+            tracing::debug!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                input_kind = kind.log_name(),
+                target_is_default = command_owned.len() == 2,
+                "menu input completed, dispatching command"
+            );
             run_existing_command(
                 kind,
                 command_owned,

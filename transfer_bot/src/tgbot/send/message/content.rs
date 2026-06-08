@@ -12,17 +12,10 @@ pub const CARD_CODE_END: char = '›';
 pub const CARD_LINK_TEXT_START: char = '【';
 /// 卡片链接标记结束符，语法：`【文本】(url)`。
 pub const CARD_LINK_TEXT_END: char = '】';
-
-/// 构造 TDLib 文本消息内容。
-pub(in crate::tgbot::send::message) fn build_text_input_message_content(
-    text: tdlib_rs::types::FormattedText,
-) -> tdlib_rs::enums::InputMessageContent {
-    tdlib_rs::enums::InputMessageContent::InputMessageText(tdlib_rs::types::InputMessageText {
-        text,
-        link_preview_options: None,
-        clear_draft: true,
-    })
-}
+/// 卡片多行代码块起始符。
+const CARD_PRE_CODE_START: char = '«';
+/// 卡片多行代码块结束符。
+const CARD_PRE_CODE_END: char = '»';
 
 /// 构造不带实体的普通文本。
 pub(in crate::tgbot::send::message) fn build_plain_formatted_text(
@@ -85,6 +78,22 @@ pub(in crate::tgbot::send::message) fn build_card_formatted_text(
             if let Some(value) = take_until_required(&mut probe, CARD_CODE_END) {
                 chars = probe;
                 builder.push_entity_text(value, tdlib_rs::enums::TextEntityType::Code)?;
+                continue;
+            }
+        }
+
+        if ch == CARD_PRE_CODE_START {
+            let mut probe = chars.clone();
+            if let Some(value) = take_until_required(&mut probe, CARD_PRE_CODE_END) {
+                chars = probe;
+                builder.push_entity_text(
+                    value,
+                    tdlib_rs::enums::TextEntityType::PreCode(
+                        tdlib_rs::types::TextEntityTypePreCode {
+                            language: "".to_owned(),
+                        },
+                    ),
+                )?;
                 continue;
             }
         }
@@ -253,12 +262,12 @@ mod tests {
     #[test]
     fn test_build_card_formatted_text_entities() {
         let text =
-            "转存完成\n■ 结果\n状态：‹success›\n【打开转存消息】(https://t.me/c/1/2)".to_owned();
+            "转存完成\n■ 结果\n状态：‹success›\n错误：«line1\nline2»\n【打开转存消息】(https://t.me/c/1/2)".to_owned();
         let formatted = build_card_formatted_text(text).expect("card text should parse");
 
         assert_eq!(
             formatted.text,
-            "转存完成\n■ 结果\n状态：success\n打开转存消息"
+            "转存完成\n■ 结果\n状态：success\n错误：line1\nline2\n打开转存消息"
         );
         let bold_count = formatted
             .entities
@@ -280,6 +289,9 @@ mod tests {
         );
         assert!(formatted.entities.iter().any(|entity| {
             matches!(entity.r#type, tdlib_rs::enums::TextEntityType::TextUrl(_))
+        }));
+        assert!(formatted.entities.iter().any(|entity| {
+            matches!(entity.r#type, tdlib_rs::enums::TextEntityType::PreCode(_))
         }));
     }
 

@@ -3,7 +3,8 @@
 
 use super::keyboard::{build_transfer_progress_keyboard, build_transfer_result_keyboard};
 use super::text::{
-    format_progress_bytes, format_transfer_progress_text, format_transfer_waiting_text,
+    format_progress_bytes, format_transfer_control_text, format_transfer_progress_text,
+    format_transfer_waiting_text,
 };
 use crate::tgbot::transfer::{store, types};
 
@@ -43,10 +44,36 @@ fn test_format_transfer_progress_text_card_layout() {
 
     assert!(text.contains("转存进度 ‹#42›"));
     assert!(text.contains("状态：‹running›  job：‹#42›  目标：‹-100›"));
-    assert!(text.contains("总进度：‹1/3 (33%)›"));
+    assert!(text.contains("总进度：‹1/3›"));
+    assert!(text.contains("完成率：‹|||||||------------- 33%›"));
     assert!(text.contains("等待/下载：‹1/0›"));
     assert!(text.contains("成功/失败：‹1/0›"));
-    assert!(text.contains("真实下载：‹1 个文件 1.0 KB/2.0 KB (50%)›"));
+    assert!(text.contains("真实下载：1 个文件 1.0 KB/2.0 KB"));
+    assert!(text.contains("||||||||||---------- 50%"));
+    assert!(text.contains("■ 命令"));
+    assert!(text.contains("详情：‹/j st 42›"));
+    assert!(text.contains("暂停：‹/j p 42›"));
+    assert!(text.contains("停止：‹/j s 42›"));
+    assert!(text.contains("列表：‹/d run›"));
+    assert!(text.contains("查询：‹/lk https://t.me/c/1/2 -100›"));
+}
+
+// 控制态正文也要包含命令，避免用户号模式隐藏按钮后无法操作。
+#[test]
+fn test_format_transfer_control_text_contains_commands() {
+    let text = format_transfer_control_text(
+        "相同链接正在转存中",
+        "https://t.me/c/1/2",
+        -100,
+        42,
+        "可以继续观察当前进度。",
+    );
+
+    assert!(text.contains("■ 命令"));
+    assert!(text.contains("详情：‹/j st 42›"));
+    assert!(text.contains("暂停：‹/j p 42›"));
+    assert!(text.contains("恢复：‹/j r 42›"));
+    assert!(text.contains("停止：‹/j s 42›"));
 }
 
 // 最终结果按钮应按成功/失败切换列表筛选命令。
