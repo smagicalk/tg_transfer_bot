@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use tokio::sync::oneshot;
 
-type SendKey = (i64, i64);
+type SendKey = (i32, i64, i64);
 type SendResult = Result<tdlib_rs::types::Message, String>;
 
 /// 最多缓存多少条“先收到成功 update，后注册等待者”的消息。
@@ -33,12 +33,13 @@ struct SendState {
 /// 如果消息没有 sending_state，说明已经是最终消息，直接返回。
 pub async fn wait_for_sent_message(
     message: tdlib_rs::types::Message,
+    client_id: i32,
 ) -> anyhow::Result<tdlib_rs::types::Message> {
     if message.sending_state.is_none() {
         return Ok(message);
     }
 
-    let key = (message.chat_id, message.id);
+    let key = (client_id, message.chat_id, message.id);
     let rx = {
         let mut state = SEND_STATE
             .lock()
@@ -82,11 +83,12 @@ pub async fn wait_for_sent_message(
 /// 编辑消息遇到 `Message not found` 时使用这个兜底：如果之前用的是临时 ID，
 /// 这里会等到 `updateMessageSendSucceeded` 后返回最终 ID，再让调用方重试编辑。
 pub async fn wait_for_sent_message_id(
+    client_id: i32,
     chat_id: i64,
     temporary_message_id: i64,
     timeout: Duration,
 ) -> Option<i64> {
-    let key = (chat_id, temporary_message_id);
+    let key = (client_id, chat_id, temporary_message_id);
     let rx = {
         let mut state = SEND_STATE
             .lock()
@@ -110,9 +112,15 @@ pub async fn wait_for_sent_message_id(
     }
 }
 
-/// 记录 TDLib 发送成功 update，并唤醒等待该临时 ID 的任务。
-pub fn observe_message_send_succeeded(update: tdlib_rs::types::UpdateMessageSendSucceeded) {
-    let key = (update.message.chat_id, update.old_message_id);
+/// 记录指定 TDLib client 的发送成功 update。
+///
+/// 双 client 模式下 user 和 bot 可能在同一个 chat 中同时发送消息，TDLib 临时
+/// message_id 不能假设跨 client 唯一，因此缓存键必须包含 client_id。
+pub fn observe_message_send_succeeded_for_client(
+    update: tdlib_rs::types::UpdateMessageSendSucceeded,
+    client_id: i32,
+) {
+    let key = (client_id, update.message.chat_id, update.old_message_id);
     let waiters = {
         let mut state = SEND_STATE
             .lock()
@@ -131,9 +139,12 @@ pub fn observe_message_send_succeeded(update: tdlib_rs::types::UpdateMessageSend
     }
 }
 
-/// 记录 TDLib 发送失败 update，并唤醒等待该临时 ID 的任务。
-pub fn observe_message_send_failed(update: tdlib_rs::types::UpdateMessageSendFailed) {
-    let key = (update.message.chat_id, update.old_message_id);
+/// 记录指定 TDLib client 的发送失败 update。
+pub fn observe_message_send_failed_for_client(
+    update: tdlib_rs::types::UpdateMessageSendFailed,
+    client_id: i32,
+) {
+    let key = (client_id, update.message.chat_id, update.old_message_id);
     let waiters = {
         let mut state = SEND_STATE
             .lock()
@@ -183,6 +194,7 @@ mod tests {
     use super::*;
 
     static NEXT_CHAT_ID: AtomicI64 = AtomicI64::new(-900_000);
+    const TEST_CLIENT_ID: i32 = 100;
 
     /// 每个测试使用独立 chat，避免全局发送状态缓存互相影响。
     fn next_chat_id() -> i64 {
@@ -261,18 +273,29 @@ mod tests {
         let final_id = 20;
         let final_message = test_message(chat_id, final_id, None);
 
-        observe_message_send_succeeded(tdlib_rs::types::UpdateMessageSendSucceeded {
-            message: final_message,
-            old_message_id: temporary_id,
-        });
+        observe_message_send_succeeded_for_client(
+            tdlib_rs::types::UpdateMessageSendSucceeded {
+                message: final_message,
+                old_message_id: temporary_id,
+            },
+            TEST_CLIENT_ID,
+        );
 
-        let resolved = wait_for_sent_message(test_message(chat_id, temporary_id, pending_state()))
-            .await
-            .expect("cached final message should resolve");
+        let resolved = wait_for_sent_message(
+            test_message(chat_id, temporary_id, pending_state()),
+            TEST_CLIENT_ID,
+        )
+        .await
+        .expect("cached final message should resolve");
         assert_eq!(resolved.id, final_id);
 
-        let resolved_id =
-            wait_for_sent_message_id(chat_id, temporary_id, Duration::from_millis(1)).await;
+        let resolved_id = wait_for_sent_message_id(
+            TEST_CLIENT_ID,
+            chat_id,
+            temporary_id,
+            Duration::from_millis(1),
+        )
+        .await;
         assert_eq!(resolved_id, Some(final_id));
     }
 
@@ -282,17 +305,30 @@ mod tests {
         let temporary_id = -11;
         let final_id = 21;
 
-        let timed_out =
-            wait_for_sent_message_id(chat_id, temporary_id, Duration::from_millis(1)).await;
+        let timed_out = wait_for_sent_message_id(
+            TEST_CLIENT_ID,
+            chat_id,
+            temporary_id,
+            Duration::from_millis(1),
+        )
+        .await;
         assert_eq!(timed_out, None);
 
-        observe_message_send_succeeded(tdlib_rs::types::UpdateMessageSendSucceeded {
-            message: test_message(chat_id, final_id, None),
-            old_message_id: temporary_id,
-        });
+        observe_message_send_succeeded_for_client(
+            tdlib_rs::types::UpdateMessageSendSucceeded {
+                message: test_message(chat_id, final_id, None),
+                old_message_id: temporary_id,
+            },
+            TEST_CLIENT_ID,
+        );
 
-        let resolved_id =
-            wait_for_sent_message_id(chat_id, temporary_id, Duration::from_millis(1)).await;
+        let resolved_id = wait_for_sent_message_id(
+            TEST_CLIENT_ID,
+            chat_id,
+            temporary_id,
+            Duration::from_millis(1),
+        )
+        .await;
         assert_eq!(resolved_id, Some(final_id));
     }
 
@@ -301,13 +337,53 @@ mod tests {
         let chat_id = next_chat_id();
         let temporary_id = -12;
 
-        let timed_out =
-            wait_for_sent_message_id(chat_id, temporary_id, Duration::from_millis(1)).await;
+        let timed_out = wait_for_sent_message_id(
+            TEST_CLIENT_ID,
+            chat_id,
+            temporary_id,
+            Duration::from_millis(1),
+        )
+        .await;
         assert_eq!(timed_out, None);
 
         let state = SEND_STATE
             .lock()
             .expect("send message state mutex poisoned");
-        assert!(!state.waiters.contains_key(&(chat_id, temporary_id)));
+        assert!(
+            !state
+                .waiters
+                .contains_key(&(TEST_CLIENT_ID, chat_id, temporary_id))
+        );
+    }
+
+    /// 双 client 模式下，两个 TDLib client 可能出现相同 chat_id + 临时 message_id。
+    /// 发送状态缓存必须按 client_id 隔离，否则 bot/user 可能误用对方的最终 message_id。
+    #[tokio::test]
+    async fn test_message_cache_is_isolated_by_client_id() {
+        let chat_id = next_chat_id();
+        let temporary_id = -13;
+
+        observe_message_send_succeeded_for_client(
+            tdlib_rs::types::UpdateMessageSendSucceeded {
+                message: test_message(chat_id, 31, None),
+                old_message_id: temporary_id,
+            },
+            201,
+        );
+        observe_message_send_succeeded_for_client(
+            tdlib_rs::types::UpdateMessageSendSucceeded {
+                message: test_message(chat_id, 32, None),
+                old_message_id: temporary_id,
+            },
+            202,
+        );
+
+        let client_201 =
+            wait_for_sent_message_id(201, chat_id, temporary_id, Duration::from_millis(1)).await;
+        let client_202 =
+            wait_for_sent_message_id(202, chat_id, temporary_id, Duration::from_millis(1)).await;
+
+        assert_eq!(client_201, Some(31));
+        assert_eq!(client_202, Some(32));
     }
 }

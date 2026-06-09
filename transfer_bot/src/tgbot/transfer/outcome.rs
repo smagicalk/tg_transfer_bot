@@ -9,4 +9,6 @@ pub(super) use failure::send_failure_message;
 pub(super) use status::{
     send_cancelled_message, send_cancelling_message, send_paused_message, send_running_message,
 };
-pub(super) use success::{format_result_card_text, send_history_hit_message};
+pub(super) use success::{
+    format_result_card_text, normalize_result_messages, send_history_hit_message,
+};

@@ -62,7 +62,10 @@ pub(super) async fn resume_job(
     let job = store::wake_job(job_id, request_chat_id).await?;
     let is_running = workflow::is_job_running_in_process(job.id).await;
     if !is_running {
-        super::super::super::spawn_recovery_job(job.clone(), client_id);
+        super::super::super::spawn_recovery_job(
+            job.clone(),
+            super::super::super::transfer_client_ids()?,
+        );
     }
     tracing::info!(
         job_id = job.id,

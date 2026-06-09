@@ -20,7 +20,7 @@ fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
 /// 测试前确保表结构已经准备好。
 async fn prepare_test_schema() -> anyhow::Result<&'static sea_orm::DatabaseConnection> {
     let db = get_db().await?;
-    migration::Migrator::up(db, None).await?;
+    super::ensure_test_schema_current(db).await?;
     Ok(db)
 }
 
@@ -33,6 +33,8 @@ async fn get_transfer_job() -> transfer_job::ActiveModel {
         source_link: sea_orm::ActiveValue::set(
             rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 32),
         ),
+        source_kind: sea_orm::ActiveValue::set("link".to_owned()),
+        source_client_role: sea_orm::ActiveValue::set("user".to_owned()),
         source_chat_id: sea_orm::ActiveValue::set(rand::rng().random_range(1..=100000)),
         source_message_id: sea_orm::ActiveValue::set(rand::rng().random_range(1..=100000)),
         source_album_id: sea_orm::ActiveValue::set(rand::rng().random_range(0..=100000)),
@@ -63,6 +65,7 @@ async fn get_transfer_item(job_id: i64) -> transfer_item::ActiveModel {
             "fk_{}",
             rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 16)
         )),
+        file_owner_client_role: sea_orm::ActiveValue::set("user".to_owned()),
         status: sea_orm::ActiveValue::set("pending".to_owned()),
         retry_count: sea_orm::ActiveValue::set(0),
         error_message: sea_orm::ActiveValue::set(None),
@@ -76,6 +79,7 @@ async fn get_transfer_item(job_id: i64) -> transfer_item::ActiveModel {
 async fn get_file_cache(file_key: String) -> file_cache::ActiveModel {
     let now = now_utc8();
     file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::set("user".to_owned()),
         file_key: sea_orm::ActiveValue::set(file_key),
         status: sea_orm::ActiveValue::set("downloading".to_owned()),
         size_bytes: sea_orm::ActiveValue::set(None),
@@ -143,6 +147,8 @@ async fn test_same_link_can_create_different_jobs() -> anyhow::Result<()> {
         request_chat_id: sea_orm::ActiveValue::set(request_chat_id1),
         request_message_id: sea_orm::ActiveValue::set(request_message_id1),
         source_link: sea_orm::ActiveValue::set(source_link.clone()),
+        source_kind: sea_orm::ActiveValue::set("link".to_owned()),
+        source_client_role: sea_orm::ActiveValue::set("user".to_owned()),
         source_chat_id: sea_orm::ActiveValue::set(source_chat_id),
         source_message_id: sea_orm::ActiveValue::set(source_message_id),
         source_album_id: sea_orm::ActiveValue::set(0),
@@ -167,6 +173,8 @@ async fn test_same_link_can_create_different_jobs() -> anyhow::Result<()> {
         request_chat_id: sea_orm::ActiveValue::set(request_chat_id2),
         request_message_id: sea_orm::ActiveValue::set(request_message_id2),
         source_link: sea_orm::ActiveValue::set(source_link),
+        source_kind: sea_orm::ActiveValue::set("link".to_owned()),
+        source_client_role: sea_orm::ActiveValue::set("user".to_owned()),
         source_chat_id: sea_orm::ActiveValue::set(source_chat_id),
         source_message_id: sea_orm::ActiveValue::set(source_message_id),
         source_album_id: sea_orm::ActiveValue::set(0),

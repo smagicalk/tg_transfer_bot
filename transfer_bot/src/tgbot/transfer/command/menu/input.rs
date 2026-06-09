@@ -8,11 +8,9 @@ use std::time::{Duration, Instant};
 use crate::config::BotConfig;
 use crate::tgbot::send;
 
+use super::super::common::resolve_target_chat_id;
 use super::super::{lookup, transfer_cmd};
 use super::text::build_transfer_prompt_text;
-
-/// 菜单输入草稿超时时间。
-const INPUT_TTL: Duration = Duration::from_secs(10 * 60);
 
 /// 输入草稿索引。
 ///
@@ -309,10 +307,10 @@ pub(super) async fn handle_menu_input(
             send::send_card_message_with_force_reply_returning(
                 build_transfer_prompt_text(
                     "目标 chat",
-                    "请回复目标 chat_id；如果配置了默认目标，也可以回复 default。",
+                    "请回复目标 chat_id 或目标别名；如果配置了默认目标，也可以回复 default。",
                 ),
                 request_chat_id,
-                "输入目标 chat_id 或 default",
+                "输入目标 chat_id、别名或 default",
                 client_id,
             )
             .await?;
@@ -328,7 +326,7 @@ pub(super) async fn handle_menu_input(
             );
             let target_arg = if input.eq_ignore_ascii_case("default") {
                 None
-            } else if input.parse::<i64>().is_ok() {
+            } else if input.parse::<i64>().is_ok() || config.target_aliases.contains_key(input) {
                 Some(input.to_owned())
             } else {
                 put_draft(
@@ -348,10 +346,10 @@ pub(super) async fn handle_menu_input(
                 send::send_card_message_with_force_reply_returning(
                     build_transfer_prompt_text(
                         "目标 chat 格式不正确",
-                        "请回复数字 chat_id，或回复 default 使用配置默认目标。",
+                        "请回复数字 chat_id、配置里的目标别名，或回复 default 使用配置默认目标。",
                     ),
                     request_chat_id,
-                    "输入目标 chat_id 或 default",
+                    "输入目标 chat_id、别名或 default",
                     client_id,
                 )
                 .await?;
@@ -396,7 +394,7 @@ async fn run_existing_command(
     let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
     match kind.command_kind() {
         MenuInputKind::Transfer => {
-            transfer_cmd::transfer_command(
+            transfer_cmd::transfer_link_command(
                 command_refs,
                 config,
                 request_chat_id,
@@ -423,7 +421,7 @@ fn take_current_draft(key: DraftKey) -> DraftTakeResult {
         purge_expired_locked(&mut drafts);
         return DraftTakeResult::None;
     };
-    if Instant::now().duration_since(draft.updated_at) > INPUT_TTL {
+    if Instant::now().duration_since(draft.updated_at) > input_ttl() {
         purge_expired_locked(&mut drafts);
         return DraftTakeResult::Expired;
     }
@@ -442,7 +440,17 @@ fn put_draft(key: DraftKey, draft: MenuInputDraft) {
 /// 清理超时草稿。
 fn purge_expired_locked(drafts: &mut HashMap<DraftKey, MenuInputDraft>) {
     let now = Instant::now();
-    drafts.retain(|_, draft| now.duration_since(draft.updated_at) <= INPUT_TTL);
+    let ttl = input_ttl();
+    drafts.retain(|_, draft| now.duration_since(draft.updated_at) <= ttl);
+}
+
+/// 菜单输入草稿超时时间。
+fn input_ttl() -> Duration {
+    Duration::from_secs(
+        crate::tgbot::transfer::runtime_config()
+            .menu_input_timeout_seconds
+            .max(1),
+    )
 }
 
 /// 粗略判断是否是 Telegram 消息链接。
@@ -458,11 +466,7 @@ fn looks_like_telegram_link(input: &str) -> bool {
 ///
 /// 这里提前解析是为了在缺少默认目标时继续引导输入目标，而不是让复用的命令入口直接报错。
 fn resolve_default_target(config: &BotConfig, request_chat_id: i64) -> Option<i64> {
-    config
-        .target_map
-        .get(&request_chat_id)
-        .copied()
-        .or_else(|| config.target_map.get(&0).copied())
+    resolve_target_chat_id(&["/menu-input", "placeholder"], config, request_chat_id).ok()
 }
 
 #[cfg(test)]
@@ -505,5 +509,15 @@ mod tests {
 
         config.target_map.insert(1, -200);
         assert_eq!(resolve_default_target(&config, 1), Some(-200));
+    }
+
+    // 快速转存的默认目标也必须遵守 allowed_target_chat_ids。
+    #[test]
+    fn test_resolve_default_target_respects_allowed_targets() {
+        let mut config = BotConfig::default();
+        config.target_map.insert(0, -200);
+        config.allowed_target_chat_ids = vec![-100];
+
+        assert_eq!(resolve_default_target(&config, 1), None);
     }
 }

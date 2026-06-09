@@ -17,7 +17,7 @@ pub use help::help_command;
 pub use job::job_command;
 pub use lookup::lookup_command;
 pub use menu::{cancel_menu_input, discard_menu_input, handle_menu_text_input, menu_command};
-pub use transfer_cmd::transfer_command;
+pub use transfer_cmd::{transfer_bot_message_auto_command, transfer_command};
 
 /// 给转存结果/进度卡片生成“任务详情”按钮数据。
 ///

@@ -1,7 +1,8 @@
 // 初始化表结构迁移：
 // - transfer_job   任务主表
-// - transfer_item  任务子项表
-// - file_cache     文件缓存表
+// - transfer_item            任务子项表
+// - transfer_result_message  上传结果入口表
+// - file_cache               文件缓存表
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -31,6 +32,18 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(ColumnDef::new("source_link").string().not_null())
+                    .col(
+                        ColumnDef::new("source_kind")
+                            .string()
+                            .not_null()
+                            .default("link"),
+                    )
+                    .col(
+                        ColumnDef::new("source_client_role")
+                            .string()
+                            .not_null()
+                            .default("user"),
+                    )
                     .col(ColumnDef::new("source_chat_id").big_integer().not_null())
                     .col(ColumnDef::new("source_message_id").big_integer().not_null())
                     .col(
@@ -142,6 +155,12 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new("source_chat_id").big_integer().not_null())
                     .col(ColumnDef::new("source_message_id").big_integer().not_null())
                     .col(ColumnDef::new("file_key").string().not_null())
+                    .col(
+                        ColumnDef::new("file_owner_client_role")
+                            .string()
+                            .not_null()
+                            .default("user"),
+                    )
                     .col(ColumnDef::new("status").string().not_null())
                     .col(
                         ColumnDef::new("retry_count")
@@ -203,13 +222,91 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // file_cache：按 file_key 跨任务下载去重。
+        // transfer_result_message：保存一次转存产生的所有结果入口。
+        // 超过 10 个媒体时 Telegram 会拆成多个 album，这张表按分组记录每个 album 的首条消息。
+        manager
+            .create_table(
+                Table::create()
+                    .table("transfer_result_message")
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new("id")
+                            .big_integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new("job_id").big_integer().not_null())
+                    .col(ColumnDef::new("result_index").integer().not_null())
+                    .col(ColumnDef::new("target_chat_id").big_integer().not_null())
+                    .col(ColumnDef::new("message_id").big_integer().not_null())
+                    .col(ColumnDef::new("message_link").string().not_null())
+                    .col(
+                        ColumnDef::new("is_album")
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .col(ColumnDef::new("item_count").integer().not_null().default(1))
+                    .col(
+                        ColumnDef::new("created_at")
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new("updated_at")
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .foreign_key(
+                        sea_query::ForeignKeyCreateStatement::new()
+                            .name("transfer_result_message_job_fk")
+                            .from_tbl("transfer_result_message")
+                            .from_col("job_id")
+                            .to_tbl("transfer_job")
+                            .to_col("id")
+                            .on_delete(ForeignKeyAction::Cascade)
+                            .on_update(ForeignKeyAction::Cascade),
+                    )
+                    // 同一个任务内 result_index 唯一，保证重复写入时不会产生重复入口。
+                    .index(
+                        sea_query::Index::create()
+                            .name("transfer_result_message_job_index_uk")
+                            .col("job_id")
+                            .col("result_index")
+                            .unique(),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // 按任务读取结果入口，用于 `/lookup` 和重复转存返回所有分组链接。
+        manager
+            .create_index(
+                sea_query::Index::create()
+                    .if_not_exists()
+                    .name("transfer_result_message_job_idx")
+                    .table("transfer_result_message")
+                    .col("job_id")
+                    .col("result_index")
+                    .to_owned(),
+            )
+            .await?;
+
+        // file_cache：按 owner_client_role + file_key 跨任务下载去重。
+        // bot/user 的 TDLib file_id 和本地路径可能不同，必须按 owner 隔离。
         manager
             .create_table(
                 Table::create()
                     .table("file_cache")
                     .if_not_exists()
-                    .col(ColumnDef::new("file_key").string().not_null().primary_key())
+                    .col(
+                        ColumnDef::new("owner_client_role")
+                            .string()
+                            .not_null()
+                            .default("user"),
+                    )
+                    .col(ColumnDef::new("file_key").string().not_null())
                     .col(ColumnDef::new("status").string().not_null())
                     .col(ColumnDef::new("size_bytes").big_integer())
                     .col(ColumnDef::new("td_file_id").integer())
@@ -237,6 +334,11 @@ impl MigrationTrait for Migration {
                         ColumnDef::new("last_used_at")
                             .timestamp_with_time_zone()
                             .not_null(),
+                    )
+                    .primary_key(
+                        sea_query::Index::create()
+                            .col("owner_client_role")
+                            .col("file_key"),
                     )
                     .to_owned(),
             )
@@ -291,6 +393,24 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .drop_table(Table::drop().table("file_cache").if_exists().to_owned())
+            .await?;
+
+        manager
+            .drop_index(
+                sea_query::Index::drop()
+                    .table("transfer_result_message")
+                    .name("transfer_result_message_job_idx")
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table("transfer_result_message")
+                    .if_exists()
+                    .to_owned(),
+            )
             .await?;
 
         manager

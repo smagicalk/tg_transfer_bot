@@ -112,7 +112,70 @@ pub(in crate::tgbot::transfer) async fn refresh_stored_result_link(
     } else {
         tracing::info!(job_id, target_chat_id, "stored result link refreshed");
     }
+    if let Err(err) =
+        store::update_result_message_record_link(job_id, result_message_id, refreshed.clone()).await
+    {
+        // 新结果表只是展示增强；刷新失败不影响本次返回已经生成的可点击链接。
+        tracing::warn!(
+            job_id,
+            target_chat_id,
+            result_message_id,
+            error = %err,
+            "refresh result message record link failed"
+        );
+    }
     Ok(refreshed)
+}
+
+/// 刷新一组结果入口链接。
+///
+/// 主表 `transfer_job.result_message_link` 只代表第一个结果入口；多 album 分组记录在
+/// `transfer_result_message`。因此这里刷新非首个入口时只更新结果表，不能覆盖主表首链接。
+pub(in crate::tgbot::transfer) async fn refresh_stored_result_messages(
+    job_id: i64,
+    mut records: Vec<store::ResultMessageRecord>,
+    client_id: i32,
+) -> anyhow::Result<Vec<store::ResultMessageRecord>> {
+    for record in &mut records {
+        if crate::tgbot::send::is_openable_url(&record.message_link) || record.message_id == 0 {
+            continue;
+        }
+
+        let refreshed = build_result_message_link(
+            record.target_chat_id,
+            record.message_id,
+            record.is_album,
+            client_id,
+        )
+        .await?;
+        if refreshed == record.message_link {
+            continue;
+        }
+
+        if record.result_index == 0
+            && let Err(err) = store::update_result_message_link(job_id, refreshed.clone()).await
+        {
+            tracing::warn!(
+                job_id,
+                message_id = record.message_id,
+                error = %err,
+                "refresh primary result link succeeded but job update failed"
+            );
+        }
+        if let Err(err) =
+            store::update_result_message_record_link(job_id, record.message_id, refreshed.clone())
+                .await
+        {
+            tracing::warn!(
+                job_id,
+                message_id = record.message_id,
+                error = %err,
+                "refresh result message record failed"
+            );
+        }
+        record.message_link = refreshed;
+    }
+    Ok(records)
 }
 
 /// 构造结果消息的兜底定位。

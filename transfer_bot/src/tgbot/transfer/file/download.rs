@@ -9,6 +9,9 @@ pub(in crate::tgbot::transfer) fn extract_file_key(
     message: &tdlib_rs::types::Message,
 ) -> Option<String> {
     match &message.content {
+        tdlib_rs::enums::MessageContent::MessageAnimation(animation) => {
+            file_key_from_file(&animation.animation.animation)
+        }
         tdlib_rs::enums::MessageContent::MessageVideo(video) => {
             file_key_from_file(&video.video.video)
         }
@@ -31,6 +34,24 @@ pub(in crate::tgbot::transfer) fn extract_file_key(
         }
         _ => None,
     }
+}
+
+/// 判断消息是否能被当前转存流程处理。
+///
+/// 自动转存收到非文本消息时会先用这个函数过滤，避免把贴纸、投票等暂不支持类型入库。
+pub(in crate::tgbot::transfer) fn is_transferable_message(
+    message: &tdlib_rs::types::Message,
+) -> bool {
+    matches!(
+        message.content,
+        tdlib_rs::enums::MessageContent::MessageAnimation(_)
+            | tdlib_rs::enums::MessageContent::MessageAudio(_)
+            | tdlib_rs::enums::MessageContent::MessageDocument(_)
+            | tdlib_rs::enums::MessageContent::MessagePhoto(_)
+            | tdlib_rs::enums::MessageContent::MessageText(_)
+            | tdlib_rs::enums::MessageContent::MessageVideo(_)
+            | tdlib_rs::enums::MessageContent::MessageVoiceNote(_)
+    )
 }
 
 /// 从消息内容提取下载种子。
@@ -62,6 +83,9 @@ pub(in crate::tgbot::transfer) async fn ensure_media_downloaded(
     client_id: i32,
 ) -> anyhow::Result<()> {
     let file_id = match &message.content {
+        tdlib_rs::enums::MessageContent::MessageAnimation(animation) => {
+            Some(animation.animation.animation.id)
+        }
         tdlib_rs::enums::MessageContent::MessagePhoto(photo) => photo
             .photo
             .sizes
@@ -129,6 +153,9 @@ pub(super) async fn prepare_media_file(
 /// - 其他媒体直接取自身主文件。
 fn primary_file_from_message(message: &tdlib_rs::types::Message) -> Option<tdlib_rs::types::File> {
     match &message.content {
+        tdlib_rs::enums::MessageContent::MessageAnimation(animation) => {
+            Some(animation.animation.animation.clone())
+        }
         tdlib_rs::enums::MessageContent::MessagePhoto(photo) => photo
             .photo
             .sizes

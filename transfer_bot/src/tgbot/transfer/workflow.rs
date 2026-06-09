@@ -20,7 +20,9 @@ mod upload;
 pub(super) use gc::run_file_gc_loop;
 pub(super) use guard::is_job_running_in_process;
 pub(super) use recovery::{recover_unfinished_jobs, resume_one_job};
-pub(in crate::tgbot::transfer) use result_link::refresh_stored_result_link;
+pub(in crate::tgbot::transfer) use result_link::{
+    refresh_stored_result_link, refresh_stored_result_messages,
+};
 use runner::run_job_inner;
 use start::{TransferStart, build_transfer_start};
 
@@ -44,13 +46,13 @@ pub(super) enum TransferOutcome {
 /// 执行单次转存任务（命令入口）。
 pub(super) async fn transfer(
     plan: TransferPlan,
-    client_id: i32,
+    client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferOutcome> {
-    let start = build_transfer_start(plan, client_id).await?;
+    let start = build_transfer_start(plan, client_ids).await?;
     match start {
         TransferStart::Outcome(outcome) => Ok(outcome),
-        TransferStart::Resume(job) => resume_one_job(job, client_id).await,
-        TransferStart::Run(job, messages, _guard) => run_job_inner(job, messages, client_id).await,
+        TransferStart::Resume(job) => resume_one_job(job, client_ids).await,
+        TransferStart::Run(job, messages, _guard) => run_job_inner(job, messages, client_ids).await,
     }
 }
 

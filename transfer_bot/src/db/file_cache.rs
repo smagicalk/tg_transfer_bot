@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "file_cache")]
 pub struct Model {
+    /// 文件所属 TDLib client 角色：`bot` 或 `user`。
+    #[sea_orm(primary_key, auto_increment = false)]
+    pub owner_client_role: String,
     /// 文件缓存主键：全局 file_key（跨任务去重）。
     #[sea_orm(primary_key, auto_increment = false)]
     pub file_key: String,

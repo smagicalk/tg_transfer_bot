@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::config::ClientRole;
+
 // 转存运行配置：
 // - 从 config.json 初始化一次
 // - 供并发控制、延迟删除、GC 轮询等共享使用
@@ -14,8 +16,9 @@ static TRANSFER_RUNTIME_CONFIG: LazyLock<std::sync::RwLock<crate::config::Transf
 // TDLib 文件目录：
 // - 只在启动时从 tdlib_config.files_directory 注入
 // - GC 删除本地文件前用它做路径边界校验，避免数据库 local_path 被污染后误删其他文件
-static TDLIB_FILES_DIRECTORY: LazyLock<std::sync::RwLock<Option<PathBuf>>> =
-    LazyLock::new(|| std::sync::RwLock::new(None));
+static TDLIB_FILES_DIRECTORIES: LazyLock<
+    std::sync::RwLock<std::collections::HashMap<ClientRole, PathBuf>>,
+> = LazyLock::new(|| std::sync::RwLock::new(std::collections::HashMap::new()));
 
 // 全局重任务动态并发限制：
 // - 运行时按当前配置读取并发上限
@@ -28,10 +31,10 @@ static TRANSFER_SLOT_NOTIFY: LazyLock<tokio::sync::Notify> =
 /// 该函数应在读取 config.json 后调用一次。
 pub fn init_runtime_config(
     config: crate::config::TransferConfig,
-    tdlib_files_directory: impl Into<PathBuf>,
+    tdlib_files_directories: std::collections::HashMap<ClientRole, PathBuf>,
 ) {
     update_runtime_config(config);
-    update_tdlib_files_directory(tdlib_files_directory.into());
+    update_tdlib_files_directories(tdlib_files_directories);
 }
 
 /// 更新转存运行配置。
@@ -48,13 +51,14 @@ pub fn update_runtime_config(config: crate::config::TransferConfig) {
 ///
 /// 该目录属于启动级配置，不开放 `/config set` 动态修改；如果配置为空，GC 会拒绝
 /// 直接 `remove_file`，只尝试 TDLib 自身的 `delete_file`。
-fn update_tdlib_files_directory(path: PathBuf) {
-    if let Ok(mut guard) = TDLIB_FILES_DIRECTORY.write() {
-        *guard = if path.as_os_str().is_empty() {
-            None
-        } else {
-            Some(path)
-        };
+fn update_tdlib_files_directories(paths: std::collections::HashMap<ClientRole, PathBuf>) {
+    if let Ok(mut guard) = TDLIB_FILES_DIRECTORIES.write() {
+        guard.clear();
+        for (role, path) in paths {
+            if !path.as_os_str().is_empty() {
+                guard.insert(role, path);
+            }
+        }
     }
 }
 
@@ -66,12 +70,13 @@ pub(in crate::tgbot::transfer) fn runtime_config() -> crate::config::TransferCon
         .clone()
 }
 
-/// 获取 TDLib 文件目录。
-pub(in crate::tgbot::transfer) fn tdlib_files_directory() -> Option<PathBuf> {
-    TDLIB_FILES_DIRECTORY
+/// 按 client role 获取 TDLib 文件目录。
+pub(in crate::tgbot::transfer) fn tdlib_files_directory_for(role: ClientRole) -> Option<PathBuf> {
+    TDLIB_FILES_DIRECTORIES
         .read()
         .expect("tdlib files directory rwlock poisoned")
-        .clone()
+        .get(&role)
+        .cloned()
 }
 
 /// 读取转存重任务并发数。

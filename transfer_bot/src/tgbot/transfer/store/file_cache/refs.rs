@@ -38,14 +38,16 @@ where
     C: ConnectionTrait,
 {
     let items = list_items_by_job_on_conn(conn, job_id).await?;
-    let mut refs: HashMap<String, i32> = HashMap::new();
+    let mut refs: HashMap<(String, String), i32> = HashMap::new();
     let mut released_item_ids = Vec::new();
     for item in items {
         if item.file_ref_released || is_text_file_key(&item.file_key) {
             continue;
         }
         released_item_ids.push(item.id);
-        *refs.entry(item.file_key).or_insert(0) += 1;
+        *refs
+            .entry((item.file_owner_client_role, item.file_key))
+            .or_insert(0) += 1;
     }
 
     if refs.is_empty() {
@@ -71,7 +73,7 @@ where
 /// 在指定连接/事务内按 file_key 批量扣减引用计数。
 pub(in crate::tgbot::transfer::store) async fn release_file_ref_counts_on_conn<C>(
     conn: &C,
-    refs: HashMap<String, i32>,
+    refs: HashMap<(String, String), i32>,
     delay_minutes: i64,
 ) -> anyhow::Result<()>
 where
@@ -80,7 +82,7 @@ where
     let now = now_utc8();
     let delete_after = now + chrono::Duration::minutes(delay_minutes.max(0));
 
-    for (file_key, dec) in refs {
+    for ((owner_client_role, file_key), dec) in refs {
         // 使用单条 UPDATE 表达式完成扣减，避免并发完成任务时读后写覆盖 active_refs。
         conn.execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -101,7 +103,7 @@ where
                     END,
                     updated_at = ?,
                     last_used_at = ?
-                WHERE file_key = ?
+                WHERE owner_client_role = ? AND file_key = ?
                 "#,
             vec![
                 dec.into(),
@@ -112,6 +114,7 @@ where
                 delete_after.into(),
                 now.into(),
                 now.into(),
+                owner_client_role.into(),
                 file_key.into(),
             ],
         ))
@@ -128,7 +131,7 @@ where
 pub(in crate::tgbot::transfer) async fn acquire_file_ref(file_key: &str) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
     for _ in 0..FILE_CACHE_DELETING_RETRY_LIMIT {
-        if try_acquire_file_ref_on_conn(db_conn, file_key).await? {
+        if try_acquire_file_ref_on_conn(db_conn, "user", file_key).await? {
             return Ok(());
         }
 
@@ -147,6 +150,7 @@ pub(in crate::tgbot::transfer) async fn acquire_file_ref(file_key: &str) -> anyh
 /// 返回 false 表示该 file_key 正被 GC 标记为 deleting，调用方应回滚并稍后重试。
 pub(in crate::tgbot::transfer::store) async fn try_acquire_file_ref_on_conn<C>(
     conn: &C,
+    owner_client_role: &str,
     file_key: &str,
 ) -> anyhow::Result<bool>
 where
@@ -158,6 +162,7 @@ where
             DatabaseBackend::Sqlite,
             r#"
             INSERT INTO file_cache (
+                owner_client_role,
                 file_key,
                 status,
                 size_bytes,
@@ -171,8 +176,8 @@ where
                 updated_at,
                 last_used_at
             )
-            VALUES (?, ?, NULL, NULL, NULL, NULL, 1, NULL, NULL, ?, ?, ?)
-            ON CONFLICT(file_key) DO UPDATE SET
+            VALUES (?, ?, ?, NULL, NULL, NULL, NULL, 1, NULL, NULL, ?, ?, ?)
+            ON CONFLICT(owner_client_role, file_key) DO UPDATE SET
                 active_refs = file_cache.active_refs + 1,
                 last_ref_zero_at = NULL,
                 delete_after = NULL,
@@ -189,6 +194,7 @@ where
             WHERE file_cache.status <> ?
             "#,
             vec![
+                owner_client_role.to_owned().into(),
                 file_key.to_owned().into(),
                 FILE_CACHE_STATUS_PENDING.into(),
                 now.into(),

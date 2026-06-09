@@ -19,8 +19,8 @@ pub use raw::{
     edit_markdown_message_with_inline_keyboard,
 };
 pub use state::{
-    observe_message_send_failed, observe_message_send_succeeded, wait_for_sent_message,
-    wait_for_sent_message_id,
+    observe_message_send_failed_for_client, observe_message_send_succeeded_for_client,
+    wait_for_sent_message, wait_for_sent_message_id,
 };
 
 /// 当前账号是否支持发送 reply_markup。

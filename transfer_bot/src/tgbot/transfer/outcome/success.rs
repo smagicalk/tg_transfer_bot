@@ -7,6 +7,7 @@ use super::super::command::common::{
     lookup_command as build_lookup_command, transfer_command as build_transfer_command,
 };
 use super::super::command::{build_downloads_filter_button_data, build_job_status_button_data};
+use super::super::store::ResultMessageRecord;
 
 /// 发送“命中历史结果 / 已完成”的结果卡片。
 pub(in crate::tgbot::transfer) async fn send_history_hit_message(
@@ -18,51 +19,47 @@ pub(in crate::tgbot::transfer) async fn send_history_hit_message(
     notify_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    let result_messages = super::super::store::list_result_messages_by_job(job_id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(
+                job_id,
+                error = %err,
+                "load result messages failed, fallback to primary result link"
+            );
+            Vec::new()
+        });
+    let result_messages = normalize_result_messages(result_messages, result_link, target_chat_id);
     let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
     let transfer_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Short);
-    let mut result_row = Vec::new();
-    if crate::tgbot::send::is_openable_url(result_link) {
-        result_row.push(crate::tgbot::send::build_url_button(
-            "打开转存消息",
-            result_link,
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ));
-    }
-    result_row.push(crate::tgbot::send::build_copy_button(
-        if crate::tgbot::send::is_openable_url(result_link) {
-            "复制结果链接"
-        } else {
-            "复制结果定位"
-        },
-        result_link,
-        if crate::tgbot::send::is_openable_url(result_link) {
-            tdlib_rs::enums::ButtonStyle::Default
-        } else {
-            tdlib_rs::enums::ButtonStyle::Primary
-        },
-    ));
-    result_row.push(crate::tgbot::send::build_callback_button(
-        "查看任务详情",
-        &build_job_status_button_data(job_id),
-        tdlib_rs::enums::ButtonStyle::Default,
-    ));
-    result_row.push(crate::tgbot::send::build_copy_button(
-        "复制查询命令",
-        &lookup_command,
-        tdlib_rs::enums::ButtonStyle::Default,
-    ));
+    let mut rows = build_result_message_rows(&result_messages);
+    rows.push(vec![
+        crate::tgbot::send::build_callback_button(
+            "查看任务详情",
+            &build_job_status_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        crate::tgbot::send::build_copy_button(
+            "复制查询命令",
+            &lookup_command,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]);
 
-    crate::tgbot::send::ReplyPanel::card(format_result_card_text(
+    let mut panel = crate::tgbot::send::ReplyPanel::card(format_result_card_text(
         title,
         source_link,
         target_chat_id,
         Some(job_id),
-        result_link,
-    ))
-    .row(result_row)
-    .row(build_result_list_row(&transfer_command))
-    .send(notify_chat_id, client_id)
-    .await
+        &result_messages,
+    ));
+    for row in rows {
+        panel = panel.row(row);
+    }
+    panel
+        .row(build_result_list_row(&transfer_command))
+        .send(notify_chat_id, client_id)
+        .await
 }
 
 /// 构造结果卡片第二行：重转、进入完成列表、复制列表命令。
@@ -96,13 +93,13 @@ pub(in crate::tgbot::transfer) fn format_result_card_text(
     source_link: &str,
     target_chat_id: i64,
     job_id: Option<i64>,
-    result_link: &str,
+    result_messages: &[ResultMessageRecord],
 ) -> String {
     let mut lines = vec![
         title.to_owned(),
         card::summary_line("success", job_id, target_chat_id),
         card::DIVIDER.to_owned(),
-        card::result_block(result_link),
+        format_result_messages_block(result_messages),
         card::section("命令"),
         card::command_line(
             "查询",
@@ -122,9 +119,96 @@ pub(in crate::tgbot::transfer) fn format_result_card_text(
     lines.join("\n")
 }
 
+/// 将结果表缺失的旧数据补成单条结果，保证旧任务仍能正常显示。
+pub(in crate::tgbot::transfer) fn normalize_result_messages(
+    mut result_messages: Vec<ResultMessageRecord>,
+    fallback_link: &str,
+    target_chat_id: i64,
+) -> Vec<ResultMessageRecord> {
+    if !result_messages.is_empty() {
+        return result_messages;
+    }
+
+    result_messages.push(ResultMessageRecord {
+        result_index: 0,
+        target_chat_id,
+        message_id: 0,
+        message_link: fallback_link.to_owned(),
+        is_album: false,
+        item_count: 1,
+    });
+    result_messages
+}
+
+/// 构造多结果正文块。
+fn format_result_messages_block(result_messages: &[ResultMessageRecord]) -> String {
+    if result_messages.len() == 1 {
+        return card::result_block(&result_messages[0].message_link);
+    }
+
+    let mut lines = vec![
+        card::section("结果"),
+        format!("共 {} 个结果入口", card::code(result_messages.len())),
+    ];
+    for result in result_messages {
+        let label = format!(
+            "#{} · {} 条{}",
+            result.result_index + 1,
+            result.item_count,
+            if result.is_album { " · album" } else { "" }
+        );
+        if crate::tgbot::send::is_openable_url(&result.message_link) {
+            lines.push(format!(
+                "{}：{}",
+                label,
+                card::link("打开", &result.message_link)
+            ));
+            lines.push(format!("链接：{}", card::code(&result.message_link)));
+        } else {
+            lines.push(format!("{}：{}", label, card::code(&result.message_link)));
+        }
+    }
+    lines.join("\n")
+}
+
+/// 构造结果入口按钮。
+///
+/// Telegram 按钮数量过多会影响可读性；这里只展示前 6 个入口，完整列表仍在正文可复制。
+fn build_result_message_rows(
+    result_messages: &[ResultMessageRecord],
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut rows = Vec::new();
+    for result in result_messages.iter().take(6) {
+        let idx = result.result_index + 1;
+        let mut row = Vec::new();
+        if crate::tgbot::send::is_openable_url(&result.message_link) {
+            row.push(crate::tgbot::send::build_url_button(
+                &format!("打开结果 {}", idx),
+                &result.message_link,
+                if idx == 1 {
+                    tdlib_rs::enums::ButtonStyle::Primary
+                } else {
+                    tdlib_rs::enums::ButtonStyle::Default
+                },
+            ));
+        }
+        row.push(crate::tgbot::send::build_copy_button(
+            &format!("复制结果 {}", idx),
+            &result.message_link,
+            if crate::tgbot::send::is_openable_url(&result.message_link) {
+                tdlib_rs::enums::ButtonStyle::Default
+            } else {
+                tdlib_rs::enums::ButtonStyle::Primary
+            },
+        ));
+        rows.push(row);
+    }
+    rows
+}
+
 #[cfg(test)]
 mod tests {
-    use super::format_result_card_text;
+    use super::{ResultMessageRecord, format_result_card_text};
 
     // HTTP(S) 结果应在正文中渲染为 Telegram 原生文本链接，按钮之外也能点击。
     #[test]
@@ -134,7 +218,14 @@ mod tests {
             "https://t.me/c/1/2",
             -5106953357,
             Some(42),
-            "https://t.me/c/5106953357/734",
+            &[ResultMessageRecord {
+                result_index: 0,
+                target_chat_id: -5106953357,
+                message_id: 734,
+                message_link: "https://t.me/c/5106953357/734".to_owned(),
+                is_album: true,
+                item_count: 10,
+            }],
         );
 
         assert!(text.contains("job：‹#42›"));
@@ -153,12 +244,54 @@ mod tests {
             "https://t.me/c/1/2",
             -5106953357,
             Some(42),
-            "chat_id=-5106953357 message_id=769654784",
+            &[ResultMessageRecord {
+                result_index: 0,
+                target_chat_id: -5106953357,
+                message_id: 769654784,
+                message_link: "chat_id=-5106953357 message_id=769654784".to_owned(),
+                is_album: false,
+                item_count: 1,
+            }],
         );
 
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("无可跳转消息链接"));
         assert!(text.contains("定位：‹chat_id=-5106953357 message_id=769654784›"));
         assert!(!text.contains("【打开转存消息】("));
+    }
+
+    // 超过 10 条拆成多个 album 时，正文必须列出所有结果入口。
+    #[test]
+    fn test_format_result_card_text_lists_multiple_results() {
+        let text = format_result_card_text(
+            "转存完成",
+            "https://t.me/c/1/2",
+            -5106953357,
+            Some(42),
+            &[
+                ResultMessageRecord {
+                    result_index: 0,
+                    target_chat_id: -5106953357,
+                    message_id: 734,
+                    message_link: "https://t.me/c/1/734".to_owned(),
+                    is_album: true,
+                    item_count: 9,
+                },
+                ResultMessageRecord {
+                    result_index: 1,
+                    target_chat_id: -5106953357,
+                    message_id: 735,
+                    message_link: "https://t.me/c/1/735".to_owned(),
+                    is_album: true,
+                    item_count: 2,
+                },
+            ],
+        );
+
+        assert!(text.contains("共 ‹2› 个结果入口"));
+        assert!(text.contains("#1 · 9 条 · album"));
+        assert!(text.contains("#2 · 2 条 · album"));
+        assert!(text.contains("https://t.me/c/1/734"));
+        assert!(text.contains("https://t.me/c/1/735"));
     }
 }

@@ -57,12 +57,12 @@ fn build_transfer_detail() -> String {
     [
         "transfer".to_owned(),
         "用途：转存单条消息或相册链接。".to_owned(),
-        "说明：不传 target_chat_id 时按配置里的 target_map 解析。".to_owned(),
+        "说明：target 可填数字 chat_id 或配置里的别名；不传时使用 targets 默认目标。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
         short_and_long(
-            transfer_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target_chat_id]"),
-            transfer_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target_chat_id]"),
+            transfer_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target]"),
+            transfer_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
         ),
         String::new(),
         "示例：".to_owned(),
@@ -74,6 +74,10 @@ fn build_transfer_detail() -> String {
             "/t https://t.me/c/123/456 -1001234567890".to_owned(),
             "/transfer https://t.me/c/123/456 -1001234567890".to_owned(),
         ),
+        short_and_long(
+            "/t https://t.me/c/123/456 archive".to_owned(),
+            "/transfer https://t.me/c/123/456 archive".to_owned(),
+        ),
     ]
     .join("\n")
 }
@@ -83,12 +87,12 @@ fn build_lookup_detail() -> String {
     [
         "lookup".to_owned(),
         "用途：按源链接查询历史转存结果。".to_owned(),
-        "说明：命中成功任务时会返回目标消息入口或定位信息。".to_owned(),
+        "说明：target 可填数字 chat_id 或配置里的别名；命中成功任务时会返回目标消息入口或定位信息。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
         short_and_long(
-            lookup_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target_chat_id]"),
-            lookup_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target_chat_id]"),
+            lookup_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target]"),
+            lookup_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
         ),
         String::new(),
         "示例：".to_owned(),
@@ -99,6 +103,10 @@ fn build_lookup_detail() -> String {
         short_and_long(
             "/lk https://t.me/c/123/456 -1001234567890".to_owned(),
             "/lookup https://t.me/c/123/456 -1001234567890".to_owned(),
+        ),
+        short_and_long(
+            "/lk https://t.me/c/123/456 archive".to_owned(),
+            "/lookup https://t.me/c/123/456 archive".to_owned(),
         ),
     ]
     .join("\n")
@@ -144,6 +152,9 @@ fn build_config_detail() -> String {
         card::code("job_concurrency"),
         card::code("file_delete_delay_minutes"),
         card::code("file_gc_interval_seconds"),
+        card::code("progress_edit_interval_seconds"),
+        card::code("downloads_default_page_size"),
+        card::code("menu_input_timeout_seconds"),
         String::new(),
         "示例：".to_owned(),
         short_and_long(
@@ -161,6 +172,18 @@ fn build_config_detail() -> String {
         short_and_long(
             config_set_command("file_gc_interval_seconds", 30, CommandStyle::Short),
             config_set_command("file_gc_interval_seconds", 30, CommandStyle::Long),
+        ),
+        short_and_long(
+            config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Short),
+            config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Long),
+        ),
+        short_and_long(
+            config_set_command("downloads_default_page_size", 10, CommandStyle::Short),
+            config_set_command("downloads_default_page_size", 10, CommandStyle::Long),
+        ),
+        short_and_long(
+            config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Short),
+            config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Long),
         ),
     ]
     .join("\n")

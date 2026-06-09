@@ -119,19 +119,19 @@ pub(super) fn format_transfer_progress_text(
     lines.join("\n")
 }
 
-/// 构造完成或复用历史结果的最终文本。
-pub(super) fn format_transfer_final_text(
+/// 构造完成或复用历史结果的最终文本，并支持多个结果入口。
+pub(super) fn format_transfer_final_text_with_results(
     title: &str,
     source_link: &str,
     target_chat_id: i64,
     job_id: Option<i64>,
-    result_link: &str,
+    result_messages: &[store::ResultMessageRecord],
 ) -> String {
     let mut lines = vec![
         title.to_owned(),
         card::summary_line("success", job_id, target_chat_id),
         card::DIVIDER.to_owned(),
-        card::result_block(result_link),
+        format_result_messages_block(result_messages),
         card::section("命令"),
         card::command_line(
             "查询",
@@ -148,6 +148,37 @@ pub(super) fn format_transfer_final_text(
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
+    lines.join("\n")
+}
+
+/// 进度面板的多结果正文块。
+fn format_result_messages_block(result_messages: &[store::ResultMessageRecord]) -> String {
+    if result_messages.len() == 1 {
+        return card::result_block(&result_messages[0].message_link);
+    }
+
+    let mut lines = vec![
+        card::section("结果"),
+        format!("共 {} 个结果入口", card::code(result_messages.len())),
+    ];
+    for result in result_messages {
+        let label = format!(
+            "#{} · {} 条{}",
+            result.result_index + 1,
+            result.item_count,
+            if result.is_album { " · album" } else { "" }
+        );
+        if crate::tgbot::send::is_openable_url(&result.message_link) {
+            lines.push(format!(
+                "{}：{}",
+                label,
+                card::link("打开", &result.message_link)
+            ));
+            lines.push(format!("链接：{}", card::code(&result.message_link)));
+        } else {
+            lines.push(format!("{}：{}", label, card::code(&result.message_link)));
+        }
+    }
     lines.join("\n")
 }
 

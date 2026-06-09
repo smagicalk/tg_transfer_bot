@@ -7,7 +7,7 @@ use clap::Parser;
 use std::process::exit;
 use std::sync::Arc;
 
-use crate::config::BotConfig;
+use crate::config::{BotConfig, ClientRole};
 use crate::db::get_db;
 use migration::MigratorTrait;
 
@@ -39,11 +39,6 @@ async fn async_main() -> anyhow::Result<()> {
     crate::logs::init_tracing();
     tracing::info!("transfer bot starting");
 
-    // 程序启动时执行一次迁移，保证表结构可用。
-    tracing::info!("running database migrations");
-    migration::Migrator::up(get_db().await?, None).await?;
-    tracing::info!("database migrations ready");
-
     // 解析命令行参数。
     let cli = crate::cli::TransferBotCli::parse();
     let config_path = cli.config.clone();
@@ -69,8 +64,15 @@ async fn async_main() -> anyhow::Result<()> {
         }
     };
 
-    // 将 JSON 配置反序列化为结构体。
-    let mut config = serde_json::from_str::<BotConfig>(&config_str)?;
+    // 将 JSON 配置解析为运行时视图。
+    // 配置文件可能是 v1 或 v2，版本兼容逻辑集中在 config 模块中。
+    let mut config = match BotConfig::from_json_str(&config_str) {
+        Ok(config) => config,
+        Err(err) => {
+            tracing::error!(error = %err, "parse runtime config failed");
+            return Err(err);
+        }
+    };
     let login_mode = match &config.login_info {
         crate::config::LoginInfo::Phone(_) => "phone",
         crate::config::LoginInfo::Token(_) => "token",
@@ -81,33 +83,73 @@ async fn async_main() -> anyhow::Result<()> {
         login_mode,
         admin_count = config.admin_ids.len(),
         target_count = config.target_map.len(),
+        interaction_client = config.workflow.interaction_client.as_str(),
+        configured_download_client = config.workflow.download_client.as_str(),
+        upload_client = config.workflow.upload_client.as_str(),
         job_concurrency = config.transfer_config.job_concurrency,
         file_delete_delay_minutes = config.transfer_config.file_delete_delay_minutes,
         file_gc_interval_seconds = config.transfer_config.file_gc_interval_seconds,
         "runtime config loaded"
     );
-    // Telegram reply_markup 是 bot 能力；手机号/OCR 用户号登录时统一禁用按钮发送，避免客户端不显示但日志显示已发送。
-    tgbot::send::set_reply_markup_enabled(matches!(
-        &config.login_info,
-        crate::config::LoginInfo::Token(_)
-    ));
+
+    // 业务数据库路径来自配置，必须在第一次 `get_db()` 和迁移之前初始化。
+    crate::db::init_database_url(config.storage.database_url.clone()).await?;
+
+    // 程序启动时执行一次迁移，保证表结构可用。
+    tracing::info!("running database migrations");
+    migration::Migrator::up(get_db().await?, None).await?;
+    tracing::info!("database migrations ready");
+
+    // Telegram inline keyboard/callback 只有 bot 交互模式才启用。
+    tgbot::send::set_reply_markup_enabled(config.supports_reply_markup());
 
     // 初始化转存运行配置。
     // 运行时可调项来自 transfer_config；TDLib 文件目录只用于 GC 安全边界，不开放动态修改。
-    tgbot::transfer::init_runtime_config(
-        config.transfer_config.clone(),
-        config.tdlib_config.files_directory.clone(),
-    );
+    let tdlib_files_directories = config
+        .runtime_clients
+        .iter()
+        .map(|(role, runtime)| {
+            (
+                *role,
+                std::path::PathBuf::from(runtime.tdlib_config.files_directory.clone()),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    tgbot::transfer::init_runtime_config(config.transfer_config.clone(), tdlib_files_directories);
 
-    // 创建 TDLib client，并写回到运行时配置。
+    // 按 workflow 需要创建一个或多个 TDLib client。
+    for role in config.required_client_roles() {
+        create_and_register_client(role, &mut config).await?;
+    }
+
+    // 主循环：持续接收并处理 TDLib update。
+    tracing::info!("entering tdlib receive loop");
+    if let Err(err) = tgbot::receive(Arc::from(config)).await {
+        // 正常情况下 receive loop 不会退出；一旦退出，需要在日志里留下明确原因。
+        tracing::error!(error = %err, "tdlib receive loop exited with error");
+        return Err(err);
+    }
+
+    tracing::warn!("tdlib receive loop exited without error");
+
+    Ok(())
+}
+
+/// 创建一个 TDLib client，并写入运行时配置。
+async fn create_and_register_client(
+    role: ClientRole,
+    config: &mut BotConfig,
+) -> anyhow::Result<()> {
+    let runtime_client = config.runtime_client(role)?.clone();
     let client_id = tgbot::create_client().await?;
-    config.client_id = Some(client_id);
-    tracing::info!(client_id, "tdlib client created");
+    config.set_client_id(role, client_id);
+    tracing::info!(client_id, role = role.as_str(), "tdlib client created");
 
     // 异步设置 TDLib 日志级别（不阻塞主流程）。
     let log_client_id = client_id;
+    let log_verbosity_level = runtime_client.log_verbosity_level;
     tokio::spawn(async move {
-        tgbot::set_log(log_client_id).await;
+        tgbot::set_log(log_client_id, log_verbosity_level).await;
     });
 
     // 异步读取 TDLib 版本信息，用于诊断日志。
@@ -121,16 +163,6 @@ async fn async_main() -> anyhow::Result<()> {
             );
         }
     });
-
-    // 主循环：持续接收并处理 TDLib update。
-    tracing::info!("entering tdlib receive loop");
-    if let Err(err) = tgbot::receive(Arc::from(config)).await {
-        // 正常情况下 receive loop 不会退出；一旦退出，需要在日志里留下明确原因。
-        tracing::error!(error = %err, "tdlib receive loop exited with error");
-        return Err(err);
-    }
-
-    tracing::warn!("tdlib receive loop exited without error");
 
     Ok(())
 }

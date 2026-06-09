@@ -15,6 +15,7 @@ use super::super::{
 /// 将 file_cache 标记为“下载中”。
 /// 同时预写入 td_file_id 和 size_bytes，供实时进度查询使用。
 pub(in crate::tgbot::transfer) async fn mark_file_cache_downloading(
+    owner_client_role: &str,
     seed: &DownloadSeed,
 ) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
@@ -41,6 +42,7 @@ pub(in crate::tgbot::transfer) async fn mark_file_cache_downloading(
         );
     }
     update
+        .filter(db::file_cache::Column::OwnerClientRole.eq(owner_client_role.to_owned()))
         .filter(db::file_cache::Column::FileKey.eq(seed.file_key.clone()))
         .filter(db::file_cache::Column::ActiveRefs.gt(0))
         .filter(db::file_cache::Column::Status.ne(FILE_CACHE_STATUS_DELETING))
@@ -51,6 +53,7 @@ pub(in crate::tgbot::transfer) async fn mark_file_cache_downloading(
 
 /// 回填 file_cache 的就绪信息（路径/文件ID/大小）。
 pub(in crate::tgbot::transfer) async fn mark_file_cache_ready(
+    owner_client_role: &str,
     meta: &PreparedCacheMeta,
 ) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
@@ -78,6 +81,7 @@ pub(in crate::tgbot::transfer) async fn mark_file_cache_ready(
         )
         .col_expr(db::file_cache::Column::UpdatedAt, Expr::value(now))
         .col_expr(db::file_cache::Column::LastUsedAt, Expr::value(now))
+        .filter(db::file_cache::Column::OwnerClientRole.eq(owner_client_role.to_owned()))
         .filter(db::file_cache::Column::FileKey.eq(meta.file_key.clone()))
         .filter(db::file_cache::Column::ActiveRefs.gt(0))
         .filter(db::file_cache::Column::Status.ne(FILE_CACHE_STATUS_DELETING))
@@ -88,6 +92,7 @@ pub(in crate::tgbot::transfer) async fn mark_file_cache_ready(
 
 /// 标记 file_cache 失败信息（不变更引用计数）。
 pub(in crate::tgbot::transfer) async fn mark_file_cache_failed(
+    owner_client_role: &str,
     file_key: &str,
     err: String,
 ) -> anyhow::Result<()> {
@@ -101,6 +106,7 @@ pub(in crate::tgbot::transfer) async fn mark_file_cache_failed(
         .col_expr(db::file_cache::Column::LastError, Expr::value(Some(err)))
         .col_expr(db::file_cache::Column::UpdatedAt, Expr::value(now))
         .col_expr(db::file_cache::Column::LastUsedAt, Expr::value(now))
+        .filter(db::file_cache::Column::OwnerClientRole.eq(owner_client_role.to_owned()))
         .filter(db::file_cache::Column::FileKey.eq(file_key.to_owned()))
         .filter(db::file_cache::Column::ActiveRefs.gt(0))
         .filter(db::file_cache::Column::Status.ne(FILE_CACHE_STATUS_DELETING))

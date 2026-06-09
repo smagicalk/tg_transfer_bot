@@ -16,27 +16,53 @@ pub(crate) enum CommandStyle {
 }
 
 /// 解析目标 chat_id：
-/// 1. 命令参数显式指定
-/// 2. 否则从 `target_map[request_chat_id]` 获取
-/// 3. 再否则尝试 `target_map[0]` 兜底
+/// 1. 命令参数显式指定数字 chat_id 或 `targets.aliases` 别名
+/// 2. 否则从 `targets.by_request_chat_id[request_chat_id]` 获取
+/// 3. 再否则尝试 `targets.default_chat_id` 兜底
+/// 4. 如果配置了 `allowed_target_chat_ids`，最终目标必须命中白名单
 pub(crate) fn resolve_target_chat_id(
     text: &[&str],
     config: &BotConfig,
     request_chat_id: i64,
 ) -> anyhow::Result<i64> {
-    if text.len() >= 3 {
-        return Ok(text[2].parse::<i64>()?);
-    }
+    let target_chat_id = if text.len() >= 3 {
+        parse_target_arg(text[2], config)?
+    } else if let Some(chat_id) = config.target_map.get(&request_chat_id) {
+        *chat_id
+    } else if let Some(chat_id) = config.target_map.get(&0) {
+        *chat_id
+    } else {
+        anyhow::bail!("not found transfer target")
+    };
 
-    if let Some(chat_id) = config.target_map.get(&request_chat_id) {
-        return Ok(*chat_id);
-    }
+    ensure_target_allowed(target_chat_id, config)?;
+    Ok(target_chat_id)
+}
 
-    if let Some(chat_id) = config.target_map.get(&0) {
-        return Ok(*chat_id);
+/// 解析命令里的目标参数。
+///
+/// 目标可以是数字 chat_id，也可以是 `targets.aliases` 中配置的短名称。
+fn parse_target_arg(arg: &str, config: &BotConfig) -> anyhow::Result<i64> {
+    if let Ok(chat_id) = arg.parse::<i64>() {
+        return Ok(chat_id);
     }
+    config
+        .target_aliases
+        .get(arg)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("unknown target chat alias: {}", arg))
+}
 
-    anyhow::bail!("not found transfer target")
+/// 校验目标 chat 是否允许。
+///
+/// 空白名单表示不限制；一旦配置了白名单，默认目标、别名和显式数字都必须在列表内。
+fn ensure_target_allowed(target_chat_id: i64, config: &BotConfig) -> anyhow::Result<()> {
+    if config.allowed_target_chat_ids.is_empty()
+        || config.allowed_target_chat_ids.contains(&target_chat_id)
+    {
+        return Ok(());
+    }
+    anyhow::bail!("target chat is not allowed: {}", target_chat_id)
 }
 
 /// 构造 `/transfer` 或 `/t` 命令。
@@ -178,6 +204,7 @@ fn command_name(kind: &str, style: CommandStyle) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     // 短命令用于按钮复制，长命令用于帮助文档；这里固定两套格式避免后续误改。
     #[test]
@@ -224,5 +251,48 @@ mod tests {
         assert_eq!(format_bytes(100), "100 B");
         assert_eq!(format_bytes(1024), "1.0 KB");
         assert_eq!(format_bytes(1536), "1.5 KB");
+    }
+
+    // 目标解析应支持配置别名，避免每次都手动输入长 chat_id。
+    #[test]
+    fn test_resolve_target_chat_id_supports_alias() {
+        let config = BotConfig {
+            target_aliases: HashMap::from([("archive".to_owned(), -100)]),
+            allowed_target_chat_ids: vec![-100],
+            ..Default::default()
+        };
+
+        let target = resolve_target_chat_id(&["/t", "https://t.me/c/1/2", "archive"], &config, 1)
+            .expect("alias should resolve to target chat");
+
+        assert_eq!(target, -100);
+    }
+
+    // 默认目标同样要受目标白名单保护，避免配置了 allowed_target_chat_ids 但实际未生效。
+    #[test]
+    fn test_resolve_target_chat_id_rejects_disallowed_default_target() {
+        let config = BotConfig {
+            target_map: HashMap::from([(0, -200)]),
+            allowed_target_chat_ids: vec![-100],
+            ..Default::default()
+        };
+
+        let err = resolve_target_chat_id(&["/t", "https://t.me/c/1/2"], &config, 1).unwrap_err();
+
+        assert!(err.to_string().contains("target chat is not allowed"));
+    }
+
+    // 显式数字目标也必须命中白名单。
+    #[test]
+    fn test_resolve_target_chat_id_rejects_disallowed_explicit_target() {
+        let config = BotConfig {
+            allowed_target_chat_ids: vec![-100],
+            ..Default::default()
+        };
+
+        let err =
+            resolve_target_chat_id(&["/t", "https://t.me/c/1/2", "-200"], &config, 1).unwrap_err();
+
+        assert!(err.to_string().contains("target chat is not allowed"));
     }
 }

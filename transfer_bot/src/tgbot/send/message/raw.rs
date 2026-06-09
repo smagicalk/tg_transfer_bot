@@ -69,7 +69,7 @@ pub(in crate::tgbot::send::message) async fn send_formatted_text_message_returni
         is_temporary = message.sending_state.is_some(),
         "tdlib sendMessage initial response received"
     );
-    wait_for_sent_message(message).await
+    wait_for_sent_message(message, client_id).await
 }
 
 /// 发送文本消息，可选附带 inline keyboard。
@@ -167,7 +167,7 @@ async fn edit_formatted_message_with_inline_keyboard(
 
     if is_message_not_found(&err)
         && let Some(final_message_id) =
-            wait_for_sent_message_id(chat_id, message_id, Duration::from_secs(30)).await
+            wait_for_sent_message_id(client_id, chat_id, message_id, Duration::from_secs(30)).await
         && final_message_id != message_id
     {
         tracing::info!(

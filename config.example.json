@@ -1,32 +1,82 @@
 {
-  "tdlib_config": {
+  "config_version": 2,
+  "tdlib_defaults": {
     "use_test_dc": false,
-    "database_directory": "tg/db",
-    "files_directory": "tg/file",
-    "database_encryption_key": "replace_me_with_local_secret",
-    "use_file_database": true,
-    "use_chat_info_database": true,
-    "use_message_database": true,
-    "use_secret_chats": false,
     "api_id": 0,
     "api_hash": "replace_me_with_tdlib_api_hash",
     "system_language_code": "zh-hans",
-    "device_model": "transfer_bot",
+    "device_model": "tg_transfer_bot",
     "system_version": "1.8.62",
-    "application_version": "0.0.1"
+    "application_version": "0.0.1",
+    "use_secret_chats": false,
+    "log_verbosity_level": 1
   },
-  "admin_ids": [
-    123456789
-  ],
-  "target_map": {
-    "0": -1001234567890
+  "storage": {
+    "database_url": "sqlite://tg/app/transfer.sqlite?mode=rwc"
+  },
+  "clients": {
+    "user": {
+      "login_info": {
+        "type": "OCR"
+      },
+      "tdlib": {
+        "database_directory": "tg/user/db",
+        "files_directory": "tg/user/files",
+        "database_encryption_key": "replace_me_with_plain_user_db_key",
+        "use_file_database": true,
+        "use_chat_info_database": true,
+        "use_message_database": true
+      }
+    },
+    "bot": {
+      "enabled": true,
+      "token": "replace_me_with_bot_token",
+      "tdlib": {
+        "database_directory": "tg/bot/db",
+        "files_directory": "tg/bot/files",
+        "database_encryption_key": "replace_me_with_plain_bot_db_key",
+        "use_file_database": true,
+        "use_chat_info_database": true,
+        "use_message_database": true
+      }
+    }
+  },
+  "workflow": {
+    "interaction_client": "bot",
+    "download_client": "bot",
+    "upload_client": "bot"
+  },
+  "deduplicate": {
+    "enabled": true,
+    "return_running_job": true,
+    "return_finished_result": true
+  },
+  "access_control": {
+    "admin_user_ids": [
+      123456789
+    ],
+    "allowed_request_chat_ids": [
+      123456789
+    ],
+    "allowed_target_chat_ids": [
+      -1001234567890
+    ]
+  },
+  "targets": {
+    "default_chat_id": -1001234567890,
+    "by_request_chat_id": {
+      "123456789": -1001234567890
+    },
+    "aliases": {
+      "archive": -1001234567890
+    }
   },
   "transfer_config": {
     "job_concurrency": 2,
     "file_delete_delay_minutes": 2,
-    "file_gc_interval_seconds": 60
-  },
-  "login_info": {
-    "type": "OCR"
+    "file_gc_interval_seconds": 60,
+    "progress_edit_interval_seconds": 2,
+    "downloads_default_page_size": 8,
+    "menu_input_timeout_seconds": 600
   }
 }

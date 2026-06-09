@@ -52,19 +52,48 @@ $env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
 
 | 字段 | 说明 |
 | --- | --- |
-| `tdlib_config.api_id` | Telegram API ID |
-| `tdlib_config.api_hash` | Telegram API Hash |
-| `tdlib_config.database_directory` | TDLib 数据库目录 |
-| `tdlib_config.files_directory` | TDLib 文件目录 |
-| `tdlib_config.database_encryption_key` | TDLib 本地数据库加密 key |
-| `admin_ids` | 允许使用机器人的 user/chat id |
-| `target_map` | 源 chat 到目标 chat 的映射，`0` 可作为兜底目标 |
+| `config_version` | 配置版本，目前为 `2` |
+| `tdlib_defaults.api_id` | Telegram API ID，user/bot 共用 |
+| `tdlib_defaults.api_hash` | Telegram API Hash，user/bot 共用 |
+| `storage.database_url` | 机器人业务 SQLite 数据库连接串，保存转存任务、文件引用和恢复状态 |
+| `clients.user.login_info` | 用户号登录方式，支持 `OCR`、`PHONE` |
+| `clients.user.tdlib.database_directory` | 用户号 TDLib 数据库目录，当前建议 `tg/user/db` |
+| `clients.user.tdlib.files_directory` | 用户号 TDLib 文件目录，当前建议 `tg/user/files` |
+| `clients.*.tdlib.database_encryption_key` | TDLib 数据库加密 key，配置里填普通字符串；程序发给 TDLib 前会自动转成 JSON bytes 要求的 base64 |
+| `clients.bot.enabled` | 是否启用 bot client |
+| `clients.bot.token` | BotFather 生成的 bot token，格式应类似 `<数字 bot id>:<token secret>` |
+| `clients.bot.tdlib.database_directory` | bot TDLib 数据库目录，当前建议 `tg/bot/db` |
+| `clients.bot.tdlib.files_directory` | bot TDLib 文件目录，当前建议 `tg/bot/files` |
+| `workflow.interaction_client` | 固定为 `bot`，命令、卡片按钮、callback 和 copy-text 都只能由 bot 交互端处理 |
+| `workflow.download_client` | 兼容字段，建议填 `bot`；真实源读取/下载按 bot-first、user fallback 策略自动决定 |
+| `workflow.upload_client` | 谁上传到目标 chat，可选 `user` 或 `bot` |
+| `access_control.admin_user_ids` | 允许管理机器人的用户 id |
+| `access_control.allowed_request_chat_ids` | 允许发命令的 chat id |
+| `access_control.allowed_target_chat_ids` | 允许转存到的目标 chat id；空数组表示不限制 |
+| `targets.default_chat_id` | 未显式传目标时的兜底目标 chat |
+| `targets.by_request_chat_id` | 按请求 chat 映射默认目标 chat |
+| `targets.aliases` | 目标 chat 别名，例如命令里用 `archive` 代替数字 chat_id |
 | `transfer_config.job_concurrency` | 后台转存任务并发数 |
 | `transfer_config.file_delete_delay_minutes` | 文件引用归零后的延迟删除分钟数 |
 | `transfer_config.file_gc_interval_seconds` | 文件删除队列扫描间隔秒数 |
-| `login_info` | 登录方式，支持 `OCR`、`PHONE`、`TOKEN` |
+| `transfer_config.progress_edit_interval_seconds` | 转存进度消息最短编辑间隔秒数 |
+| `transfer_config.downloads_default_page_size` | `/downloads` 默认分页大小 |
+| `transfer_config.menu_input_timeout_seconds` | 菜单等待输入的超时时间秒数 |
+
+常见 workflow 组合：
+
+```json
+{
+  "interaction_client": "bot",
+  "download_client": "bot",
+  "upload_client": "bot"
+}
+```
+
+这表示 bot 负责命令交互、优先读取/下载源链接和上传；如果 bot 读不到源链接或 bot 准备文件失败，会切换 user 作为备用源重新读取/下载。`interaction_client` 必须保持 `bot`；如果希望用户号上传，只把 `upload_client` 改成 `user`。重复转存判断仍然只看 `source_link + target_chat_id`，不区分上传者。
 
 `config.json`、`tg/`、SQLite 数据库和日志文件都是本地运行状态，不应该上传到 GitHub。
+默认业务数据库路径是 `tg/app/transfer.sqlite`；TDLib 的 user/bot 数据库只保存 Telegram client 状态，不保存转存任务。
 
 ## 运行
 
@@ -103,7 +132,7 @@ cargo run -p transfer_bot -- -c config.json
 | `starting transfer background services` | 转存后台服务已启动 |
 | `admin command received` | 管理员命令已进入命令分发 |
 | `ignored historical message` | 忽略启动前的历史消息 |
-| `ignored non-admin message` | chat 或 sender 不在 `admin_ids` |
+| `ignored non-admin message` | chat 或 sender 不在访问控制白名单 |
 | `ignored non-text admin message` | 管理员发了非文本消息，不能当命令处理 |
 | `transfer callback query routed` | 按钮回调已进入对应命令模块 |
 | `tdlib receive loop exited with error` | 主接收循环异常退出，需要看 error 字段 |
@@ -127,8 +156,8 @@ cargo run -p transfer_bot -- -c config.json.enc decrypt <password>
 | 命令 | 短命令 | 作用 |
 | --- | --- | --- |
 | `/help [command]` | `/h [command]` | 查看命令目录或具体命令说明 |
-| `/transfer <link> [target_chat_id]` | `/t <link> [target_chat_id]` | 创建转存任务 |
-| `/lookup <link> [target_chat_id]` | `/lk <link> [target_chat_id]` | 查询历史转存结果 |
+| `/transfer <link> [target]` | `/t <link> [target]` | 创建转存任务 |
+| `/lookup <link> [target]` | `/lk <link> [target]` | 查询历史转存结果 |
 | `/downloads [filter] [limit] [page]` | `/d [filter] [limit] [page]` | 查询任务列表和下载进度 |
 | `/job <pause|resume|stop> <job_id>` | `/j <p|r|s> <job_id>` | 手动控制任务 |
 | `/config [show|set <key> <value>]` | `/cfg [show|set <key> <value>]` | 查看或修改运行配置 |
@@ -140,7 +169,8 @@ cargo run -p transfer_bot -- -c config.json.enc decrypt <password>
 /transfer https://t.me/c/123/456 -1001234567890
 ```
 
-不传 `target_chat_id` 时，会按 `target_map` 查找目标聊天；找不到源 chat 的映射时，会尝试使用 `target_map` 中的 `0`。
+不传 `target_chat_id` 时，会优先按 `targets.by_request_chat_id[request_chat_id]` 查找目标聊天；找不到时使用 `targets.default_chat_id`。
+显式目标可以填数字 chat_id，也可以填 `targets.aliases` 里的别名；如果配置了 `access_control.allowed_target_chat_ids`，所有目标都必须在白名单内。
 
 ### 查询历史结果
 
@@ -186,6 +216,9 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
 /cfg set job_concurrency 4
 /cfg set file_delete_delay_minutes 3
 /cfg set file_gc_interval_seconds 30
+/cfg set progress_edit_interval_seconds 3
+/cfg set downloads_default_page_size 10
+/cfg set menu_input_timeout_seconds 900
 ```
 
 只有转存运行参数支持动态修改。TDLib 登录、API ID、API Hash 等启动级配置不通过机器人命令修改。
@@ -194,7 +227,7 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
 
 ### 用户视角
 
-1. 管理员发送 `/transfer <link> [target_chat_id]`。
+1. 管理员发送 `/transfer <link> [target]`。
 2. 机器人立即回复一条进度卡片，后续通过编辑消息持续刷新状态。
 3. 后台解析源链接，抓取单条消息或完整相册。
 4. 任务先写入数据库，避免进程退出后丢失状态。
@@ -312,6 +345,7 @@ runner::run_job_inner(job, messages, client_id)
        -> store::set_item_status(item_id, uploading)
        -> upload::upload_prepared(target_chat_id, prepared, client_id)
        -> upload::build_result_message_link(...)
+       -> store::replace_result_messages_on_conn(...)
        -> store::finish_uploaded_job_with_item_statuses(...)
        -> release_job_file_refs(...)
 ```
@@ -320,6 +354,7 @@ runner::run_job_inner(job, messages, client_id)
 
 - 单条消息走 `tdlib_rs::functions::send_message`。
 - 多条消息走 `tdlib_rs::functions::send_message_album`，每批最多 10 条。
+- 超过 10 条会产生多个结果入口，首个入口继续写入 `transfer_job.result_message_*`，全部入口写入 `transfer_result_message`。
 - `upload::validate_album_kinds` 会提前拒绝 TDLib 不支持的 album 组合，例如多条纯文本、多条语音、document 与 photo/video 混发。
 - 发送后会调用 `send::wait_for_sent_message` 等待 TDLib 把临时 `message_id` 替换成最终 `message_id`。
 - `getMessageLink` 只在 TDLib 支持时返回 HTTP(S) 链接；失败时使用 `chat_id=... message_id=...` 作为可复制定位信息。
@@ -503,15 +538,16 @@ workflow::run_file_gc_loop(...)
 
 ## 数据库说明
 
-项目使用 SeaORM migration 创建表结构，启动时会执行迁移。
+项目使用 SeaORM migration 创建表结构，启动时会先读取 `config.json` 的 `storage.database_url`，再连接业务数据库并执行迁移。
 
 核心表：
 
 - `transfer_job`：一次转存请求的主任务，记录源链接、目标 chat、状态和转存结果。
 - `transfer_item`：任务中的单个消息或媒体项，记录源消息、文件 key 和子状态。
+- `transfer_result_message`：任务上传后产生的结果入口；超过 10 条拆成多个 album 时会保存多个入口。
 - `file_cache`：本地文件缓存与引用计数，负责下载去重和延迟删除。
 
-本地 SQLite 数据库属于运行状态，已被忽略，不要提交。
+本地 SQLite 数据库属于运行状态，已被忽略，不要提交。默认路径是 `tg/app/transfer.sqlite`，可以通过 `storage.database_url` 改到其它位置。
 
 ## 开发检查
 
@@ -541,7 +577,7 @@ cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
 
 ```powershell
 git status --short
-git ls-files config.json transfer_bot/db.sqlite transfer_bot/db.test.sqlite
+git ls-files config.json tg/app/transfer.sqlite transfer_bot/db.sqlite transfer_bot/db.test.sqlite
 ```
 
 `git ls-files` 没有输出时，说明这些本地状态文件没有被 Git 跟踪。

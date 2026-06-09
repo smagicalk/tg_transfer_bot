@@ -18,10 +18,10 @@ pub(super) fn build_menu_text(page: MenuPage) -> String {
     }
 }
 
-/// 构造用户号登录时的纯文本菜单。
+/// 构造 reply_markup 不可用时的纯文本兜底菜单。
 ///
-/// TDLib `sendMessage.reply_markup` 标注为 “for bots only”，手机号/OCR 登录不会稳定显示按钮。
-/// 因此这里必须把可操作命令直接写进正文，不能依赖复制按钮或 callback 按钮。
+/// 正常配置会强制 bot 作为交互端；这里保留防御性兜底，避免异常配置或测试场景下只提示“点按钮”
+/// 但实际看不到 inline keyboard。
 pub(super) fn build_user_account_menu_text() -> String {
     [
         "转存菜单".to_owned(),
@@ -31,9 +31,9 @@ pub(super) fn build_user_account_menu_text() -> String {
             card::code("text")
         ),
         card::DIVIDER.to_owned(),
-        card::section("当前登录不显示按钮"),
-        "当前是手机号/OCR 用户号登录，Telegram 不会展示 inline keyboard。".to_owned(),
-        "下面命令可直接复制发送；如果改用 bot token 登录，/m 会显示按钮菜单。".to_owned(),
+        card::section("当前无法显示按钮"),
+        "当前发送端没有启用 bot reply_markup。正常配置应保持 interaction_client = bot。".to_owned(),
+        "下面命令可直接复制发送；修正配置后 /m 会显示按钮菜单。".to_owned(),
         card::section("常用命令"),
         card::command_line("快速转存", "/t <link> <target_chat_id>"),
         card::command_line("默认目标", "/t <link>"),
@@ -156,10 +156,15 @@ fn config_text() -> String {
         card::code("job_concurrency"),
         card::code("file_delete_delay_minutes"),
         card::code("file_gc_interval_seconds"),
+        card::code("progress_edit_interval_seconds"),
+        card::code("downloads_default_page_size"),
+        card::code("menu_input_timeout_seconds"),
         "第一版菜单只复制命令，避免误触直接修改配置。".to_owned(),
         card::section("命令"),
         card::command_line("查看配置", "/cfg show"),
         card::command_line("改并发", "/cfg set job_concurrency 4"),
+        card::command_line("改分页", "/cfg set downloads_default_page_size 10"),
+        card::command_line("改菜单超时", "/cfg set menu_input_timeout_seconds 900"),
     ]
     .join("\n")
 }
@@ -193,17 +198,30 @@ mod tests {
         assert!(text.contains("点按钮"));
     }
 
-    // 用户号模式下不能继续提示按钮；正文必须包含可复制命令作为降级入口。
+    // reply_markup 不可用时不能继续提示按钮；正文必须包含可复制命令作为降级入口。
     #[test]
     fn test_build_user_account_menu_text() {
         let text = build_user_account_menu_text();
 
-        assert!(text.contains("当前登录不显示按钮"));
+        assert!(text.contains("当前无法显示按钮"));
         assert!(!text.contains("点按钮"));
         assert!(text.contains("‹/t <link> <target_chat_id>›"));
         assert!(text.contains("‹/d›"));
         assert!(text.contains("‹/j st <job_id>›"));
         assert!(text.contains("‹/h›"));
+    }
+
+    // 配置页应列出 `/cfg set` 实际支持的动态字段，避免菜单文案落后于命令实现。
+    #[test]
+    fn test_build_menu_text_config_contains_runtime_fields() {
+        let text = build_menu_text(MenuPage::Config);
+
+        assert!(text.contains("job_concurrency"));
+        assert!(text.contains("file_delete_delay_minutes"));
+        assert!(text.contains("file_gc_interval_seconds"));
+        assert!(text.contains("progress_edit_interval_seconds"));
+        assert!(text.contains("downloads_default_page_size"));
+        assert!(text.contains("menu_input_timeout_seconds"));
     }
 
     // ForceReply 提示必须包含取消方式，避免输入流程卡住。

@@ -24,11 +24,11 @@ fn test_build_help_index_text_contains_commands() {
 #[test]
 fn test_build_help_detail_text() {
     let transfer = build_help_detail_text("transfer").unwrap();
-    assert!(transfer.contains("/transfer <link> [target_chat_id]"));
+    assert!(transfer.contains("/transfer <link> [target]"));
     let transfer_short = build_help_detail_text("t").unwrap();
-    assert!(transfer_short.contains("/transfer <link> [target_chat_id]"));
+    assert!(transfer_short.contains("/transfer <link> [target]"));
     let transfer_slash = build_help_detail_text("/t").unwrap();
-    assert!(transfer_slash.contains("/transfer <link> [target_chat_id]"));
+    assert!(transfer_slash.contains("/transfer <link> [target]"));
 
     let downloads = build_help_detail_text("downloads").unwrap();
     assert!(downloads.contains(
@@ -43,6 +43,9 @@ fn test_build_help_detail_text() {
 
     let config = build_help_detail_text("config").unwrap();
     assert!(config.contains("/config set job_concurrency 4"));
+    assert!(config.contains("progress_edit_interval_seconds"));
+    assert!(config.contains("downloads_default_page_size"));
+    assert!(config.contains("menu_input_timeout_seconds"));
 
     let menu = build_help_detail_text("m").unwrap();
     assert!(menu.contains("/menu"));

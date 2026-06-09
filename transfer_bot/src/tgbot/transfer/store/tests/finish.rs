@@ -32,7 +32,7 @@ async fn test_finish_job_releases_file_refs_in_same_flow() -> anyhow::Result<()>
     assert_eq!(job.status, JOB_STATUS_SUCCESS);
     assert!(job.finished_at.is_some());
 
-    let cache = db::file_cache::Entity::find_by_id(file_key)
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key))
         .one(db_conn)
         .await?
         .expect("file cache must exist");
@@ -58,6 +58,14 @@ async fn test_finish_uploaded_job_with_item_statuses_is_consistent() -> anyhow::
             last_error: None,
             result_message_id: Some(701),
             result_message_link: Some(result_link.clone()),
+            result_messages: vec![ResultMessageRecord {
+                result_index: 0,
+                target_chat_id: job.target_chat_id,
+                message_id: 701,
+                message_link: result_link.clone(),
+                is_album: true,
+                item_count: 1,
+            }],
             delay_minutes: 2,
         },
         vec![(item_id, "success".to_owned(), None)],
@@ -78,12 +86,85 @@ async fn test_finish_uploaded_job_with_item_statuses_is_consistent() -> anyhow::
     assert_eq!(job.status, JOB_STATUS_SUCCESS);
     assert_eq!(job.result_message_link, Some(result_link));
 
-    let cache = db::file_cache::Entity::find_by_id(file_key)
+    let result_rows = list_result_messages_by_job(job.id).await?;
+    assert_eq!(result_rows.len(), 1);
+    assert_eq!(result_rows[0].message_id, 701);
+    assert_eq!(result_rows[0].message_link, "https://t.me/c/1/701");
+
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key))
         .one(db_conn)
         .await?
         .expect("file cache must exist");
     assert_eq!(cache.active_refs, 0);
     assert!(cache.delete_after.is_some());
+    Ok(())
+}
+
+/// 上传超过 10 条拆成多个 album 时，所有结果入口必须和主任务终态一起写入。
+#[tokio::test]
+async fn test_finish_uploaded_job_persists_multiple_result_messages() -> anyhow::Result<()> {
+    let _guard = db::TEST_DB_LOCK.lock().await;
+    let db_conn = prepare_test_schema().await?;
+    let job = insert_job(JOB_STATUS_RUNNING).await?;
+    let (item_id, file_key) = insert_item_with_file_ref(job.id).await?;
+    let first_link = "https://t.me/c/1/1001".to_owned();
+    let second_link = "https://t.me/c/1/1002".to_owned();
+
+    let finished = finish_uploaded_job_with_item_statuses(
+        job.clone(),
+        FinishJobSummary {
+            ok_count: 11,
+            fail_count: 0,
+            last_error: None,
+            result_message_id: Some(1001),
+            result_message_link: Some(first_link.clone()),
+            result_messages: vec![
+                ResultMessageRecord {
+                    result_index: 0,
+                    target_chat_id: job.target_chat_id,
+                    message_id: 1001,
+                    message_link: first_link.clone(),
+                    is_album: true,
+                    item_count: 9,
+                },
+                ResultMessageRecord {
+                    result_index: 1,
+                    target_chat_id: job.target_chat_id,
+                    message_id: 1002,
+                    message_link: second_link.clone(),
+                    is_album: true,
+                    item_count: 2,
+                },
+            ],
+            delay_minutes: 2,
+        },
+        vec![(item_id, "success".to_owned(), None)],
+    )
+    .await?;
+
+    assert!(finished);
+    let job = db::transfer_job::Entity::find_by_id(job.id)
+        .one(db_conn)
+        .await?
+        .expect("job must exist");
+    assert_eq!(job.status, JOB_STATUS_SUCCESS);
+    assert_eq!(job.result_message_id, Some(1001));
+    assert_eq!(job.result_message_link, Some(first_link));
+
+    let result_rows = list_result_messages_by_job(job.id).await?;
+    assert_eq!(result_rows.len(), 2);
+    assert_eq!(result_rows[0].message_id, 1001);
+    assert_eq!(result_rows[0].item_count, 9);
+    assert!(result_rows[0].is_album);
+    assert_eq!(result_rows[1].message_id, 1002);
+    assert_eq!(result_rows[1].item_count, 2);
+    assert!(result_rows[1].is_album);
+
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key))
+        .one(db_conn)
+        .await?
+        .expect("file cache must exist");
+    assert_eq!(cache.active_refs, 0);
     Ok(())
 }
 

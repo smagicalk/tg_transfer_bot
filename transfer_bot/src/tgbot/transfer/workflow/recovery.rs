@@ -2,9 +2,11 @@
 // 启动时恢复数据库中的 pending/running 任务，并收敛重启前已经 cancelling 的任务。
 
 use crate::db;
+use sea_orm::EntityTrait;
 
 use super::super::card;
 use super::super::command::{build_downloads_short_command, build_downloads_status_button_data};
+use super::super::types::SourceKind;
 use super::super::{spider, store};
 use super::TransferOutcome;
 use super::control::{apply_job_control, finish_skipped_by_control};
@@ -13,7 +15,7 @@ use super::runner::run_job_inner;
 
 /// 启动时恢复数据库里未完成任务。
 pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
-    client_id: i32,
+    client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<()> {
     // 上次退出前已经请求停止的任务，启动时先收敛为 cancelled 并释放引用。
     let cancelling_jobs = store::list_cancelling_jobs().await?;
@@ -44,7 +46,7 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
     );
     if jobs.is_empty() {
         tracing::info!("no recoverable transfer jobs");
-        summaries.send(client_id).await;
+        summaries.send(client_ids.interaction).await;
         return Ok(());
     }
 
@@ -61,9 +63,9 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
             "schedule recover job"
         );
         summaries.add_recoverable(&job);
-        super::super::spawn_recovery_job(job, client_id);
+        super::super::spawn_recovery_job(job, client_ids);
     }
-    summaries.send(client_id).await;
+    summaries.send(client_ids.interaction).await;
     Ok(())
 }
 
@@ -72,7 +74,7 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
 /// - 对齐子项并执行
 pub(in crate::tgbot::transfer) async fn resume_one_job(
     job: db::transfer_job::Model,
-    client_id: i32,
+    client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferOutcome> {
     // 恢复流程从抓取源消息开始就占用 job 运行锁，避免 stop 命令误判“无执行器”后直接释放引用。
     let _guard = match acquire_job_guard(job.id).await {
@@ -104,7 +106,35 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
         target_chat_id = job.target_chat_id,
         "recovery spider started"
     );
-    let bundle = spider::spider_message(job.source_link.clone(), client_id).await?;
+    let source_kind = SourceKind::from_str(&job.source_kind)
+        .ok_or_else(|| anyhow::anyhow!("invalid source_kind: {}", job.source_kind))?;
+    let bundle = match source_kind {
+        SourceKind::Link => {
+            if client_ids.bot.is_some() {
+                spider::spider_link_bot_first(
+                    job.source_link.clone(),
+                    client_ids.get(crate::config::ClientRole::Bot)?,
+                    client_ids.get(crate::config::ClientRole::User)?,
+                )
+                .await?
+            } else {
+                spider::spider_message(
+                    job.source_link.clone(),
+                    client_ids.get(crate::config::ClientRole::User)?,
+                    crate::config::ClientRole::User,
+                )
+                .await?
+            }
+        }
+        SourceKind::BotMessage => {
+            spider::spider_bot_visible_message(
+                job.source_chat_id,
+                job.source_message_id,
+                client_ids.get(crate::config::ClientRole::Bot)?,
+            )
+            .await?
+        }
+    };
     if let Some(outcome) = apply_job_control(job.id).await? {
         tracing::info!(
             job_id = job.id,
@@ -135,7 +165,11 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
     // 恢复时以重新 spider 到的链接内容为准，并同步修正旧 item/file_cache 引用：
     // 新出现的消息会新增，消失的旧消息会 obsolete，文件变化的消息会迁移 file_key。
     store::reconcile_items_for_bundle(job.id, &bundle, super::file_delete_delay_minutes()).await?;
-    run_job_inner(job, bundle.messages, client_id).await
+    let refreshed_job = db::transfer_job::Entity::find_by_id(job.id)
+        .one(crate::db::get_db().await?)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("transfer job disappeared during recovery: {}", job.id))?;
+    run_job_inner(refreshed_job, bundle.messages, client_ids).await
 }
 
 /// 启动恢复摘要，按原请求 chat 聚合。
@@ -150,6 +184,8 @@ struct RecoveryStartupSummaries {
 struct RecoveryStartupSummary {
     recoverable_count: usize,
     finalized_count: usize,
+    bot_source_count: usize,
+    user_source_count: usize,
     sample_job_ids: Vec<i64>,
 }
 
@@ -163,6 +199,11 @@ impl RecoveryStartupSummaries {
     fn add_recoverable(&mut self, job: &db::transfer_job::Model) {
         let summary = self.entry(job.request_chat_id);
         summary.recoverable_count += 1;
+        match job.source_client_role.as_str() {
+            "bot" => summary.bot_source_count += 1,
+            "user" => summary.user_source_count += 1,
+            _ => {}
+        }
         if summary.sample_job_ids.len() < 5 {
             summary.sample_job_ids.push(job.id);
         }
@@ -247,6 +288,12 @@ fn format_recovery_startup_text(summary: &RecoveryStartupSummary) -> String {
             "已收敛停止",
             summary.finalized_count,
         ),
+        card::field_pair(
+            "bot源",
+            summary.bot_source_count,
+            "user源",
+            summary.user_source_count,
+        ),
         card::DIVIDER.to_owned(),
         card::section("任务"),
         format!("示例 job：{}", card::code(sample_jobs)),
@@ -269,6 +316,8 @@ mod tests {
         let summary = RecoveryStartupSummary {
             recoverable_count: 2,
             finalized_count: 1,
+            bot_source_count: 1,
+            user_source_count: 1,
             sample_job_ids: vec![11, 12],
         };
 
@@ -277,6 +326,8 @@ mod tests {
         assert!(text.contains("启动恢复摘要"));
         assert!(text.contains("恢复中：‹2›"));
         assert!(text.contains("已收敛停止：‹1›"));
+        assert!(text.contains("bot源：‹1›"));
+        assert!(text.contains("user源：‹1›"));
         assert!(text.contains("示例 job：‹#11, #12›"));
         assert!(text.contains("运行列表：‹/d run›"));
     }
@@ -287,6 +338,8 @@ mod tests {
         let summary = RecoveryStartupSummary {
             recoverable_count: 0,
             finalized_count: 2,
+            bot_source_count: 0,
+            user_source_count: 0,
             sample_job_ids: vec![],
         };
 

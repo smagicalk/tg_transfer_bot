@@ -237,36 +237,46 @@ async fn build_job_progress_snapshots(
     let items = db::transfer_item::Entity::find()
         .select_only()
         .column(db::transfer_item::Column::JobId)
+        .column(db::transfer_item::Column::FileOwnerClientRole)
         .column(db::transfer_item::Column::FileKey)
         .column(db::transfer_item::Column::Status)
         .filter(db::transfer_item::Column::JobId.is_in(job_ids))
-        .into_tuple::<(i64, String, String)>()
+        .into_tuple::<(i64, String, String, String)>()
         .all(db_conn)
         .await?;
-    let file_keys = items
+    let file_cache_keys = items
         .iter()
-        .map(|(_, file_key, _)| file_key.clone())
-        .filter(|file_key| !is_text_file_key(file_key))
+        .map(|(_, owner, file_key, _)| (owner.clone(), file_key.clone()))
+        .filter(|(_, file_key)| !is_text_file_key(file_key))
         .collect::<HashSet<_>>();
-    let file_cache_rows = if file_keys.is_empty() {
+    let file_cache_rows = if file_cache_keys.is_empty() {
         vec![]
     } else {
+        let mut condition = Condition::any();
+        for (owner, file_key) in &file_cache_keys {
+            condition = condition.add(
+                Condition::all()
+                    .add(db::file_cache::Column::OwnerClientRole.eq(owner.clone()))
+                    .add(db::file_cache::Column::FileKey.eq(file_key.clone())),
+            );
+        }
         db::file_cache::Entity::find()
             .select_only()
+            .column(db::file_cache::Column::OwnerClientRole)
             .column(db::file_cache::Column::FileKey)
             .column(db::file_cache::Column::Status)
             .column(db::file_cache::Column::TdFileId)
             .column(db::file_cache::Column::SizeBytes)
-            .filter(db::file_cache::Column::FileKey.is_in(file_keys))
-            .into_tuple::<(String, String, Option<i32>, Option<i64>)>()
+            .filter(condition)
+            .into_tuple::<(String, String, String, Option<i32>, Option<i64>)>()
             .all(db_conn)
             .await?
     };
     let file_cache_map = file_cache_rows
         .into_iter()
-        .map(|(file_key, status, td_file_id, size_bytes)| {
+        .map(|(owner, file_key, status, td_file_id, size_bytes)| {
             (
-                file_key,
+                (owner, file_key),
                 FileCacheProgressRow {
                     status,
                     td_file_id,
@@ -298,7 +308,7 @@ async fn build_job_progress_snapshots(
     }
 
     // 逐条累加子项状态。
-    for (job_id, file_key, status) in items {
+    for (job_id, owner, file_key, status) in items {
         let Some(snapshot) = count_map.get_mut(&job_id) else {
             continue;
         };
@@ -320,7 +330,7 @@ async fn build_job_progress_snapshots(
             continue;
         }
 
-        let Some(file_cache) = file_cache_map.get(&file_key) else {
+        let Some(file_cache) = file_cache_map.get(&(owner.clone(), file_key)) else {
             continue;
         };
         if file_cache.status != FILE_CACHE_STATUS_DOWNLOADING {
@@ -328,7 +338,10 @@ async fn build_job_progress_snapshots(
         }
 
         snapshot.active_download_files += 1;
-        let runtime_progress = file_cache.td_file_id.and_then(queue::get_download_progress);
+        let runtime_progress = file_cache.td_file_id.and_then(|td_file_id| {
+            progress_client_id_for_owner(&owner)
+                .and_then(|client_id| queue::get_download_progress(client_id, td_file_id))
+        });
         if let Some(progress) = runtime_progress {
             snapshot.active_downloaded_bytes += progress.downloaded_size.max(0);
             if let Some(total_size) = progress.total_size {
@@ -350,6 +363,17 @@ async fn build_job_progress_snapshots(
     let mut snapshots = count_map.into_values().collect::<Vec<_>>();
     snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.job.created_at));
     Ok(snapshots)
+}
+
+/// 根据 file_cache owner 找到当前运行期 TDLib client id。
+///
+/// 进度快照是非关键展示能力：如果转存后台还没 ready 或 owner 是历史异常值，
+/// 返回 None 后会回退到数据库中的预估大小，不影响任务执行。
+fn progress_client_id_for_owner(owner_client_role: &str) -> Option<i32> {
+    let role = super::super::types::client_role_from_str(owner_client_role)?;
+    super::super::transfer_client_ids()
+        .ok()
+        .and_then(|client_ids| client_ids.get(role).ok())
 }
 
 /// 进度统计所需的 file_cache 字段。

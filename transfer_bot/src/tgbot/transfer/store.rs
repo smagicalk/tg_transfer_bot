@@ -7,6 +7,7 @@ mod file_cache;
 mod item;
 mod job;
 mod progress;
+mod result;
 
 #[cfg(test)]
 mod tests;
@@ -33,6 +34,10 @@ pub(super) use progress::{
     find_active_job_by_source_target, find_active_job_id_by_source_target,
     find_success_job_by_source_target, get_job_progress_snapshot,
     get_job_progress_snapshot_for_request_chat, list_recent_job_snapshots,
+};
+pub(super) use result::{
+    ResultMessageRecord, list_result_messages_by_job, replace_result_messages_on_conn,
+    update_result_message_record_link,
 };
 
 /// 主任务状态：等待后台执行。
@@ -166,6 +171,8 @@ pub(super) struct FinishJobSummary {
     pub result_message_id: Option<i64>,
     /// 上传结果入口链接。
     pub result_message_link: Option<String>,
+    /// 上传结果入口列表；超过 10 个媒体时会包含多个 album 入口。
+    pub result_messages: Vec<ResultMessageRecord>,
     /// 文件引用释放后的延迟删除分钟数。
     pub delay_minutes: i64,
 }

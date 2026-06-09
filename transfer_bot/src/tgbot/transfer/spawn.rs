@@ -21,7 +21,7 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
     plan: types::TransferPlan,
     notify_chat_id: i64,
     progress_message_id: Option<i64>,
-    client_id: i32,
+    client_ids: crate::config::TransferClientIds,
 ) {
     tokio::spawn(async move {
         let source_link = plan.source_link.clone();
@@ -47,7 +47,7 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
                     progress_plan,
                     notify_chat_id,
                     message_id,
-                    client_id,
+                    client_ids.interaction,
                     progress_done,
                 )
                 .await;
@@ -60,7 +60,7 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
             "transfer background task acquired concurrency slot"
         );
 
-        let result = workflow::transfer(plan, client_id).await;
+        let result = workflow::transfer(plan, client_ids).await;
         let mut should_send_separate_result = progress_message_id.is_none();
         // 最终结果必须最后写入进度消息；先停止轮询任务，避免后台进度刷新覆盖“完成/失败”文本。
         progress_done.store(true, Ordering::SeqCst);
@@ -82,7 +82,7 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
                 &result,
                 notify_chat_id,
                 message_id,
-                client_id,
+                client_ids.interaction,
             )
             .await
         {
@@ -120,7 +120,7 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
             target_chat_id,
             result,
             notify_chat_id,
-            client_id,
+            client_ids.interaction,
         )
         .await;
 
@@ -147,7 +147,7 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
 /// 恢复结果会主动发回原请求 chat，避免“恢复了但用户完全感知不到”。
 pub(in crate::tgbot::transfer) fn spawn_recovery_job(
     job: crate::db::transfer_job::Model,
-    client_id: i32,
+    client_ids: crate::config::TransferClientIds,
 ) {
     tokio::spawn(async move {
         let notify_chat_id = job.request_chat_id;
@@ -168,7 +168,7 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
             "recovery job acquired concurrency slot"
         );
 
-        let result = workflow::resume_one_job(job, client_id).await;
+        let result = workflow::resume_one_job(job, client_ids).await;
         // result 会被发送函数消费；先保存错误摘要，避免为了日志克隆完整结果。
         let result_error = result.as_ref().err().map(|err| format!("{:#}", err));
         let send_result = send_recovery_outcome(
@@ -177,7 +177,7 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
             target_chat_id,
             result,
             notify_chat_id,
-            client_id,
+            client_ids.interaction,
         )
         .await;
 

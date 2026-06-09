@@ -29,6 +29,7 @@ pub(in crate::tgbot::transfer) async fn list_due_file_cache(
 /// GC 先把状态改成 deleting，再删除本地文件；新增引用遇到 deleting 会等待，
 /// 从而避免“刚被重新引用的文件仍被删除”的竞态。
 pub(in crate::tgbot::transfer) async fn claim_file_cache_for_delete(
+    owner_client_role: &str,
     file_key: &str,
     now: chrono::DateTime<chrono::FixedOffset>,
 ) -> anyhow::Result<Option<db::file_cache::Model>> {
@@ -39,6 +40,7 @@ pub(in crate::tgbot::transfer) async fn claim_file_cache_for_delete(
             Expr::value(FILE_CACHE_STATUS_DELETING),
         )
         .col_expr(db::file_cache::Column::UpdatedAt, Expr::value(now))
+        .filter(db::file_cache::Column::OwnerClientRole.eq(owner_client_role.to_owned()))
         .filter(db::file_cache::Column::FileKey.eq(file_key.to_owned()))
         .filter(db::file_cache::Column::ActiveRefs.eq(0))
         .filter(db::file_cache::Column::DeleteAfter.lte(now))
@@ -50,16 +52,20 @@ pub(in crate::tgbot::transfer) async fn claim_file_cache_for_delete(
         return Ok(None);
     }
 
-    db::file_cache::Entity::find_by_id(file_key.to_owned())
+    db::file_cache::Entity::find_by_id((owner_client_role.to_owned(), file_key.to_owned()))
         .one(db_conn)
         .await
         .map_err(Into::into)
 }
 
 /// 删除 file_cache 记录（文件已清理后调用）。
-pub(in crate::tgbot::transfer) async fn delete_file_cache(file_key: &str) -> anyhow::Result<()> {
+pub(in crate::tgbot::transfer) async fn delete_file_cache(
+    owner_client_role: &str,
+    file_key: &str,
+) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
     db::file_cache::Entity::delete_many()
+        .filter(db::file_cache::Column::OwnerClientRole.eq(owner_client_role.to_owned()))
         .filter(db::file_cache::Column::FileKey.eq(file_key.to_owned()))
         .filter(db::file_cache::Column::ActiveRefs.eq(0))
         .filter(db::file_cache::Column::Status.eq(FILE_CACHE_STATUS_DELETING))
@@ -70,14 +76,16 @@ pub(in crate::tgbot::transfer) async fn delete_file_cache(file_key: &str) -> any
 
 /// 记录删除失败信息，便于后续重试排查。
 pub(in crate::tgbot::transfer) async fn mark_file_cache_delete_failed(
+    owner_client_role: &str,
     file_key: &str,
     err: String,
     retry_after: chrono::DateTime<chrono::FixedOffset>,
 ) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
-    if let Some(model) = db::file_cache::Entity::find_by_id(file_key.to_owned())
-        .one(db_conn)
-        .await?
+    if let Some(model) =
+        db::file_cache::Entity::find_by_id((owner_client_role.to_owned(), file_key.to_owned()))
+            .one(db_conn)
+            .await?
     {
         let mut active: db::file_cache::ActiveModel = model.into();
         active.status = sea_orm::ActiveValue::Set(FILE_CACHE_STATUS_DELETE_FAILED.to_owned());

@@ -4,7 +4,7 @@
 use sea_orm::ActiveModelTrait;
 
 use crate::db;
-use crate::tgbot::transfer::types::{TransferBundle, TransferPlan};
+use crate::tgbot::transfer::types::{TransferBundle, TransferPlan, client_role_as_str};
 
 use super::super::{JOB_STATUS_RUNNING, now_utc8};
 
@@ -20,6 +20,10 @@ pub(in crate::tgbot::transfer) async fn create_job(
         request_chat_id: sea_orm::ActiveValue::Set(plan.request_chat_id),
         request_message_id: sea_orm::ActiveValue::Set(plan.request_message_id),
         source_link: sea_orm::ActiveValue::Set(plan.source_link.clone()),
+        source_kind: sea_orm::ActiveValue::Set(plan.source_kind.as_str().to_owned()),
+        source_client_role: sea_orm::ActiveValue::Set(
+            client_role_as_str(bundle.source_client_role).to_owned(),
+        ),
         source_chat_id: sea_orm::ActiveValue::Set(bundle.source_chat_id),
         source_message_id: sea_orm::ActiveValue::Set(bundle.source_message_id),
         source_album_id: sea_orm::ActiveValue::Set(bundle.source_album_id),

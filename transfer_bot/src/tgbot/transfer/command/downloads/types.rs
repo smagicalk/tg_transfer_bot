@@ -118,12 +118,14 @@ impl DownloadsFilter {
 /// 解析 `/downloads` 参数。
 ///
 /// 规则：
-/// - 默认：`全部 + 8`
+/// - 默认：`全部 + transfer_config.downloads_default_page_size`
 /// - 若第一个参数是数字，则视为 limit
 /// - 否则第一个参数视为 filter，后两个参数依次是 limit / page
 pub(super) fn parse_downloads_args(text: &[&str]) -> anyhow::Result<DownloadsArgs> {
     let mut filter = DownloadsFilter::All;
-    let mut limit = 8u64;
+    let mut limit = crate::tgbot::transfer::runtime_config()
+        .downloads_default_page_size
+        .clamp(1, 20);
     let mut page = 1u64;
     let mut numeric_args = Vec::new();
 

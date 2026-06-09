@@ -5,8 +5,8 @@ use std::sync::Arc;
 use crate::config::BotConfig;
 use crate::tgbot::send;
 use crate::tgbot::transfer::card;
-use crate::tgbot::transfer::refresh_stored_result_link;
 use crate::tgbot::transfer::store;
+use crate::tgbot::transfer::{refresh_stored_result_link, refresh_stored_result_messages};
 
 use super::common::{
     CommandStyle, job_command as build_job_command, lookup_command as build_lookup_command,
@@ -15,7 +15,7 @@ use super::common::{
 use super::{build_downloads_status_button_data, build_job_status_button_data};
 
 /// `/lookup` 命令入口。
-/// 命令格式：`/lookup <link> [target_chat_id]`
+/// 命令格式：`/lookup <link> [target]`
 /// 用于按源链接查询历史转存结果。
 pub async fn lookup_command(
     text: Vec<&str>,
@@ -24,7 +24,7 @@ pub async fn lookup_command(
     client_id: i32,
 ) -> anyhow::Result<()> {
     if text.len() < 2 {
-        anyhow::bail!("usage: /lookup <link> [target_chat_id]");
+        anyhow::bail!("usage: /lookup <link> [target]");
     }
 
     let source_link = text[1].to_string();
@@ -43,62 +43,81 @@ pub async fn lookup_command(
             job.target_chat_id,
             job.result_message_id,
             &job.result_message_link,
-            client_id,
+            config.transfer_client_ids()?.upload,
+        )
+        .await?;
+        let result_messages = store::list_result_messages_by_job(job.id).await?;
+        let result_messages = crate::tgbot::transfer::outcome::normalize_result_messages(
+            result_messages,
+            &link,
+            target_chat_id,
+        );
+        let result_messages = refresh_stored_result_messages(
+            job.id,
+            result_messages,
+            config.transfer_client_ids()?.upload,
         )
         .await?;
         tracing::info!(
             request_chat_id,
             target_chat_id,
             job_id = job.id,
+            result_count = result_messages.len(),
             "lookup command hit success job"
         );
-        let mut result_row = Vec::new();
-        if send::is_openable_url(&link) {
-            result_row.push(send::build_url_button(
-                "打开转存消息",
-                &link,
-                tdlib_rs::enums::ButtonStyle::Primary,
+        let mut panel =
+            send::ReplyPanel::card(crate::tgbot::transfer::outcome::format_result_card_text(
+                "已找到历史转存结果",
+                &source_link,
+                target_chat_id,
+                Some(job.id),
+                &result_messages,
             ));
+        for result in result_messages.iter().take(6) {
+            let idx = result.result_index + 1;
+            let mut row = Vec::new();
+            if send::is_openable_url(&result.message_link) {
+                row.push(send::build_url_button(
+                    &format!("打开结果 {}", idx),
+                    &result.message_link,
+                    if idx == 1 {
+                        tdlib_rs::enums::ButtonStyle::Primary
+                    } else {
+                        tdlib_rs::enums::ButtonStyle::Default
+                    },
+                ));
+            }
+            row.push(send::build_copy_button(
+                &format!("复制结果 {}", idx),
+                &result.message_link,
+                if send::is_openable_url(&result.message_link) {
+                    tdlib_rs::enums::ButtonStyle::Default
+                } else {
+                    tdlib_rs::enums::ButtonStyle::Primary
+                },
+            ));
+            panel = panel.row(row);
         }
-        result_row.push(send::build_copy_button(
-            if send::is_openable_url(&link) {
-                "复制结果链接"
-            } else {
-                "复制结果定位"
-            },
-            &link,
-            if send::is_openable_url(&link) {
-                tdlib_rs::enums::ButtonStyle::Default
-            } else {
-                tdlib_rs::enums::ButtonStyle::Primary
-            },
-        ));
-        result_row.push(send::build_callback_button(
-            "查看任务详情",
-            &build_job_status_button_data(job.id),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ));
-        result_row.push(send::build_copy_button(
-            "复制查询命令",
-            &lookup_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ));
-
-        return send::ReplyPanel::card(crate::tgbot::transfer::outcome::format_result_card_text(
-            "已找到历史转存结果",
-            &source_link,
-            target_chat_id,
-            Some(job.id),
-            &link,
-        ))
-        .row(result_row)
-        .row(vec![send::build_copy_button(
-            "复制重新转存",
-            &transfer_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        )])
-        .send(request_chat_id, client_id)
-        .await;
+        return panel
+            .row(vec![
+                send::build_callback_button(
+                    "查看任务详情",
+                    &build_job_status_button_data(job.id),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制查询命令",
+                    &lookup_command,
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制重新转存",
+                    &transfer_command,
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ])
+            .send(request_chat_id, client_id)
+            .await;
     }
 
     if let Some(job) = store::find_active_job_by_source_target(&source_link, target_chat_id).await?

@@ -6,6 +6,8 @@ use super::text::{
     format_progress_bytes, format_transfer_control_text, format_transfer_progress_text,
     format_transfer_waiting_text,
 };
+use crate::ClientRole;
+use crate::tgbot::transfer::types::SourceKind;
 use crate::tgbot::transfer::{store, types};
 
 // 字节格式化用于实时下载进度面板，应保持和 `/downloads` 类似的展示风格。
@@ -21,6 +23,10 @@ fn test_format_progress_bytes() {
 fn test_format_transfer_waiting_text() {
     let text = format_transfer_waiting_text(&types::TransferPlan {
         source_link: "https://t.me/c/1/2".to_owned(),
+        source_kind: SourceKind::Link,
+        preferred_source_client_role: ClientRole::Bot,
+        source_message_chat_id: None,
+        source_message_id: None,
         target_chat_id: -100,
         request_chat_id: 10,
         request_message_id: 20,

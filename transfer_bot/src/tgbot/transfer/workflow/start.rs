@@ -5,7 +5,7 @@
 
 use crate::db;
 
-use super::super::types::TransferPlan;
+use super::super::types::{SourceKind, TransferPlan};
 use super::super::{spider, store};
 use super::TransferOutcome;
 use super::control::apply_job_control;
@@ -29,7 +29,7 @@ pub(super) enum TransferStart {
 /// 判断本次 `/transfer` 应复用、恢复还是创建新任务。
 pub(super) async fn build_transfer_start(
     plan: TransferPlan,
-    client_id: i32,
+    client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferStart> {
     tracing::debug!(
         request_chat_id = plan.request_chat_id,
@@ -57,7 +57,7 @@ pub(super) async fn build_transfer_start(
             old.target_chat_id,
             old.result_message_id,
             &old.result_message_link,
-            client_id,
+            client_ids.upload,
         )
         .await?;
         tracing::info!(
@@ -101,10 +101,10 @@ pub(super) async fn build_transfer_start(
             request_message_id = plan.request_message_id,
             "matched idempotent transfer request"
         );
-        return request_job_start(old, client_id).await;
+        return request_job_start(old, client_ids.upload).await;
     }
 
-    create_new_job_start(plan, client_id).await
+    create_new_job_start(plan, client_ids).await
 }
 
 /// 将已存在的活跃任务转换为本次命令结果。
@@ -130,7 +130,7 @@ fn active_job_start(old: db::transfer_job::Model, plan: &TransferPlan) -> Transf
 /// 将同一请求已存在的任务转换为下一步动作。
 async fn request_job_start(
     old: db::transfer_job::Model,
-    client_id: i32,
+    upload_client_id: i32,
 ) -> anyhow::Result<TransferStart> {
     // 同一条命令重复投递时按已有任务状态返回确定结果：
     // - pending/running：恢复执行，避免上次后台任务已丢失。
@@ -163,7 +163,7 @@ async fn request_job_start(
             old.target_chat_id,
             old.result_message_id,
             link,
-            client_id,
+            upload_client_id,
         )
         .await?;
         Ok(TransferStart::Outcome(TransferOutcome::Reused {
@@ -176,7 +176,10 @@ async fn request_job_start(
 }
 
 /// 抓取源消息并创建新的转存任务。
-async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Result<TransferStart> {
+async fn create_new_job_start(
+    plan: TransferPlan,
+    client_ids: crate::config::TransferClientIds,
+) -> anyhow::Result<TransferStart> {
     // 抓取源消息（单条或相册）。
     tracing::info!(
         request_chat_id = plan.request_chat_id,
@@ -184,7 +187,39 @@ async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Res
         target_chat_id = plan.target_chat_id,
         "spider source messages started"
     );
-    let bundle = spider::spider_message(plan.source_link.clone(), client_id).await?;
+    let bundle = match plan.source_kind {
+        SourceKind::Link => {
+            if plan.preferred_source_client_role == crate::config::ClientRole::Bot {
+                let bot_client_id = client_ids.get(crate::config::ClientRole::Bot)?;
+                let user_client_id = client_ids.get(crate::config::ClientRole::User)?;
+                spider::spider_link_bot_first(
+                    plan.source_link.clone(),
+                    bot_client_id,
+                    user_client_id,
+                )
+                .await?
+            } else {
+                let client_id = client_ids.get(plan.preferred_source_client_role)?;
+                spider::spider_message(
+                    plan.source_link.clone(),
+                    client_id,
+                    plan.preferred_source_client_role,
+                )
+                .await?
+            }
+        }
+        SourceKind::BotMessage => {
+            let bot_client_id = client_ids.get(crate::config::ClientRole::Bot)?;
+            let source_chat_id = plan
+                .source_message_chat_id
+                .ok_or_else(|| anyhow::anyhow!("bot message source chat_id missing"))?;
+            let source_message_id = plan
+                .source_message_id
+                .ok_or_else(|| anyhow::anyhow!("bot message source message_id missing"))?;
+            spider::spider_bot_visible_message(source_chat_id, source_message_id, bot_client_id)
+                .await?
+        }
+    };
     tracing::info!(
         request_chat_id = plan.request_chat_id,
         request_message_id = plan.request_message_id,
@@ -218,7 +253,7 @@ async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Res
                 );
                 Ok(TransferStart::Outcome(outcome))
             } else {
-                let _ = store::ensure_items_for_bundle(job.id, &bundle.messages).await?;
+                let _ = store::ensure_items_for_bundle(job.id, &bundle).await?;
                 tracing::debug!(
                     job_id = job.id,
                     total_items = bundle.messages.len(),

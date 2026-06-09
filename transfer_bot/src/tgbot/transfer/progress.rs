@@ -9,17 +9,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::{store, types, workflow};
 use keyboard::{build_transfer_progress_keyboard, build_transfer_result_keyboard};
 use text::{
-    format_transfer_control_text, format_transfer_error_text, format_transfer_final_text,
-    format_transfer_progress_text, format_transfer_waiting_text,
+    format_transfer_control_text, format_transfer_error_text,
+    format_transfer_final_text_with_results, format_transfer_progress_text,
+    format_transfer_waiting_text,
 };
 
 mod keyboard;
 #[cfg(test)]
 mod tests;
 mod text;
-
-// 进度面板编辑间隔，避免频繁调用 editMessageText 触发 Telegram 限流。
-const PROGRESS_EDIT_INTERVAL_SECONDS: u64 = 2;
 
 /// 周期性刷新 `/transfer` 的进度面板。
 ///
@@ -84,10 +82,11 @@ pub(super) async fn update_transfer_progress_message(
             last_text = text;
         }
 
-        tokio::time::sleep(std::time::Duration::from_secs(
-            PROGRESS_EDIT_INTERVAL_SECONDS,
-        ))
-        .await;
+        // 进度编辑间隔从运行时配置读取，避免频繁 editMessageText 触发 Telegram 限流。
+        let interval = super::runtime_config()
+            .progress_edit_interval_seconds
+            .max(1);
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
     }
 }
 
@@ -100,14 +99,36 @@ pub(super) async fn edit_transfer_progress_for_outcome(
     message_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    let outcome_result_messages = match result {
+        Ok(workflow::TransferOutcome::Reused { job_id, link })
+        | Ok(workflow::TransferOutcome::Completed { job_id, link }) => {
+            let records = store::list_result_messages_by_job(*job_id)
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::warn!(
+                        job_id,
+                        error = %err,
+                        "load result messages for progress final text failed"
+                    );
+                    Vec::new()
+                });
+            Some(crate::tgbot::transfer::outcome::normalize_result_messages(
+                records,
+                link,
+                target_chat_id,
+            ))
+        }
+        _ => None,
+    };
+
     let (text, keyboard) = match result {
         Ok(workflow::TransferOutcome::Reused { job_id, link }) => (
-            format_transfer_final_text(
+            format_transfer_final_text_with_results(
                 "已存在历史转存结果",
                 source_link,
                 target_chat_id,
                 Some(*job_id),
-                link,
+                outcome_result_messages.as_deref().unwrap_or(&[]),
             ),
             build_transfer_result_keyboard(source_link, target_chat_id, Some(*job_id), Some(link)),
         ),
@@ -172,12 +193,12 @@ pub(super) async fn edit_transfer_progress_for_outcome(
             ),
         ),
         Ok(workflow::TransferOutcome::Completed { job_id, link }) => (
-            format_transfer_final_text(
+            format_transfer_final_text_with_results(
                 "转存完成",
                 source_link,
                 target_chat_id,
                 Some(*job_id),
-                link,
+                outcome_result_messages.as_deref().unwrap_or(&[]),
             ),
             build_transfer_result_keyboard(source_link, target_chat_id, Some(*job_id), Some(link)),
         ),

@@ -4,6 +4,8 @@ use super::super::*;
 use super::fixtures::*;
 use crate::db;
 use rand::distr::SampleString;
+use sea_orm::ColumnTrait;
+use sea_orm::QueryFilter;
 use sea_orm::{ActiveModelTrait, EntityTrait};
 
 /// 立即停止任务时，未完成子项会变成 cancelled，文件引用会进入删除队列。
@@ -24,12 +26,53 @@ async fn test_cancel_job_now_releases_file_refs() -> anyhow::Result<()> {
         .expect("item must exist");
     assert_eq!(item.status, ITEM_STATUS_CANCELLED);
 
-    let cache = db::file_cache::Entity::find_by_id(file_key)
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key))
         .one(db_conn)
         .await?
         .expect("file cache must exist");
     assert_eq!(cache.active_refs, 0);
     assert!(cache.delete_after.is_some());
+    Ok(())
+}
+
+/// 同一个 Telegram 文件在 bot/user 两个 TDLib client 下必须分开缓存。
+#[tokio::test]
+async fn test_file_cache_isolated_by_owner_client_role() -> anyhow::Result<()> {
+    let _guard = db::TEST_DB_LOCK.lock().await;
+    let db_conn = prepare_test_schema().await?;
+    let now = now_utc8();
+    let file_key = format!(
+        "fk_{}",
+        rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 24)
+    );
+
+    for owner in ["user", "bot"] {
+        db::file_cache::ActiveModel {
+            owner_client_role: sea_orm::ActiveValue::Set(owner.to_owned()),
+            file_key: sea_orm::ActiveValue::Set(file_key.clone()),
+            status: sea_orm::ActiveValue::Set("ready".to_owned()),
+            size_bytes: sea_orm::ActiveValue::Set(Some(2048)),
+            td_file_id: sea_orm::ActiveValue::Set(Some(300)),
+            local_path: sea_orm::ActiveValue::Set(Some(format!("tmp/{owner}-shared.bin"))),
+            last_error: sea_orm::ActiveValue::Set(None),
+            active_refs: sea_orm::ActiveValue::Set(1),
+            last_ref_zero_at: sea_orm::ActiveValue::Set(None),
+            delete_after: sea_orm::ActiveValue::Set(None),
+            created_at: sea_orm::ActiveValue::Set(now),
+            updated_at: sea_orm::ActiveValue::Set(now),
+            last_used_at: sea_orm::ActiveValue::Set(now),
+        }
+        .insert(db_conn)
+        .await?;
+    }
+
+    let rows = db::file_cache::Entity::find()
+        .filter(db::file_cache::Column::FileKey.eq(file_key))
+        .all(db_conn)
+        .await?;
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|row| row.owner_client_role == "bot"));
+    assert!(rows.iter().any(|row| row.owner_client_role == "user"));
     Ok(())
 }
 
@@ -47,6 +90,7 @@ async fn test_cancel_job_now_releases_file_refs_once_under_concurrency() -> anyh
     );
 
     db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
         status: sea_orm::ActiveValue::Set("ready".to_owned()),
         size_bytes: sea_orm::ActiveValue::Set(Some(2048)),
@@ -72,7 +116,7 @@ async fn test_cancel_job_now_releases_file_refs_once_under_concurrency() -> anyh
     left?;
     right?;
 
-    let cache = db::file_cache::Entity::find_by_id(file_key)
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key))
         .one(db_conn)
         .await?
         .expect("file cache must exist");
@@ -93,6 +137,7 @@ async fn test_acquire_file_ref_increments_and_clears_delete_plan() -> anyhow::Re
     );
 
     db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
         status: sea_orm::ActiveValue::Set(FILE_CACHE_STATUS_DELETE_FAILED.to_owned()),
         size_bytes: sea_orm::ActiveValue::Set(Some(1024)),
@@ -112,7 +157,7 @@ async fn test_acquire_file_ref_increments_and_clears_delete_plan() -> anyhow::Re
     acquire_file_ref(&file_key).await?;
     acquire_file_ref(&file_key).await?;
 
-    let cache = db::file_cache::Entity::find_by_id(file_key)
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key))
         .one(db_conn)
         .await?
         .expect("file cache must exist");
@@ -138,6 +183,7 @@ async fn test_release_job_file_refs_keeps_shared_file_until_last_ref() -> anyhow
     );
 
     db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
         status: sea_orm::ActiveValue::Set("ready".to_owned()),
         size_bytes: sea_orm::ActiveValue::Set(Some(2048)),
@@ -158,7 +204,7 @@ async fn test_release_job_file_refs_keeps_shared_file_until_last_ref() -> anyhow
     insert_item_for_file_key(job2.id, &file_key).await?;
 
     release_job_file_refs(job1.id, 2).await?;
-    let cache = db::file_cache::Entity::find_by_id(file_key.clone())
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key.clone()))
         .one(db_conn)
         .await?
         .expect("file cache must exist");
@@ -166,7 +212,7 @@ async fn test_release_job_file_refs_keeps_shared_file_until_last_ref() -> anyhow
     assert!(cache.delete_after.is_none());
 
     release_job_file_refs(job2.id, 2).await?;
-    let cache = db::file_cache::Entity::find_by_id(file_key)
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key))
         .one(db_conn)
         .await?
         .expect("file cache must exist");
@@ -187,6 +233,7 @@ async fn test_claim_and_delete_file_cache_for_gc() -> anyhow::Result<()> {
     );
 
     db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
         status: sea_orm::ActiveValue::Set("ready".to_owned()),
         size_bytes: sea_orm::ActiveValue::Set(Some(2048)),
@@ -203,14 +250,18 @@ async fn test_claim_and_delete_file_cache_for_gc() -> anyhow::Result<()> {
     .insert(db_conn)
     .await?;
 
-    let claimed = claim_file_cache_for_delete(&file_key, now)
+    let claimed = claim_file_cache_for_delete("user", &file_key, now)
         .await?
         .expect("due cache should be claimed");
     assert_eq!(claimed.status, FILE_CACHE_STATUS_DELETING);
-    assert!(claim_file_cache_for_delete(&file_key, now).await?.is_none());
+    assert!(
+        claim_file_cache_for_delete("user", &file_key, now)
+            .await?
+            .is_none()
+    );
 
-    delete_file_cache(&file_key).await?;
-    let cache = db::file_cache::Entity::find_by_id(file_key)
+    delete_file_cache("user", &file_key).await?;
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key))
         .one(db_conn)
         .await?;
     assert!(cache.is_none());
@@ -230,6 +281,7 @@ async fn test_mark_file_cache_delete_failed_delays_retry() -> anyhow::Result<()>
     );
 
     db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
         status: sea_orm::ActiveValue::Set(FILE_CACHE_STATUS_DELETING.to_owned()),
         size_bytes: sea_orm::ActiveValue::Set(Some(2048)),
@@ -246,10 +298,15 @@ async fn test_mark_file_cache_delete_failed_delays_retry() -> anyhow::Result<()>
     .insert(db_conn)
     .await?;
 
-    mark_file_cache_delete_failed(&file_key, "delete failed by test".to_owned(), retry_after)
-        .await?;
+    mark_file_cache_delete_failed(
+        "user",
+        &file_key,
+        "delete failed by test".to_owned(),
+        retry_after,
+    )
+    .await?;
 
-    let cache = db::file_cache::Entity::find_by_id(file_key.clone())
+    let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key.clone()))
         .one(db_conn)
         .await?
         .expect("file cache must exist");

@@ -21,6 +21,18 @@ const FILE_DELETE_DELAY_MINUTES_MAX: i64 = 24 * 60;
 const FILE_GC_INTERVAL_SECONDS_MIN: u64 = 5;
 /// 文件 GC 最大扫描间隔秒数。
 const FILE_GC_INTERVAL_SECONDS_MAX: u64 = 60 * 60;
+/// 进度消息编辑间隔最小秒数。
+const PROGRESS_EDIT_INTERVAL_SECONDS_MIN: u64 = 1;
+/// 进度消息编辑间隔最大秒数。
+const PROGRESS_EDIT_INTERVAL_SECONDS_MAX: u64 = 60;
+/// 下载列表默认分页最小值。
+const DOWNLOADS_DEFAULT_PAGE_SIZE_MIN: u64 = 1;
+/// 下载列表默认分页最大值。
+const DOWNLOADS_DEFAULT_PAGE_SIZE_MAX: u64 = 20;
+/// 菜单输入超时最小秒数。
+const MENU_INPUT_TIMEOUT_SECONDS_MIN: u64 = 30;
+/// 菜单输入超时最大秒数。
+const MENU_INPUT_TIMEOUT_SECONDS_MAX: u64 = 24 * 60 * 60;
 
 /// `/config` 命令入口。
 /// 支持：
@@ -149,6 +161,44 @@ async fn update_transfer_config(key: &str, value: &str) -> anyhow::Result<String
             }
             bot_config.transfer_config.file_gc_interval_seconds = parsed;
         }
+        "progress_edit_interval_seconds" => {
+            let parsed = value.parse::<u64>()?;
+            if !(PROGRESS_EDIT_INTERVAL_SECONDS_MIN..=PROGRESS_EDIT_INTERVAL_SECONDS_MAX)
+                .contains(&parsed)
+            {
+                anyhow::bail!(
+                    "progress_edit_interval_seconds must be between {} and {}",
+                    PROGRESS_EDIT_INTERVAL_SECONDS_MIN,
+                    PROGRESS_EDIT_INTERVAL_SECONDS_MAX
+                );
+            }
+            bot_config.transfer_config.progress_edit_interval_seconds = parsed;
+        }
+        "downloads_default_page_size" => {
+            let parsed = value.parse::<u64>()?;
+            if !(DOWNLOADS_DEFAULT_PAGE_SIZE_MIN..=DOWNLOADS_DEFAULT_PAGE_SIZE_MAX)
+                .contains(&parsed)
+            {
+                anyhow::bail!(
+                    "downloads_default_page_size must be between {} and {}",
+                    DOWNLOADS_DEFAULT_PAGE_SIZE_MIN,
+                    DOWNLOADS_DEFAULT_PAGE_SIZE_MAX
+                );
+            }
+            bot_config.transfer_config.downloads_default_page_size = parsed;
+        }
+        "menu_input_timeout_seconds" => {
+            let parsed = value.parse::<u64>()?;
+            if !(MENU_INPUT_TIMEOUT_SECONDS_MIN..=MENU_INPUT_TIMEOUT_SECONDS_MAX).contains(&parsed)
+            {
+                anyhow::bail!(
+                    "menu_input_timeout_seconds must be between {} and {}",
+                    MENU_INPUT_TIMEOUT_SECONDS_MIN,
+                    MENU_INPUT_TIMEOUT_SECONDS_MAX
+                );
+            }
+            bot_config.transfer_config.menu_input_timeout_seconds = parsed;
+        }
         _ => anyhow::bail!("unsupported config key: {}", key),
     }
 
@@ -221,6 +271,18 @@ fn format_transfer_config_text(title: &str, config: &config::TransferConfig) -> 
             config.file_delete_delay_minutes,
         ),
         card::field("file_gc_interval_seconds", config.file_gc_interval_seconds),
+        card::field(
+            "progress_edit_interval_seconds",
+            config.progress_edit_interval_seconds,
+        ),
+        card::field(
+            "downloads_default_page_size",
+            config.downloads_default_page_size,
+        ),
+        card::field(
+            "menu_input_timeout_seconds",
+            config.menu_input_timeout_seconds,
+        ),
         "".to_owned(),
         card::section("命令"),
         short_and_long(
@@ -238,6 +300,18 @@ fn format_transfer_config_text(title: &str, config: &config::TransferConfig) -> 
         short_and_long(
             config_set_command("file_gc_interval_seconds", 30, CommandStyle::Short),
             config_set_command("file_gc_interval_seconds", 30, CommandStyle::Long),
+        ),
+        short_and_long(
+            config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Short),
+            config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Long),
+        ),
+        short_and_long(
+            config_set_command("downloads_default_page_size", 10, CommandStyle::Short),
+            config_set_command("downloads_default_page_size", 10, CommandStyle::Long),
+        ),
+        short_and_long(
+            config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Short),
+            config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Long),
         ),
     ]
     .join("\n")
@@ -427,11 +501,15 @@ mod tests {
             job_concurrency: 2,
             file_delete_delay_minutes: 2,
             file_gc_interval_seconds: 60,
+            ..Default::default()
         };
         let text = format_transfer_config_text("当前可调配置", &cfg);
         assert!(text.contains("job_concurrency：‹2›"));
         assert!(text.contains("file_delete_delay_minutes：‹2›"));
         assert!(text.contains("file_gc_interval_seconds：‹60›"));
+        assert!(text.contains("progress_edit_interval_seconds"));
+        assert!(text.contains("downloads_default_page_size"));
+        assert!(text.contains("menu_input_timeout_seconds"));
         assert!(text.contains("‹/cfg show›"));
     }
 
