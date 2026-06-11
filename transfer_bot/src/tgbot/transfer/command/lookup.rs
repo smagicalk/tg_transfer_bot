@@ -12,7 +12,10 @@ use super::common::{
     CommandStyle, job_command as build_job_command, lookup_command as build_lookup_command,
     resolve_target_chat_id, transfer_command as build_transfer_command,
 };
-use super::{build_downloads_status_button_data, build_job_status_button_data};
+use super::{
+    build_downloads_status_button_data, build_job_pause_button_data, build_job_resume_button_data,
+    build_job_status_button_data, build_job_stop_button_data, build_menu_home_button_data,
+};
 
 /// `/lookup` 命令入口。
 /// 命令格式：`/lookup <link> [target]`
@@ -20,7 +23,7 @@ use super::{build_downloads_status_button_data, build_job_status_button_data};
 pub async fn lookup_command(
     text: Vec<&str>,
     config: Arc<BotConfig>,
-    request_chat_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     if text.len() < 2 {
@@ -28,15 +31,22 @@ pub async fn lookup_command(
     }
 
     let source_link = text[1].to_string();
-    let target_chat_id = resolve_target_chat_id(&text, &config, request_chat_id)?;
+    let target_chat_id = resolve_target_chat_id(&text, &config, actor.request_chat_id)?;
     // 源链接可能来自私有聊天，日志只记录请求 chat 与目标 chat。
-    tracing::info!(request_chat_id, target_chat_id, "lookup command started");
+    tracing::info!(
+        request_chat_id = actor.request_chat_id,
+        owner_user_id = actor.user_id,
+        actor_role = actor.role.as_str(),
+        target_chat_id,
+        "lookup command started"
+    );
     let lookup_command = build_lookup_command(&source_link, target_chat_id, CommandStyle::Short);
     let transfer_command =
         build_transfer_command(&source_link, target_chat_id, CommandStyle::Short);
 
     if let Some(job) =
-        store::find_success_job_by_source_target(&source_link, target_chat_id).await?
+        store::find_success_job_by_source_target(&source_link, target_chat_id, actor.owner_scope())
+            .await?
     {
         let link = refresh_stored_result_link(
             job.id,
@@ -59,7 +69,7 @@ pub async fn lookup_command(
         )
         .await?;
         tracing::info!(
-            request_chat_id,
+            request_chat_id = actor.request_chat_id,
             target_chat_id,
             job_id = job.id,
             result_count = result_messages.len(),
@@ -115,15 +125,22 @@ pub async fn lookup_command(
                     &transfer_command,
                     tdlib_rs::enums::ButtonStyle::Default,
                 ),
+                send::build_callback_button(
+                    "菜单",
+                    &build_menu_home_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
             ])
-            .send(request_chat_id, client_id)
+            .send(actor.request_chat_id, client_id)
             .await;
     }
 
-    if let Some(job) = store::find_active_job_by_source_target(&source_link, target_chat_id).await?
+    if let Some(job) =
+        store::find_active_job_by_source_target(&source_link, target_chat_id, actor.owner_scope())
+            .await?
     {
         tracing::info!(
-            request_chat_id,
+            request_chat_id = actor.request_chat_id,
             target_chat_id,
             job_id = job.id,
             status = %job.status,
@@ -146,24 +163,13 @@ pub async fn lookup_command(
                 &build_downloads_status_button_data(&job.status, 8),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-        ])
-        .row(vec![
-            send::build_copy_button(
-                "复制暂停",
-                &build_job_command("p", job.id, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_copy_button(
-                "复制停止",
-                &build_job_command("s", job.id, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制 job_id",
-                &job.id.to_string(),
+            send::build_callback_button(
+                "菜单",
+                &build_menu_home_button_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
+        .row(build_lookup_active_control_buttons(job.id, &job.status))
         .row(vec![
             send::build_copy_button(
                 "复制运行列表",
@@ -181,11 +187,17 @@ pub async fn lookup_command(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
-        .send(request_chat_id, client_id)
+        .send(actor.request_chat_id, client_id)
         .await;
     }
 
-    tracing::info!(request_chat_id, target_chat_id, "lookup command missed");
+    tracing::info!(
+        request_chat_id = actor.request_chat_id,
+        owner_user_id = actor.user_id,
+        actor_role = actor.role.as_str(),
+        target_chat_id,
+        "lookup command missed"
+    );
     send::ReplyPanel::card(format_lookup_miss_text(&source_link, target_chat_id))
         .row(vec![
             send::build_copy_button(
@@ -203,9 +215,69 @@ pub async fn lookup_command(
                 &source_link,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+            send::build_callback_button(
+                "菜单",
+                &build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
         ])
-        .send(request_chat_id, client_id)
+        .send(actor.request_chat_id, client_id)
         .await
+}
+
+/// 构建 lookup 命中进行中任务时的直接控制按钮。
+///
+/// 控制按钮复用 `/job` callback；复制按钮保留为用户号模式或客户端不支持按钮时的兜底。
+fn build_lookup_active_control_buttons(
+    job_id: i64,
+    status: &str,
+) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    let mut row = Vec::new();
+    if status == store::JOB_STATUS_PAUSED {
+        row.push(send::build_callback_button(
+            "恢复",
+            &build_job_resume_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ));
+        row.push(send::build_copy_button(
+            "复制恢复",
+            &build_job_command("r", job_id, CommandStyle::Short),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ));
+    } else if matches!(
+        status,
+        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING
+    ) {
+        row.push(send::build_callback_button(
+            "暂停",
+            &build_job_pause_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ));
+        row.push(send::build_copy_button(
+            "复制暂停",
+            &build_job_command("p", job_id, CommandStyle::Short),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ));
+    }
+
+    if !matches!(
+        status,
+        store::JOB_STATUS_CANCELLED
+            | store::JOB_STATUS_CANCELLING
+            | store::JOB_STATUS_CANCEL_FINALIZING
+    ) {
+        row.push(send::build_callback_button(
+            "停止",
+            &build_job_stop_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ));
+    }
+    row.push(send::build_copy_button(
+        "复制 job_id",
+        &job_id.to_string(),
+        tdlib_rs::enums::ButtonStyle::Default,
+    ));
+    row
 }
 
 /// 构造命中进行中任务时的查询卡片。
@@ -260,7 +332,9 @@ fn format_lookup_miss_text(source_link: &str, target_chat_id: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_lookup_active_text, format_lookup_miss_text};
+    use super::{
+        build_lookup_active_control_buttons, format_lookup_active_text, format_lookup_miss_text,
+    };
 
     // lookup 命中运行中任务时应使用 card 标记，避免 Markdown 原文泄露到消息里。
     #[test]
@@ -280,5 +354,34 @@ mod tests {
 
         assert!(text.contains("状态：‹miss›"));
         assert!(text.contains("‹https://t.me/c/1/2›"));
+    }
+
+    // lookup 命中运行中任务时，应直接给暂停/停止 callback，而不是只能复制命令。
+    #[test]
+    fn test_build_lookup_active_control_buttons_for_running() {
+        let buttons = build_lookup_active_control_buttons(42, "running");
+
+        assert_eq!(buttons[0].text, "暂停");
+        assert_eq!(buttons[2].text, "停止");
+        assert!(matches!(
+            buttons[0].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+        ));
+        assert!(matches!(
+            buttons[2].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+        ));
+    }
+
+    // paused 任务应给恢复 callback；停止中任务不再展示停止按钮。
+    #[test]
+    fn test_build_lookup_active_control_buttons_by_status() {
+        let paused = build_lookup_active_control_buttons(42, "paused");
+        let cancelling = build_lookup_active_control_buttons(42, "cancelling");
+
+        assert_eq!(paused[0].text, "恢复");
+        assert!(paused.iter().any(|button| button.text == "停止"));
+        assert!(!cancelling.iter().any(|button| button.text == "停止"));
+        assert!(cancelling.iter().any(|button| button.text == "复制 job_id"));
     }
 }

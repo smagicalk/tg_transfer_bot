@@ -34,10 +34,17 @@ pub(super) async fn upload_prepared(
             "uploading single prepared message"
         );
         let content = prepared[0].1.input_content.clone();
-        let sent =
-            tdlib_rs::functions::send_message(target_chat_id, None, None, None, content, client_id)
-                .await
-                .map_err(|e| anyhow::Error::new(TdError(e)))?;
+        let sent = tdlib_rs::functions::send_message(
+            target_chat_id,
+            None,
+            None,
+            None,
+            None,
+            content,
+            client_id,
+        )
+        .await
+        .map_err(|e| anyhow::Error::new(TdError(e)))?;
         let tdlib_rs::enums::Message::Message(message) = sent;
         let message = crate::tgbot::send::wait_for_sent_message(message, client_id).await?;
         return Ok(UploadResult {

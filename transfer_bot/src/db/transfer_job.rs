@@ -17,6 +17,9 @@ pub struct Model {
     /// 请求侧：发起命令那条消息的 message_id。
     #[sea_orm(indexed)]
     pub request_message_id: i64,
+    /// 任务归属用户 ID：普通用户只能查看/控制自己的 owner；admin 可跨 owner 管理。
+    #[sea_orm(indexed)]
+    pub owner_user_id: i64,
     /// 爬虫侧：输入的源链接（抓取入口）。
     #[sea_orm(indexed)]
     pub source_link: String,
@@ -24,6 +27,8 @@ pub struct Model {
     pub source_kind: String,
     /// 实际读取源消息的 client 角色：`bot` 或 `user`。
     pub source_client_role: String,
+    /// 链接源是否允许 bot 失败后 fallback 到 user；普通用户任务必须为 false。
+    pub allow_user_fallback: bool,
     /// 爬虫侧：源消息所属 chat_id。
     pub source_chat_id: i64,
     /// 爬虫侧：源入口消息的 message_id。
@@ -47,6 +52,12 @@ pub struct Model {
     pub failed_items: i32,
     /// 任务级重试次数（预留字段）。
     pub retry_count: i32,
+    /// 本次任务按当前计费规则计算出的积分成本。
+    pub cost_points: i64,
+    /// 已实际扣除的积分数；admin 或免费模式为 0。
+    pub charged_points: i64,
+    /// 计费状态：`free/charged/refunded/failed`。
+    pub billing_status: String,
     /// 任务最后一次错误信息（可为空）。
     pub last_error: Option<String>,
     /// 创建时间（固定时区时间戳）。

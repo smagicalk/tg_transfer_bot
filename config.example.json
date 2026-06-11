@@ -29,7 +29,6 @@
       }
     },
     "bot": {
-      "enabled": true,
       "token": "replace_me_with_bot_token",
       "tdlib": {
         "database_directory": "tg/bot/db",
@@ -42,19 +41,17 @@
     }
   },
   "workflow": {
-    "interaction_client": "bot",
-    "download_client": "bot",
     "upload_client": "bot"
-  },
-  "deduplicate": {
-    "enabled": true,
-    "return_running_job": true,
-    "return_finished_result": true
   },
   "access_control": {
     "admin_user_ids": [
       123456789
     ],
+    "allowed_user_ids": [
+      987654321
+    ],
+    "allow_all_private_users": false,
+    "banned_user_ids": [],
     "allowed_request_chat_ids": [
       123456789
     ],
@@ -70,6 +67,12 @@
     "aliases": {
       "archive": -1001234567890
     }
+  },
+  "billing": {
+    "enabled": true,
+    "base_cost_points": 1,
+    "item_cost_points": 1,
+    "initial_user_points": 0
   },
   "transfer_config": {
     "job_concurrency": 2,

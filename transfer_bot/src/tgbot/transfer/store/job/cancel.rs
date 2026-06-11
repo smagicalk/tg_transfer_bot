@@ -12,6 +12,7 @@ use sea_orm::sea_query::Expr;
 
 use crate::db;
 
+use super::super::account::refund_job_points_if_needed_on_conn;
 use super::super::file_cache::release_job_file_refs_on_conn;
 use super::super::item::{list_items_by_job_on_conn, set_item_status_on_conn};
 use super::super::{
@@ -203,6 +204,7 @@ pub(in crate::tgbot::transfer) async fn cancel_job_now(
         set_item_status_on_conn(&txn, item_id, &status, error_message).await?;
     }
     release_job_file_refs_on_conn(&txn, job_id, delay_minutes).await?;
+    refund_job_points_if_needed_on_conn(&txn, &job, "transfer_refund_cancelled").await?;
     txn.commit().await?;
 
     db::transfer_job::Entity::find_by_id(job_id)

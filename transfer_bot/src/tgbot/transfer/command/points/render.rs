@@ -1,0 +1,248 @@
+// 积分模块的流水渲染与按钮拼装。
+// 这里只负责把数据渲染成卡片和按钮，命令入口仍留在 `points.rs`。
+
+use crate::tgbot::send;
+use crate::tgbot::transfer::card;
+use crate::tgbot::transfer::store;
+
+use super::super::common::{
+    CommandStyle, balance_history_command as build_balance_history_command,
+    points_history_command as build_points_history_command,
+};
+
+/// 渲染 `/balance` 或 `/points` 使用的积分流水面板。
+pub(super) async fn render_ledger_panel(
+    kind: super::LedgerCommandKind,
+    user_id: i64,
+    limit: u64,
+    page: u64,
+    admin_view: bool,
+) -> anyhow::Result<send::ReplyPanel> {
+    let page = store::list_point_ledger_page(user_id, limit, page).await?;
+    Ok(
+        send::ReplyPanel::card(format_ledger_page_text(&page, admin_view))
+            .rows(ledger_button_rows(kind, user_id, &page, admin_view)),
+    )
+}
+
+/// 积分余额卡片正文。
+pub(super) fn format_balance_text(account: &store::UserAccountSnapshot) -> String {
+    [
+        "积分账户".to_owned(),
+        format!("状态：{}", card::code("ready")),
+        card::DIVIDER.to_owned(),
+        card::section("账户"),
+        card::field("用户", account.telegram_user_id),
+        card::field("角色", &account.role),
+        card::field("余额", account.points_balance),
+        card::field("累计增加", account.total_points_added),
+        card::field("累计消费", account.total_points_spent),
+        card::section("命令"),
+        card::command_line("余额", "/balance"),
+        card::command_line("流水", "/balance history"),
+        card::command_line("帮助", "/help points"),
+    ]
+    .join("\n")
+}
+
+/// 积分流水卡片正文。
+pub(super) fn format_ledger_page_text(page: &store::PointLedgerPage, admin_view: bool) -> String {
+    let mut lines = vec![
+        if admin_view {
+            "积分流水 [admin]".to_owned()
+        } else {
+            "积分流水".to_owned()
+        },
+        format!("状态：{}", card::code("ready")),
+        card::DIVIDER.to_owned(),
+        card::section("账户"),
+        card::field("用户", page.telegram_user_id),
+        format!(
+            "页码：{}/{}  每页：{}  总数：{}",
+            page.page, page.total_pages, page.limit, page.total
+        ),
+    ];
+
+    if page.entries.is_empty() {
+        lines.push(card::section("记录"));
+        lines.push("暂无积分流水。".to_owned());
+    } else {
+        lines.push(card::section("记录"));
+        for entry in &page.entries {
+            lines.extend(format_ledger_entry_lines(entry));
+        }
+    }
+
+    lines.push(card::section("命令"));
+    if admin_view {
+        lines.push(card::command_line(
+            "当前页",
+            points_history_command(page.telegram_user_id, page.limit, page.page, false),
+        ));
+    } else {
+        lines.push(card::command_line(
+            "当前页",
+            balance_history_command(page.limit, page.page, false),
+        ));
+    }
+    lines.join("\n")
+}
+
+/// 单条积分流水正文。
+pub(super) fn format_ledger_entry_lines(entry: &store::PointLedgerEntry) -> Vec<String> {
+    let mut lines = vec![
+        format!(
+            "#{} {} 余额 {}",
+            entry.id,
+            signed_delta(entry.delta),
+            card::code(entry.balance_after)
+        ),
+        format!(
+            "原因：{}  时间：{}",
+            card::code(&entry.reason),
+            entry.created_at
+        ),
+    ];
+    if let Some(job_id) = entry.job_id {
+        lines.push(format!("任务：{}", card::code(job_id)));
+    }
+    if let Some(request_chat_id) = entry.request_chat_id {
+        let request_message = entry
+            .request_message_id
+            .map(|message_id| format!(" / {}", card::code(message_id)))
+            .unwrap_or_default();
+        lines.push(format!(
+            "请求：{}{}",
+            card::code(request_chat_id),
+            request_message
+        ));
+    }
+    if let Some(created_by) = entry.created_by {
+        lines.push(format!("操作人：{}", card::code(created_by)));
+    }
+    lines
+}
+
+/// 积分变化量展示，正数显式加号。
+pub(super) fn signed_delta(delta: i64) -> String {
+    if delta > 0 {
+        format!("+{}", card::code(delta))
+    } else {
+        card::code(delta)
+    }
+}
+
+/// 构造积分流水按钮。
+pub(super) fn ledger_button_rows(
+    kind: super::LedgerCommandKind,
+    user_id: i64,
+    page: &store::PointLedgerPage,
+    admin_view: bool,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut rows = Vec::new();
+    let prev_page = page.page.saturating_sub(1).max(1);
+    let next_page = (page.page + 1).min(page.total_pages);
+    rows.push(vec![
+        ledger_nav_button("首页", kind, user_id, page.limit, 1),
+        ledger_nav_button("上页", kind, user_id, page.limit, prev_page),
+        send::build_copy_button(
+            &format!("{}/{}", page.page, page.total_pages),
+            &ledger_command(kind, user_id, page.limit, page.page, false),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        ledger_nav_button("下页", kind, user_id, page.limit, next_page),
+        ledger_nav_button("末页", kind, user_id, page.limit, page.total_pages),
+    ]);
+    rows.push(vec![
+        send::build_callback_button(
+            "刷新",
+            &super::build_ledger_callback_data(
+                super::LedgerCallbackAction::Refresh,
+                kind,
+                user_id,
+                page.limit,
+                page.page,
+            ),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        send::build_copy_button(
+            "复制短命令",
+            &ledger_command(kind, user_id, page.limit, page.page, true),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        send::build_callback_button(
+            "菜单",
+            &super::super::build_menu_home_button_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]);
+    if admin_view {
+        rows.push(vec![send::build_copy_button(
+            "复制余额",
+            &format!("/points show {}", user_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )]);
+    } else {
+        rows.push(vec![send::build_copy_button(
+            "复制余额",
+            "/balance",
+            tdlib_rs::enums::ButtonStyle::Default,
+        )]);
+    }
+    rows
+}
+
+/// 构造积分流水翻页按钮。
+fn ledger_nav_button(
+    text: &str,
+    kind: super::LedgerCommandKind,
+    user_id: i64,
+    limit: u64,
+    page: u64,
+) -> tdlib_rs::types::InlineKeyboardButton {
+    send::build_callback_button(
+        text,
+        &super::build_ledger_callback_data(
+            super::LedgerCallbackAction::Page,
+            kind,
+            user_id,
+            limit,
+            page,
+        ),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )
+}
+
+/// 根据入口类型生成长/短流水命令。
+fn ledger_command(
+    kind: super::LedgerCommandKind,
+    user_id: i64,
+    limit: u64,
+    page: u64,
+    short: bool,
+) -> String {
+    match kind {
+        super::LedgerCommandKind::Balance => balance_history_command(limit, page, short),
+        super::LedgerCommandKind::Points => points_history_command(user_id, limit, page, short),
+    }
+}
+
+/// 构造 `/balance history` 或 `/bal h`。
+pub(super) fn balance_history_command(limit: u64, page: u64, short: bool) -> String {
+    let style = if short {
+        CommandStyle::Short
+    } else {
+        CommandStyle::Long
+    };
+    build_balance_history_command(limit, page, style)
+}
+
+/// 构造 `/points history` 或 `/pts h`。
+pub(super) fn points_history_command(user_id: i64, limit: u64, page: u64, short: bool) -> String {
+    let style = if short {
+        CommandStyle::Short
+    } else {
+        CommandStyle::Long
+    };
+    build_points_history_command(user_id, limit, page, style)
+}

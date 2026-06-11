@@ -138,6 +138,62 @@ fn test_build_downloads_keyboard_has_job_detail_buttons() {
     ));
 }
 
+// 运行中任务在列表页应能直接暂停/停止，减少进入详情后二次点击。
+#[test]
+fn test_build_downloads_keyboard_has_running_job_controls() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::Running,
+        limit: 8,
+        page: 1,
+    };
+    let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("running")]);
+
+    assert_eq!(keyboard.rows[1][0].text, "详情 #1");
+    assert_eq!(keyboard.rows[1][1].text, "暂停");
+    assert_eq!(keyboard.rows[1][2].text, "停止");
+    assert!(matches!(
+        keyboard.rows[1][1].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert!(matches!(
+        keyboard.rows[1][2].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+}
+
+// 暂停任务在列表页应能直接恢复或停止。
+#[test]
+fn test_build_downloads_keyboard_has_paused_job_controls() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::Paused,
+        limit: 8,
+        page: 1,
+    };
+    let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("paused")]);
+
+    assert_eq!(keyboard.rows[1][0].text, "详情 #1");
+    assert_eq!(keyboard.rows[1][1].text, "恢复");
+    assert_eq!(keyboard.rows[1][2].text, "停止");
+    assert!(matches!(
+        keyboard.rows[1][1].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+}
+
+// 已完成任务只保留详情，避免列表里出现无效控制按钮。
+#[test]
+fn test_build_downloads_keyboard_hides_controls_for_finished_job() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::Success,
+        limit: 8,
+        page: 1,
+    };
+    let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("success")]);
+
+    assert_eq!(keyboard.rows[1][0].text, "详情 #1");
+    assert_eq!(keyboard.rows[1].len(), 1);
+}
+
 // 任务详情按钮应使用短 callback payload，方便和 `/job` 统一路由。
 #[test]
 fn test_build_downloads_keyboard_job_detail_callback_data() {
@@ -256,6 +312,27 @@ fn test_build_downloads_keyboard_current_page_is_copy_button() {
     ));
 }
 
+// 翻页 callback 也必须通过统一按钮入口编码，否则 TDLib 会把裸 payload 当成非法 bytes。
+#[test]
+fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
+    use base64::{Engine as _, engine::general_purpose};
+
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::Running,
+        limit: 8,
+        page: 1,
+    };
+    let keyboard = build_downloads_keyboard(&args, 3, &[]);
+    let next = &keyboard.rows[0][3];
+
+    let data = match &next.r#type {
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
+        other => panic!("unexpected button type: {:?}", other),
+    };
+    let decoded = String::from_utf8(general_purpose::STANDARD.decode(data).unwrap()).unwrap();
+    assert_eq!(decoded, "d:p:run:8:2");
+}
+
 // 第二行提供刷新和复制当前命令，刷新使用 callback 原地重新查询。
 #[test]
 fn test_build_downloads_keyboard_has_refresh_row() {
@@ -266,16 +343,21 @@ fn test_build_downloads_keyboard_has_refresh_row() {
     };
     let keyboard = build_downloads_keyboard(&args, 2, &[]);
 
-    assert_eq!(keyboard.rows.len(), 4);
+    assert_eq!(keyboard.rows.len(), 6);
     assert_eq!(keyboard.rows[1][0].text, "刷新");
     assert!(matches!(
         keyboard.rows[1][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
     assert_eq!(keyboard.rows[1][1].text, "复制当前命令");
+    assert_eq!(keyboard.rows[1][2].text, "菜单");
+    assert!(matches!(
+        keyboard.rows[1][2].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
 }
 
-// 第三行和第四行提供常用筛选按钮；当前筛选退化为复制命令，避免重复点造成无效编辑。
+// 后续行提供常用筛选按钮；每行最多三个按钮，当前筛选退化为复制命令。
 #[test]
 fn test_build_downloads_keyboard_has_filter_row() {
     let args = DownloadsArgs {
@@ -295,8 +377,15 @@ fn test_build_downloads_keyboard_has_filter_row() {
         keyboard.rows[2][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
     ));
-    assert_eq!(keyboard.rows[3][0].text, "暂停");
-    assert_eq!(keyboard.rows[3][3].text, "就绪");
+    assert_eq!(keyboard.rows[2][2].text, "等待");
+    assert_eq!(keyboard.rows[3][0].text, "下载");
+    assert_eq!(keyboard.rows[3][1].text, "上传");
+    assert_eq!(keyboard.rows[3][2].text, "就绪");
+    assert_eq!(keyboard.rows[4][0].text, "完成");
+    assert_eq!(keyboard.rows[4][1].text, "成功");
+    assert_eq!(keyboard.rows[5][0].text, "暂停");
+    assert_eq!(keyboard.rows[5][1].text, "停止中");
+    assert_eq!(keyboard.rows[5][2].text, "已停止");
 }
 
 // 构造最小任务快照，专门用于筛选器测试。

@@ -13,4 +13,10 @@ pub struct InputMessagePoll {
     pub is_anonymous: bool,
     /// Type of the poll
     pub r#type: crate::enums::PollType,
+    /// Amount of time the poll will be active after creation, in seconds; for bots only
+    pub open_period: i32,
+    /// Point in time (Unix timestamp) when the poll will automatically be closed; for bots only
+    pub close_date: i32,
+    /// True, if the poll needs to be sent already closed; for bots only
+    pub is_closed: bool,
 }

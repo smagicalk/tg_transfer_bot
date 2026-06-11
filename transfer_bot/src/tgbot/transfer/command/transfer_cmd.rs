@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 
-use crate::config::BotConfig;
 use crate::config::ClientRole;
+use crate::config::{BotConfig, RequestActor};
 use crate::tgbot::send;
 use crate::tgbot::transfer::card;
 
 use super::build_downloads_status_button_data;
 use super::common::{CommandStyle, downloads_command, lookup_command, resolve_target_chat_id};
+use super::menu;
 use crate::tgbot::transfer::types::{SourceKind, TransferPlan};
 
 /// `/transfer` 命令入口。
@@ -17,17 +18,33 @@ pub async fn transfer_command(
     text: Vec<&str>,
     config: Arc<BotConfig>,
     request_message: &tdlib_rs::types::Message,
+    actor: RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let request_chat_id = request_message.chat_id;
     let request_message_id = request_message.id;
-    let source = resolve_transfer_source(&text, request_message)?;
+    let source = match resolve_transfer_source(&text, request_message) {
+        Ok(source) => source,
+        Err(_) if text.len() == 1 => {
+            menu::start_transfer_input_from_command(request_chat_id, actor.user_id, client_id)
+                .await?;
+            tracing::debug!(
+                request_chat_id,
+                request_message_id,
+                sender_user_id = actor.user_id,
+                "transfer command without args entered interactive wizard"
+            );
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
     run_transfer_plan(
         text,
         source,
         config,
         request_chat_id,
         request_message_id,
+        actor,
         client_id,
     )
     .await
@@ -41,6 +58,7 @@ pub async fn transfer_link_command(
     config: Arc<BotConfig>,
     request_chat_id: i64,
     request_message_id: i64,
+    actor: RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     if text.len() < 2 {
@@ -59,6 +77,7 @@ pub async fn transfer_link_command(
         config,
         request_chat_id,
         request_message_id,
+        actor,
         client_id,
     )
     .await
@@ -70,6 +89,7 @@ pub async fn transfer_link_command(
 pub async fn transfer_bot_message_auto_command(
     config: Arc<BotConfig>,
     request_message: tdlib_rs::types::Message,
+    actor: RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let request_chat_id = request_message.chat_id;
@@ -87,6 +107,7 @@ pub async fn transfer_bot_message_auto_command(
         config,
         request_chat_id,
         request_message_id,
+        actor,
         client_id,
     )
     .await
@@ -99,6 +120,7 @@ async fn run_transfer_plan(
     config: Arc<BotConfig>,
     request_chat_id: i64,
     request_message_id: i64,
+    actor: RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     // 链接源的策略是“bot 优先，user 备用”；如果当前配置没有 bot client，
@@ -113,9 +135,12 @@ async fn run_transfer_plan(
     let target_chat_id = resolve_transfer_target_chat_id(&text, &source, &config, request_chat_id)?;
 
     let plan = TransferPlan {
+        actor,
         source_link: source.source_link,
         source_kind: source.source_kind,
         preferred_source_client_role: source.preferred_source_client_role,
+        allow_user_fallback: actor.is_admin(),
+        billing: config.billing.clone(),
         source_message_chat_id: source.source_message_chat_id,
         source_message_id: source.source_message_id,
         target_chat_id,
@@ -140,6 +165,8 @@ async fn dispatch_transfer_plan(
         target_chat_id = plan.target_chat_id,
         source_kind = plan.source_kind.as_str(),
         source_role = plan.preferred_source_client_role.as_str(),
+        owner_user_id = plan.actor.user_id,
+        actor_role = plan.actor.role.as_str(),
         "transfer command accepted"
     );
 
@@ -171,6 +198,7 @@ async fn dispatch_transfer_plan(
     .await?;
     // 后台任务会持续编辑这条消息，把它变成转存进度面板。
     super::super::spawn_transfer_job(
+        crate::app_context::app_context(),
         plan,
         request_chat_id,
         Some(progress_message.id),
@@ -316,16 +344,23 @@ mod tests {
         resolve_transfer_target_chat_id,
     };
     use crate::ClientRole;
-    use crate::config::BotConfig;
+    use crate::config::{ActorRole, BillingConfig, BotConfig, RequestActor};
     use crate::tgbot::transfer::types::{SourceKind, TransferPlan};
 
     // 首次回执应直接使用卡片标记，后续编辑不会从 Markdown 样式跳到 card 样式。
     #[test]
     fn test_format_transfer_accepted_text() {
         let text = format_transfer_accepted_text(&TransferPlan {
+            actor: RequestActor {
+                request_chat_id: 1,
+                user_id: 1,
+                role: ActorRole::Admin,
+            },
             source_link: "https://t.me/c/1/2".to_owned(),
             source_kind: SourceKind::Link,
             preferred_source_client_role: ClientRole::Bot,
+            allow_user_fallback: true,
+            billing: BillingConfig::default(),
             source_message_chat_id: None,
             source_message_id: None,
             target_chat_id: -100,

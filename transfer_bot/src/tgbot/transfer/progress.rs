@@ -23,6 +23,7 @@ mod text;
 ///
 /// 这里不直接参与下载/上传，只读取数据库快照；即使编辑失败，也不能影响后台转存任务。
 pub(super) async fn update_transfer_progress_message(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: types::TransferPlan,
     notify_chat_id: i64,
     message_id: i64,
@@ -38,14 +39,17 @@ pub(super) async fn update_transfer_progress_message(
         let snapshot = match store::find_active_job_id_by_source_target(
             &plan.source_link,
             plan.target_chat_id,
+            plan.actor.owner_scope(),
         )
         .await
         {
             // 进度面板只需要 job_id，具体展示字段由轻量快照查询读取。
-            Ok(Some(job_id)) => store::get_job_progress_snapshot(job_id)
-                .await
-                .ok()
-                .flatten(),
+            Ok(Some(job_id)) => {
+                store::get_job_progress_snapshot_with_context(app_context.as_ref(), job_id)
+                    .await
+                    .ok()
+                    .flatten()
+            }
             Ok(None) => None,
             Err(err) => {
                 tracing::warn!("load transfer progress failed: {:#}", err);
@@ -83,7 +87,9 @@ pub(super) async fn update_transfer_progress_message(
         }
 
         // 进度编辑间隔从运行时配置读取，避免频繁 editMessageText 触发 Telegram 限流。
-        let interval = super::runtime_config()
+        let interval = app_context
+            .transfer_runtime
+            .runtime_config()
             .progress_edit_interval_seconds
             .max(1);
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;

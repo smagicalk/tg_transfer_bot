@@ -4,5 +4,5 @@
 mod progress;
 mod singleflight;
 
-pub use progress::{get_download_progress, update_download_progress};
+pub use progress::get_download_progress;
 pub use singleflight::run_singleflight;

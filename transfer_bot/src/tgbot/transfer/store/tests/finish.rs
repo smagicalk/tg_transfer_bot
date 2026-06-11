@@ -3,6 +3,7 @@
 use super::super::*;
 use super::fixtures::*;
 use crate::db;
+use sea_orm::ActiveModelTrait;
 use sea_orm::EntityTrait;
 
 /// 主任务完成和文件引用释放必须在同一事务提交。
@@ -38,6 +39,77 @@ async fn test_finish_job_releases_file_refs_in_same_flow() -> anyhow::Result<()>
         .expect("file cache must exist");
     assert_eq!(cache.active_refs, 0);
     assert!(cache.delete_after.is_some());
+    Ok(())
+}
+
+/// 全部失败时应退回普通用户已扣积分，并把计费状态标记为 refunded。
+#[tokio::test]
+async fn test_finish_failed_job_refunds_charged_points() -> anyhow::Result<()> {
+    let _guard = db::TEST_DB_LOCK.lock().await;
+    let db_conn = prepare_test_schema().await?;
+    let job = insert_charged_job(JOB_STATUS_RUNNING, 5).await?;
+
+    let finished = finish_job(
+        job.clone(),
+        0,
+        1,
+        Some("upload failed".to_owned()),
+        None,
+        None,
+        2,
+    )
+    .await?;
+
+    assert!(finished);
+    let job = db::transfer_job::Entity::find_by_id(job.id)
+        .one(db_conn)
+        .await?
+        .expect("job must exist");
+    assert_eq!(job.status, JOB_STATUS_FAILED);
+    assert_eq!(job.billing_status, "refunded");
+
+    let account = get_user_account(job.owner_user_id)
+        .await?
+        .expect("account should exist");
+    assert_eq!(account.points_balance, 5);
+    assert_eq!(account.total_points_spent, 0);
+    Ok(())
+}
+
+/// 部分成功已经产生目标消息，只按失败条目占比退回部分积分。
+#[tokio::test]
+async fn test_finish_partial_job_refunds_failed_item_ratio() -> anyhow::Result<()> {
+    let _guard = db::TEST_DB_LOCK.lock().await;
+    let db_conn = prepare_test_schema().await?;
+    let mut job = insert_charged_job(JOB_STATUS_RUNNING, 5).await?;
+    let mut active: db::transfer_job::ActiveModel = job.clone().into();
+    active.total_items = sea_orm::ActiveValue::Set(2);
+    job = active.update(db_conn).await?;
+
+    let finished = finish_job(
+        job.clone(),
+        1,
+        1,
+        Some("one item failed".to_owned()),
+        Some(710),
+        Some("https://t.me/c/1/710".to_owned()),
+        2,
+    )
+    .await?;
+
+    assert!(finished);
+    let job = db::transfer_job::Entity::find_by_id(job.id)
+        .one(db_conn)
+        .await?
+        .expect("job must exist");
+    assert_eq!(job.status, JOB_STATUS_PARTIAL);
+    assert_eq!(job.billing_status, "refunded");
+
+    let account = get_user_account(job.owner_user_id)
+        .await?
+        .expect("account should exist");
+    assert_eq!(account.points_balance, 2);
+    assert_eq!(account.total_points_spent, 3);
     Ok(())
 }
 

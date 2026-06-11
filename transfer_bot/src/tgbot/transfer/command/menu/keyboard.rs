@@ -1,145 +1,89 @@
-// `/menu` 按钮和 callback payload。
-// payload 保持短格式，避免超过 Telegram callback_data 长度限制。
+// `/menu` 按钮布局。
+// callback payload 协议放在 `callback` module，避免按钮布局和协议解析混在一起。
 
 use crate::tgbot::send;
 
 use super::super::super::store;
-use super::super::common::{CommandStyle, config_show_command, lookup_command};
+use super::super::common::{CommandStyle, balance_history_command, lookup_command};
 use super::super::downloads::build_downloads_menu_callback_data;
 use super::super::help;
-use super::super::job::build_job_status_callback_data;
-
-/// 菜单按钮回调前缀。
-const MENU_CALLBACK_PREFIX: &str = "m:";
-
-/// 菜单页。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MenuPage {
-    Home,
-    Transfer,
-    Downloads,
-    Jobs,
-    Lookup,
-    Config,
-    Help,
-}
-
-impl MenuPage {
-    /// 页面标题，用于 callback 提示和文本标题。
-    pub(super) fn title(self) -> &'static str {
-        match self {
-            Self::Home => "菜单",
-            Self::Transfer => "转存",
-            Self::Downloads => "下载",
-            Self::Jobs => "任务",
-            Self::Lookup => "查询",
-            Self::Config => "配置",
-            Self::Help => "帮助",
-        }
-    }
-
-    /// 页面短编码，写进 callback payload。
-    fn code(self) -> &'static str {
-        match self {
-            Self::Home => "home",
-            Self::Transfer => "t",
-            Self::Downloads => "d",
-            Self::Jobs => "j",
-            Self::Lookup => "lk",
-            Self::Config => "cfg",
-            Self::Help => "h",
-        }
-    }
-
-    /// 从 callback 短编码解析页面。
-    fn parse(code: &str) -> Option<Self> {
-        match code {
-            "home" => Some(Self::Home),
-            "t" => Some(Self::Transfer),
-            "d" => Some(Self::Downloads),
-            "j" => Some(Self::Jobs),
-            "lk" => Some(Self::Lookup),
-            "cfg" => Some(Self::Config),
-            "h" => Some(Self::Help),
-            _ => None,
-        }
-    }
-}
-
-/// 菜单 callback 动作。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MenuRequestAction {
-    Page(MenuPage),
-    NewTransfer,
-    QuickTransferDefault,
-    NewLookup,
-    QuickLookupDefault,
-}
-
-/// 判断 callback payload 是否属于 `/menu`。
-pub(super) fn is_menu_callback_data(data: &str) -> bool {
-    data.starts_with(MENU_CALLBACK_PREFIX)
-}
-
-/// 解析菜单 callback payload。
-pub(super) fn parse_menu_callback_data(data: &str) -> Option<MenuRequestAction> {
-    let payload = data.strip_prefix(MENU_CALLBACK_PREFIX)?;
-    match payload {
-        "new" => Some(MenuRequestAction::NewTransfer),
-        "qtd" => Some(MenuRequestAction::QuickTransferDefault),
-        "qlk" => Some(MenuRequestAction::NewLookup),
-        "qld" => Some(MenuRequestAction::QuickLookupDefault),
-        page_code => MenuPage::parse(page_code).map(MenuRequestAction::Page),
-    }
-}
+use super::super::job::{
+    build_job_pause_callback_data, build_job_resume_callback_data, build_job_status_callback_data,
+    build_job_stop_callback_data,
+};
+use super::super::{build_cache_button_data, build_health_button_data};
+use super::callback::{self, MenuPage};
+use super::input::{MenuDraftSummary, MenuJobAction};
 
 /// 构建当前菜单页按钮。
 pub(super) fn build_menu_buttons(
     page: MenuPage,
     recent_jobs: &[store::JobProgressSnapshot],
+    is_admin: bool,
+    draft_summary: Option<&MenuDraftSummary>,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     match page {
-        MenuPage::Home => home_buttons(recent_jobs),
+        MenuPage::Home => home_buttons(recent_jobs, is_admin, draft_summary),
         MenuPage::Transfer => transfer_buttons(),
         MenuPage::Downloads => downloads_buttons(),
         MenuPage::Jobs => jobs_buttons(),
         MenuPage::Lookup => lookup_buttons(),
-        MenuPage::Config => config_buttons(),
-        MenuPage::Help => help_buttons(),
+        MenuPage::Config if is_admin => config_buttons(),
+        MenuPage::Config => user_home_fallback_buttons(),
+        MenuPage::Help => help_buttons(is_admin),
     }
 }
 
 /// 首页按钮。
 fn home_buttons(
     recent_jobs: &[store::JobProgressSnapshot],
+    is_admin: bool,
+    draft_summary: Option<&MenuDraftSummary>,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let mut rows = vec![
         vec![
-            menu_nav_button(
-                "转存",
-                MenuPage::Transfer,
+            send::build_callback_button(
+                "开始转存",
+                &callback::new_transfer_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
+            send::build_callback_button(
+                "快速转存",
+                &callback::quick_transfer_default_callback_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "快速查询",
+                &callback::quick_lookup_default_callback_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![
+            downloads_button("运行任务", "run", tdlib_rs::enums::ButtonStyle::Primary),
+            downloads_button("失败任务", "fail", tdlib_rs::enums::ButtonStyle::Default),
+            downloads_button("已暂停", "pause", tdlib_rs::enums::ButtonStyle::Default),
+        ],
+        vec![
             menu_nav_button(
-                "下载",
+                "下载列表",
                 MenuPage::Downloads,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             menu_nav_button(
-                "任务",
+                "任务控制",
                 MenuPage::Jobs,
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            menu_nav_button(
+                "转存页",
+                MenuPage::Transfer,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
         vec![
             menu_nav_button(
-                "查询",
+                "查询页",
                 MenuPage::Lookup,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            menu_nav_button(
-                "配置",
-                MenuPage::Config,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             menu_nav_button(
@@ -147,13 +91,67 @@ fn home_buttons(
                 MenuPage::Help,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+            send::build_copy_button(
+                "复制 /balance",
+                "/balance",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制流水",
+                &balance_history_command(10, 1, CommandStyle::Long),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
         ],
         vec![send::build_copy_button(
-            "复制 /m",
-            "/m",
+            "复制 /menu",
+            "/menu",
             tdlib_rs::enums::ButtonStyle::Default,
         )],
     ];
+    if let Some(draft) = draft_summary {
+        rows.insert(
+            0,
+            vec![
+                send::build_callback_button(
+                    &format!("继续输入：{}", draft.title),
+                    &callback::continue_input_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_callback_button(
+                    "取消输入",
+                    &callback::cancel_input_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Danger,
+                ),
+            ],
+        );
+    }
+    if is_admin {
+        rows.insert(
+            4,
+            vec![
+                menu_nav_button(
+                    "运行配置",
+                    MenuPage::Config,
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_callback_button(
+                    "运行健康",
+                    &build_health_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_callback_button(
+                    "文件缓存",
+                    &build_cache_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_callback_button(
+                    "用户流水",
+                    &callback::point_ledger_user_input_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
+        );
+    }
     rows.extend(recent_job_buttons(recent_jobs));
     rows
 }
@@ -163,24 +161,32 @@ fn transfer_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
         vec![
             send::build_callback_button(
-                "快速转存",
-                &menu_callback_data("qtd"),
+                "开始转存",
+                &callback::new_transfer_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             send::build_callback_button(
-                "指定目标",
-                &menu_callback_data("new"),
+                "快速转存",
+                &callback::quick_transfer_default_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
         vec![
-            send::build_copy_button("复制 /t", "/t ", tdlib_rs::enums::ButtonStyle::Default),
             send::build_copy_button(
-                "复制完整模板",
-                "/t <link> <target_chat_id>",
+                "复制命令",
+                "/transfer ",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-            send::build_copy_button("复制取消", "/cancel", tdlib_rs::enums::ButtonStyle::Default),
+            send::build_copy_button(
+                "复制完整命令",
+                "/transfer <link> <target_chat_id>",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制取消命令",
+                "/cancel",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
         ],
         footer_buttons(MenuPage::Transfer),
     ]
@@ -192,18 +198,36 @@ fn downloads_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
         vec![
             downloads_button("全部", "all", tdlib_rs::enums::ButtonStyle::Primary),
             downloads_button("运行", "run", tdlib_rs::enums::ButtonStyle::Default),
+            downloads_button("等待", "wait", tdlib_rs::enums::ButtonStyle::Default),
+        ],
+        vec![
             downloads_button("下载", "dl", tdlib_rs::enums::ButtonStyle::Default),
+            downloads_button("上传", "up", tdlib_rs::enums::ButtonStyle::Default),
+            downloads_button("就绪", "ready", tdlib_rs::enums::ButtonStyle::Default),
         ],
         vec![
             downloads_button("完成", "done", tdlib_rs::enums::ButtonStyle::Default),
+            downloads_button("成功", "ok", tdlib_rs::enums::ButtonStyle::Default),
             downloads_button("失败", "fail", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button("暂停", "pause", tdlib_rs::enums::ButtonStyle::Default),
         ],
         vec![
-            send::build_copy_button("复制 /d", "/d", tdlib_rs::enums::ButtonStyle::Default),
+            downloads_button("暂停", "pause", tdlib_rs::enums::ButtonStyle::Default),
+            downloads_button(
+                "停止中",
+                "cancelling",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            downloads_button("已停止", "cancel", tdlib_rs::enums::ButtonStyle::Default),
+        ],
+        vec![
             send::build_copy_button(
-                "复制 /d run",
-                "/d run",
+                "复制 /downloads",
+                "/downloads",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制 /downloads run",
+                "/downloads run",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
@@ -220,14 +244,51 @@ fn jobs_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
             downloads_button("暂停任务", "pause", tdlib_rs::enums::ButtonStyle::Default),
         ],
         vec![
+            downloads_button(
+                "停止中",
+                "cancelling",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            downloads_button("已停止", "cancel", tdlib_rs::enums::ButtonStyle::Default),
+            downloads_button("失败任务", "fail", tdlib_rs::enums::ButtonStyle::Default),
+        ],
+        vec![
+            downloads_button("成功任务", "ok", tdlib_rs::enums::ButtonStyle::Default),
+            downloads_button("就绪任务", "ready", tdlib_rs::enums::ButtonStyle::Default),
+        ],
+        vec![
+            job_id_input_button(
+                "输入详情",
+                MenuJobAction::Status,
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            job_id_input_button(
+                "输入暂停",
+                MenuJobAction::Pause,
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![
+            job_id_input_button(
+                "输入恢复",
+                MenuJobAction::Resume,
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            job_id_input_button(
+                "输入停止",
+                MenuJobAction::Stop,
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![
             send::build_copy_button(
                 "详情模板",
-                "/j st <job_id>",
+                "/job st <job_id>",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
                 "停止模板",
-                "/j s <job_id>",
+                "/job s <job_id>",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
@@ -241,21 +302,24 @@ fn lookup_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
         vec![
             send::build_callback_button(
                 "快速查询",
-                &menu_callback_data("qld"),
+                &callback::quick_lookup_default_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             send::build_callback_button(
                 "指定目标",
-                &menu_callback_data("qlk"),
+                &callback::new_lookup_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
         vec![
-            send::build_copy_button("复制 /lk", "/lk ", tdlib_rs::enums::ButtonStyle::Default),
+            send::build_copy_button(
+                "复制 /lookup",
+                "/lookup ",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
             send::build_copy_button(
                 "复制模板",
-                &lookup_command("<link>", 0, CommandStyle::Short)
-                    .replace(" 0", " <target_chat_id>"),
+                &lookup_command("<link>", 0, CommandStyle::Long).replace(" 0", " <target_chat_id>"),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
@@ -280,12 +344,14 @@ fn recent_job_buttons(
         return Vec::new();
     }
 
-    let mut rows = vec![vec![send::build_copy_button(
-        "最近任务",
-        "/d",
+    let recent_list_data =
+        build_downloads_menu_callback_data("all", 8).expect("all downloads filter must be valid");
+    let mut rows = vec![vec![send::build_callback_button(
+        "查看最近任务",
+        &recent_list_data,
         tdlib_rs::enums::ButtonStyle::Primary,
     )]];
-    let detail_buttons = recent_jobs
+    let detail_rows = recent_jobs
         .iter()
         .take(5)
         .map(|snapshot| {
@@ -298,81 +364,168 @@ fn recent_job_buttons(
             } else {
                 tdlib_rs::enums::ButtonStyle::Default
             };
-            send::build_callback_button(
-                &format!("详情 #{} {}", snapshot.job.id, snapshot.job.status),
+            let job_id = snapshot.job.id;
+            let mut row = vec![send::build_callback_button(
+                &format!("#{} {}", snapshot.job.id, snapshot.job.status),
                 &build_job_status_callback_data(snapshot.job.id),
                 style,
-            )
+            )];
+            row.extend(recent_job_control_buttons(job_id, status));
+            row
         })
         .collect::<Vec<_>>();
-    rows.extend(detail_buttons.chunks(2).map(<[_]>::to_vec));
+    rows.extend(detail_rows);
     rows
 }
 
-/// 旧版配置复制按钮。
+/// 首页最近任务快捷控制。
 ///
-/// 留给测试或回退排查使用；菜单和 `/cfg` 当前都走 `config_cmd::build_config_buttons`。
-#[allow(dead_code)]
-fn legacy_config_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
-        vec![
-            send::build_copy_button(
-                "复制查看配置",
-                &config_show_command(CommandStyle::Short),
+/// 这里和 `/downloads` 一样只生成 `/job` callback，不直接改任务状态。
+fn recent_job_control_buttons(
+    job_id: i64,
+    status: &str,
+) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    if matches!(
+        status,
+        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING
+    ) {
+        return vec![
+            send::build_callback_button(
+                "暂停",
+                &build_job_pause_callback_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "停止",
+                &build_job_stop_callback_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ];
+    }
+
+    if status == store::JOB_STATUS_PAUSED {
+        return vec![
+            send::build_callback_button(
+                "恢复",
+                &build_job_resume_callback_data(job_id),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
-            send::build_copy_button(
-                "并发=2",
-                "/cfg set job_concurrency 2",
+            send::build_callback_button(
+                "停止",
+                &build_job_stop_callback_data(job_id),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-        ],
-        vec![
-            send::build_copy_button(
-                "延迟=2m",
-                "/cfg set file_delete_delay_minutes 2",
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "GC=30s",
-                "/cfg set file_gc_interval_seconds 30",
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        footer_buttons(MenuPage::Config),
-    ]
+        ];
+    }
+
+    Vec::new()
 }
 
 /// 帮助页按钮。
-fn help_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
+fn help_buttons(is_admin: bool) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut rows = vec![
+        vec![send::build_callback_button(
+            "帮助目录",
+            &help::build_help_callback_data(None),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        )],
         vec![
-            send::build_callback_button(
-                "帮助目录",
-                &help::build_help_callback_data(None),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
             send::build_callback_button(
                 "转存帮助",
                 &help::build_help_callback_data(Some("transfer")),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_callback_button(
-                "任务帮助",
-                &help::build_help_callback_data(Some("job")),
+                "查询帮助",
+                &help::build_help_callback_data(Some("lookup")),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "下载帮助",
+                &help::build_help_callback_data(Some("downloads")),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
         vec![
-            send::build_copy_button("复制 /h", "/h", tdlib_rs::enums::ButtonStyle::Default),
+            send::build_callback_button(
+                "任务帮助",
+                &help::build_help_callback_data(Some("job")),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "积分帮助",
+                &help::build_help_callback_data(Some("points")),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![
+            send::build_callback_button(
+                "配置帮助",
+                &help::build_help_callback_data(Some("config")),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单帮助",
+                &help::build_help_callback_data(Some("menu")),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![send::build_callback_button(
+            "帮助说明",
+            &help::build_help_callback_data(Some("help")),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )],
+        vec![
+            send::build_copy_button("复制 /help", "/help", tdlib_rs::enums::ButtonStyle::Default),
             send::build_copy_button(
-                "复制 /h transfer",
-                "/h transfer",
+                "复制 /help transfer",
+                "/help transfer",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
         footer_buttons(MenuPage::Help),
+    ];
+    if !is_admin {
+        rows.retain(|row| !row.iter().any(|button| button.text == "配置帮助"));
+    }
+    rows
+}
+
+/// 普通用户误入 admin 配置页时只保留安全导航。
+fn user_home_fallback_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![
+            menu_nav_button(
+                "首页",
+                MenuPage::Home,
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            menu_nav_button(
+                "帮助",
+                MenuPage::Help,
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![send::build_copy_button(
+            "复制 /balance",
+            "/balance",
+            tdlib_rs::enums::ButtonStyle::Default,
+        )],
+        vec![send::build_copy_button(
+            "复制积分流水",
+            &balance_history_command(10, 1, CommandStyle::Long),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )],
     ]
+}
+
+/// 构建等待用户输入 job_id 的任务控制按钮。
+fn job_id_input_button(
+    text: &str,
+    action: MenuJobAction,
+    style: tdlib_rs::enums::ButtonStyle,
+) -> tdlib_rs::types::InlineKeyboardButton {
+    send::build_callback_button(text, &callback::job_id_input_callback_data(action), style)
 }
 
 /// 构建下载筛选 callback 按钮。
@@ -381,22 +534,18 @@ fn downloads_button(
     filter: &str,
     style: tdlib_rs::enums::ButtonStyle,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    let data = build_downloads_menu_callback_data(filter, 8).unwrap_or_else(|| "/d".to_owned());
+    let data =
+        build_downloads_menu_callback_data(filter, 8).expect("menu downloads filter must be valid");
     send::build_callback_button(text, &data, style)
 }
 
 /// 构建统一页脚按钮。
 ///
-/// 第一版没有多级历史栈，“返回”统一回首页，“刷新”刷新当前页。
+/// 第一版没有多级历史栈，因此只保留“首页”和“刷新”，避免“返回”和“首页”同义造成误解。
 fn footer_buttons(current_page: MenuPage) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
     vec![
         menu_nav_button(
             "首页",
-            MenuPage::Home,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        menu_nav_button(
-            "返回",
             MenuPage::Home,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -410,52 +559,22 @@ fn menu_nav_button(
     page: MenuPage,
     style: tdlib_rs::enums::ButtonStyle,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    send::build_callback_button(text, &menu_callback_data(page.code()), style)
-}
-
-/// 生成菜单 callback payload。
-fn menu_callback_data(action: &str) -> String {
-    format!("{}{}", MENU_CALLBACK_PREFIX, action)
+    send::build_callback_button(text, &callback::menu_page_callback_data(page), style)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // 菜单 callback 数据应能区分页面切换和新建转存动作。
-    #[test]
-    fn test_parse_menu_callback_data() {
-        assert_eq!(
-            parse_menu_callback_data("m:home"),
-            Some(MenuRequestAction::Page(MenuPage::Home))
-        );
-        assert_eq!(
-            parse_menu_callback_data("m:new"),
-            Some(MenuRequestAction::NewTransfer)
-        );
-        assert_eq!(
-            parse_menu_callback_data("m:qtd"),
-            Some(MenuRequestAction::QuickTransferDefault)
-        );
-        assert_eq!(
-            parse_menu_callback_data("m:qlk"),
-            Some(MenuRequestAction::NewLookup)
-        );
-        assert_eq!(
-            parse_menu_callback_data("m:qld"),
-            Some(MenuRequestAction::QuickLookupDefault)
-        );
-        assert_eq!(parse_menu_callback_data("x:new"), None);
-    }
-
-    // 首页应提供六个主要入口，保持日常操作足够短。
+    // 首页应提供主要入口，保持日常操作足够短。
     #[test]
     fn test_home_buttons() {
-        let rows = build_menu_buttons(MenuPage::Home, &[]);
+        let rows = build_menu_buttons(MenuPage::Home, &[], true, None);
 
-        assert_eq!(rows[0][0].text, "转存");
-        assert_eq!(rows[0][1].text, "下载");
-        assert_eq!(rows[1][0].text, "查询");
+        assert_eq!(rows[0][0].text, "开始转存");
+        assert_eq!(rows[0][1].text, "快速转存");
+        assert_eq!(rows[0][2].text, "快速查询");
+        assert_eq!(rows[1][0].text, "运行任务");
     }
 
     // 下载按钮应直接复用 downloads callback，不让菜单重复实现分页逻辑。
@@ -463,7 +582,7 @@ mod tests {
     fn test_downloads_buttons_use_downloads_callback() {
         use base64::{Engine as _, engine::general_purpose};
 
-        let rows = build_menu_buttons(MenuPage::Downloads, &[]);
+        let rows = build_menu_buttons(MenuPage::Downloads, &[], true, None);
 
         let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
         else {
@@ -479,7 +598,7 @@ mod tests {
     fn test_help_buttons_use_help_callback() {
         use base64::{Engine as _, engine::general_purpose};
 
-        let rows = build_menu_buttons(MenuPage::Help, &[]);
+        let rows = build_menu_buttons(MenuPage::Help, &[], true, None);
 
         let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
         else {
@@ -488,5 +607,216 @@ mod tests {
         let decoded =
             String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
         assert!(decoded.starts_with("h:"));
+    }
+
+    // 首页存在最近任务时，“查看最近任务”应直接进入下载列表，而不是只复制命令。
+    #[test]
+    fn test_recent_jobs_button_uses_downloads_callback() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let rows = build_menu_buttons(
+            MenuPage::Home,
+            &[snapshot_with_status("running")],
+            true,
+            None,
+        );
+        let recent = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "查看最近任务")
+            .expect("home should have recent jobs button");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &recent.r#type else {
+            panic!("recent jobs button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert!(decoded.starts_with("d:"));
+    }
+
+    // 首页最近任务应能直接暂停/停止，减少进入详情页再操作的步骤。
+    #[test]
+    fn test_recent_jobs_have_inline_controls() {
+        let rows = build_menu_buttons(
+            MenuPage::Home,
+            &[snapshot_with_status("running")],
+            true,
+            None,
+        );
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"暂停"));
+        assert!(labels.contains(&"停止"));
+    }
+
+    // 首页应提供直接状态跳转，避免还要先进下载页再选筛选器。
+    #[test]
+    fn test_home_buttons_have_status_shortcuts() {
+        let rows = build_menu_buttons(MenuPage::Home, &[], true, None);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"运行任务"));
+        assert!(labels.contains(&"失败任务"));
+        assert!(labels.contains(&"已暂停"));
+    }
+
+    // admin 首页应提供用户积分流水入口，避免手打 `/points history <user_id>`。
+    #[test]
+    fn test_home_buttons_have_admin_point_ledger_input() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let rows = build_menu_buttons(MenuPage::Home, &[], true, None);
+        let button = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "用户流水")
+            .expect("admin home should have point ledger input");
+
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type else {
+            panic!("point ledger input must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "m:pl");
+    }
+
+    // 首页存在未完成输入时，应把恢复动作放在最前面，避免用户重新开始导致旧草稿残留。
+    #[test]
+    fn test_home_buttons_show_pending_input_shortcuts() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let draft = MenuDraftSummary {
+            title: "快速转存"
+        };
+        let rows = build_menu_buttons(MenuPage::Home, &[], true, Some(&draft));
+
+        assert_eq!(rows[0][0].text, "继续输入：快速转存");
+        assert_eq!(rows[0][1].text, "取消输入");
+
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
+        else {
+            panic!("continue input button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "m:ci");
+    }
+
+    // 下载菜单应覆盖 `/downloads` 当前支持的全部筛选参数。
+    #[test]
+    fn test_downloads_buttons_cover_all_filters() {
+        let rows = build_menu_buttons(MenuPage::Downloads, &[], true, None);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        for expected in [
+            "全部",
+            "运行",
+            "等待",
+            "下载",
+            "上传",
+            "就绪",
+            "完成",
+            "成功",
+            "失败",
+            "暂停",
+            "停止中",
+            "已停止",
+        ] {
+            assert!(
+                labels.contains(&expected),
+                "missing downloads filter: {expected}"
+            );
+        }
+    }
+
+    // 帮助菜单应覆盖所有 help topic，不让用户必须记 `/help <topic>`。
+    #[test]
+    fn test_help_buttons_cover_all_topics() {
+        let rows = build_menu_buttons(MenuPage::Help, &[], true, None);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        for expected in [
+            "帮助目录",
+            "转存帮助",
+            "查询帮助",
+            "下载帮助",
+            "任务帮助",
+            "积分帮助",
+            "配置帮助",
+            "菜单帮助",
+            "帮助说明",
+        ] {
+            assert!(labels.contains(&expected), "missing help topic: {expected}");
+        }
+    }
+
+    // 任务菜单应同时提供列表筛选、job_id 输入向导和复制模板。
+    #[test]
+    fn test_jobs_buttons_have_job_id_input_callbacks() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let rows = build_menu_buttons(MenuPage::Jobs, &[], true, None);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        for expected in ["输入详情", "输入暂停", "输入恢复", "输入停止"] {
+            assert!(labels.contains(&expected), "missing job input: {expected}");
+        }
+
+        let status_button = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "输入详情")
+            .expect("status input button should exist");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &status_button.r#type
+        else {
+            panic!("job input button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "m:jst");
+    }
+
+    fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
+        let now = store::now_utc8();
+        store::JobProgressSnapshot {
+            job: store::JobProgressJob {
+                id: 42,
+                target_chat_id: -100,
+                status: status.to_owned(),
+                total_items: 1,
+                created_at: now,
+                updated_at: now,
+            },
+            pending_count: 0,
+            preparing_count: 0,
+            prepared_count: 0,
+            uploading_count: 0,
+            success_count: 0,
+            failed_count: 0,
+            cancelled_count: 0,
+            active_download_files: 0,
+            active_downloaded_bytes: 0,
+            active_download_total_bytes: 0,
+            has_unknown_download_total: false,
+        }
     }
 }

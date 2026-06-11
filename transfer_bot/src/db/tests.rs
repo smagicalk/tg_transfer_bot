@@ -1,12 +1,11 @@
 // 数据库模块测试：
-// - migration up/down
+// - schema create / rebuild
 // - 基础插入
 // - request 级任务创建语义
 // - file_cache 去重插入
 
 use super::*;
 use crate::logs::init_tracing;
-use migration::MigratorTrait;
 use rand::RngExt;
 use rand::distr::SampleString;
 use sea_orm::ColumnTrait;
@@ -30,11 +29,13 @@ async fn get_transfer_job() -> transfer_job::ActiveModel {
     transfer_job::ActiveModel {
         request_chat_id: sea_orm::ActiveValue::set(rand::rng().random_range(1..=100000)),
         request_message_id: sea_orm::ActiveValue::set(rand::rng().random_range(1..=100000)),
+        owner_user_id: sea_orm::ActiveValue::set(rand::rng().random_range(1..=100000)),
         source_link: sea_orm::ActiveValue::set(
             rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 32),
         ),
         source_kind: sea_orm::ActiveValue::set("link".to_owned()),
         source_client_role: sea_orm::ActiveValue::set("user".to_owned()),
+        allow_user_fallback: sea_orm::ActiveValue::set(false),
         source_chat_id: sea_orm::ActiveValue::set(rand::rng().random_range(1..=100000)),
         source_message_id: sea_orm::ActiveValue::set(rand::rng().random_range(1..=100000)),
         source_album_id: sea_orm::ActiveValue::set(rand::rng().random_range(0..=100000)),
@@ -46,6 +47,9 @@ async fn get_transfer_job() -> transfer_job::ActiveModel {
         done_items: sea_orm::ActiveValue::set(0),
         failed_items: sea_orm::ActiveValue::set(0),
         retry_count: sea_orm::ActiveValue::set(0),
+        cost_points: sea_orm::ActiveValue::set(0),
+        charged_points: sea_orm::ActiveValue::set(0),
+        billing_status: sea_orm::ActiveValue::set("free".to_owned()),
         last_error: sea_orm::ActiveValue::set(None),
         created_at: sea_orm::ActiveValue::set(now),
         updated_at: sea_orm::ActiveValue::set(now),
@@ -95,20 +99,53 @@ async fn get_file_cache(file_key: String) -> file_cache::ActiveModel {
     }
 }
 
+/// 构造 menu_input_draft 测试数据。
+async fn get_menu_input_draft() -> menu_input_draft::ActiveModel {
+    let now = now_utc8();
+    menu_input_draft::ActiveModel {
+        request_chat_id: sea_orm::ActiveValue::set(rand::rng().random_range(1..=100000)),
+        sender_user_id: sea_orm::ActiveValue::set(rand::rng().random_range(1..=100000)),
+        step: sea_orm::ActiveValue::set("source_link".to_owned()),
+        input_kind: sea_orm::ActiveValue::set(Some("transfer".to_owned())),
+        job_action: sea_orm::ActiveValue::set(None),
+        source_link: sea_orm::ActiveValue::set(None),
+        target_chat_id: sea_orm::ActiveValue::set(None),
+        created_at: sea_orm::ActiveValue::set(now),
+        updated_at: sea_orm::ActiveValue::set(now),
+        expires_at: sea_orm::ActiveValue::set(now + chrono::Duration::minutes(10)),
+    }
+}
+
+/// 构造 user_account 测试数据。
+async fn get_user_account(telegram_user_id: i64) -> user_account::ActiveModel {
+    let now = now_utc8();
+    user_account::ActiveModel {
+        telegram_user_id: sea_orm::ActiveValue::set(telegram_user_id),
+        role: sea_orm::ActiveValue::set("user".to_owned()),
+        points_balance: sea_orm::ActiveValue::set(10),
+        total_points_added: sea_orm::ActiveValue::set(10),
+        total_points_spent: sea_orm::ActiveValue::set(0),
+        created_at: sea_orm::ActiveValue::set(now),
+        updated_at: sea_orm::ActiveValue::set(now),
+    }
+}
+
 #[tokio::test]
-async fn test_migration_up() -> anyhow::Result<()> {
+async fn test_schema_create() -> anyhow::Result<()> {
     let _guard = super::TEST_DB_LOCK.lock().await;
     init_tracing();
-    migration::Migrator::up(get_db().await?, None).await?;
+    ensure_runtime_schema(get_db().await?).await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn test_migration_down() -> anyhow::Result<()> {
+async fn test_schema_rebuild() -> anyhow::Result<()> {
     let _guard = super::TEST_DB_LOCK.lock().await;
     init_tracing();
-    migration::Migrator::up(get_db().await?, None).await?;
-    migration::Migrator::down(get_db().await?, None).await?;
+    let db = get_db().await?;
+    ensure_runtime_schema(db).await?;
+    rebuild_test_schema(db).await?;
+    assert!(test_schema_has_required_columns(db).await?);
     Ok(())
 }
 
@@ -123,6 +160,29 @@ async fn test_insert() -> anyhow::Result<()> {
         .on_conflict_do_nothing()
         .exec(db)
         .await?;
+    menu_input_draft::Entity::insert(get_menu_input_draft().await)
+        .on_conflict_do_nothing()
+        .exec(db)
+        .await?;
+    let telegram_user_id = rand::rng().random_range(1..=100000);
+    user_account::Entity::insert(get_user_account(telegram_user_id).await)
+        .exec(db)
+        .await?;
+    point_ledger::ActiveModel {
+        telegram_user_id: sea_orm::ActiveValue::set(telegram_user_id),
+        delta: sea_orm::ActiveValue::set(10),
+        balance_after: sea_orm::ActiveValue::set(10),
+        reason: sea_orm::ActiveValue::set("test".to_owned()),
+        job_id: sea_orm::ActiveValue::set(None),
+        request_chat_id: sea_orm::ActiveValue::set(None),
+        request_message_id: sea_orm::ActiveValue::set(None),
+        idempotency_key: sea_orm::ActiveValue::set(None),
+        created_by: sea_orm::ActiveValue::set(None),
+        created_at: sea_orm::ActiveValue::set(now_utc8()),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
     Ok(())
 }
 
@@ -146,9 +206,11 @@ async fn test_same_link_can_create_different_jobs() -> anyhow::Result<()> {
     let job1 = transfer_job::ActiveModel {
         request_chat_id: sea_orm::ActiveValue::set(request_chat_id1),
         request_message_id: sea_orm::ActiveValue::set(request_message_id1),
+        owner_user_id: sea_orm::ActiveValue::set(request_chat_id1),
         source_link: sea_orm::ActiveValue::set(source_link.clone()),
         source_kind: sea_orm::ActiveValue::set("link".to_owned()),
         source_client_role: sea_orm::ActiveValue::set("user".to_owned()),
+        allow_user_fallback: sea_orm::ActiveValue::set(false),
         source_chat_id: sea_orm::ActiveValue::set(source_chat_id),
         source_message_id: sea_orm::ActiveValue::set(source_message_id),
         source_album_id: sea_orm::ActiveValue::set(0),
@@ -160,6 +222,9 @@ async fn test_same_link_can_create_different_jobs() -> anyhow::Result<()> {
         done_items: sea_orm::ActiveValue::set(0),
         failed_items: sea_orm::ActiveValue::set(0),
         retry_count: sea_orm::ActiveValue::set(0),
+        cost_points: sea_orm::ActiveValue::set(0),
+        charged_points: sea_orm::ActiveValue::set(0),
+        billing_status: sea_orm::ActiveValue::set("free".to_owned()),
         last_error: sea_orm::ActiveValue::set(None),
         created_at: sea_orm::ActiveValue::set(now),
         updated_at: sea_orm::ActiveValue::set(now),
@@ -172,9 +237,11 @@ async fn test_same_link_can_create_different_jobs() -> anyhow::Result<()> {
     let job2 = transfer_job::ActiveModel {
         request_chat_id: sea_orm::ActiveValue::set(request_chat_id2),
         request_message_id: sea_orm::ActiveValue::set(request_message_id2),
+        owner_user_id: sea_orm::ActiveValue::set(request_chat_id2),
         source_link: sea_orm::ActiveValue::set(source_link),
         source_kind: sea_orm::ActiveValue::set("link".to_owned()),
         source_client_role: sea_orm::ActiveValue::set("user".to_owned()),
+        allow_user_fallback: sea_orm::ActiveValue::set(false),
         source_chat_id: sea_orm::ActiveValue::set(source_chat_id),
         source_message_id: sea_orm::ActiveValue::set(source_message_id),
         source_album_id: sea_orm::ActiveValue::set(0),
@@ -186,6 +253,9 @@ async fn test_same_link_can_create_different_jobs() -> anyhow::Result<()> {
         done_items: sea_orm::ActiveValue::set(0),
         failed_items: sea_orm::ActiveValue::set(0),
         retry_count: sea_orm::ActiveValue::set(0),
+        cost_points: sea_orm::ActiveValue::set(0),
+        charged_points: sea_orm::ActiveValue::set(0),
+        billing_status: sea_orm::ActiveValue::set("free".to_owned()),
         last_error: sea_orm::ActiveValue::set(None),
         created_at: sea_orm::ActiveValue::set(now),
         updated_at: sea_orm::ActiveValue::set(now),

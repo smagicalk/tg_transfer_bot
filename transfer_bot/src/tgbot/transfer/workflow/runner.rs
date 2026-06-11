@@ -25,11 +25,12 @@ use super::upload::upload_prepared;
 /// 2. 若全部成功，再进行上传（单条 send_message，多条 send_message_album）
 /// 3. 结束后释放引用，进入延迟删除队列
 pub(super) async fn run_job_inner(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: db::transfer_job::Model,
     messages: Vec<tdlib_rs::types::Message>,
     client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferOutcome> {
-    run_job_inner_with_fallback(job, messages, client_ids, true).await
+    run_job_inner_with_fallback(app_context, job, messages, client_ids, true).await
 }
 
 /// 执行任务，并在链接源 bot 准备失败时切 user 源重试一次。
@@ -41,12 +42,13 @@ pub(super) async fn run_job_inner(
 /// `allow_prepare_fallback` 防止 user 重试失败后无限递归。BotMessage 源不 fallback，因为 user 通常无法读取
 /// bot 私聊或 bot 可见消息的本地 message_id。
 async fn run_job_inner_with_fallback(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: db::transfer_job::Model,
     messages: Vec<tdlib_rs::types::Message>,
     client_ids: crate::config::TransferClientIds,
     allow_prepare_fallback: bool,
 ) -> anyhow::Result<TransferOutcome> {
-    match run_job_inner_once(job.clone(), messages, client_ids).await {
+    match run_job_inner_once(app_context.clone(), job.clone(), messages, client_ids).await {
         Ok(outcome) => Ok(outcome),
         Err(err) => {
             if !allow_prepare_fallback || !should_fallback_prepare_to_user(&job, &err) {
@@ -89,13 +91,14 @@ async fn run_job_inner_with_fallback(
                 .ok_or_else(|| {
                     anyhow::anyhow!("transfer job disappeared during fallback: {}", job.id)
                 })?;
-            run_job_inner_once(refreshed_job, bundle.messages, client_ids).await
+            run_job_inner_once(app_context, refreshed_job, bundle.messages, client_ids).await
         }
     }
 }
 
 /// 执行一次任务，不做 source fallback。
 async fn run_job_inner_once(
+    _app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: db::transfer_job::Model,
     messages: Vec<tdlib_rs::types::Message>,
     client_ids: crate::config::TransferClientIds,
@@ -448,13 +451,19 @@ fn should_fallback_prepare_to_user(job: &db::transfer_job::Model, err: &anyhow::
     if job.source_kind != SourceKind::Link.as_str() || job.source_client_role != "bot" {
         return false;
     }
+    // 普通用户任务不能借用 user 账号读取私有源链接；是否允许 fallback 由任务创建时的安全策略持久化决定。
+    if !job.allow_user_fallback {
+        return false;
+    }
     // 只对准备阶段失败 fallback；上传失败说明文件已准备好，问题在目标发送，不应重新下载。
     err.to_string().contains("transfer failed during prepare")
 }
 
 /// bot 链接源准备失败时先把错误交给外层 fallback，不立刻写失败终态。
 fn should_return_prepare_error_for_fallback(job: &db::transfer_job::Model) -> bool {
-    job.source_kind == SourceKind::Link.as_str() && job.source_client_role == "bot"
+    job.source_kind == SourceKind::Link.as_str()
+        && job.source_client_role == "bot"
+        && job.allow_user_fallback
 }
 
 /// 将 bot 源任务切换为 user 源任务。
@@ -547,9 +556,11 @@ mod tests {
             id: 1,
             request_chat_id: 10,
             request_message_id: 20,
+            owner_user_id: 10,
             source_link: "https://t.me/c/1/2".to_owned(),
             source_kind: source_kind.to_owned(),
             source_client_role: source_client_role.to_owned(),
+            allow_user_fallback: true,
             source_chat_id: 30,
             source_message_id: 40,
             source_album_id: 0,
@@ -561,6 +572,9 @@ mod tests {
             done_items: 0,
             failed_items: 0,
             retry_count: 0,
+            cost_points: 0,
+            charged_points: 0,
+            billing_status: "free".to_owned(),
             last_error: None,
             created_at: store::now_utc8(),
             updated_at: store::now_utc8(),

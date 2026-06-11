@@ -3,12 +3,22 @@
 use crate::config::{ClientRole, LoginInfo};
 use crate::tgbot::TdError;
 use base64::{Engine as _, engine::general_purpose};
+use once_cell::sync::Lazy;
 use std::collections::BTreeSet;
 use std::process::exit;
 use tdlib_rs::enums::AuthorizationState;
+use tokio::sync::Mutex;
+
+/// 已经注册过命令的 bot client。
+///
+/// TDLib 可能在恢复会话或重连时再次报告 `AuthorizationState::Ready`；
+/// 这里按 client_id 去重，避免每次 Ready 都重复调用 `setCommands`。
+static REGISTERED_BOT_COMMAND_CLIENTS: Lazy<Mutex<BTreeSet<i32>>> =
+    Lazy::new(|| Mutex::new(BTreeSet::new()));
 
 // 根据授权状态执行下一步动作。
 pub async fn handle_authorization(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     authorization_state: tdlib_rs::enums::AuthorizationState,
     role: ClientRole,
     client_id: i32,
@@ -178,12 +188,15 @@ pub async fn handle_authorization(
                 login_mode,
                 "tdlib authorization ready"
             );
+            if role == ClientRole::Bot {
+                register_bot_commands_once(client_id).await;
+            }
             let mut ready_roles = ready_roles.lock().await;
             ready_roles.insert(role);
             if config.all_required_clients_ready(&ready_roles) {
                 let transfer_clients = config.transfer_client_ids()?;
                 drop(ready_roles);
-                crate::tgbot::transfer::on_clients_ready(transfer_clients);
+                crate::tgbot::transfer::on_clients_ready(app_context, transfer_clients);
             }
             Ok(())
         }
@@ -201,6 +214,77 @@ pub async fn handle_authorization(
             tracing::info!(client_id, "tdlib closed");
             exit(0)
         }
+    }
+}
+
+/// 为 bot 注册 Telegram 斜杠命令。
+///
+/// 注册失败不阻塞主流程：命令菜单只是交互增强，转存命令本身仍可手动输入。
+async fn register_bot_commands_once(client_id: i32) {
+    {
+        let mut registered = REGISTERED_BOT_COMMAND_CLIENTS.lock().await;
+        if !registered.insert(client_id) {
+            tracing::trace!(client_id, "bot commands already registered for client");
+            return;
+        }
+    }
+
+    let commands = bot_command_definitions();
+    let command_count = commands.len();
+    tracing::info!(client_id, command_count, "registering bot commands");
+    if let Err(err) = tdlib_rs::functions::set_commands(None, String::new(), commands, client_id)
+        .await
+        .map_err(|e| anyhow::Error::new(TdError(e)))
+    {
+        REGISTERED_BOT_COMMAND_CLIENTS
+            .lock()
+            .await
+            .remove(&client_id);
+        tracing::warn!(
+            client_id,
+            error = %err,
+            "register bot commands failed"
+        );
+        return;
+    }
+    tracing::info!(client_id, command_count, "bot commands registered");
+}
+
+/// 构造 bot 命令列表。
+///
+/// Telegram 命令本身不能带 `/`，这里只写根命令；业务路由仍同时支持短命令和长命令。
+fn bot_command_definitions() -> Vec<tdlib_rs::types::BotCommand> {
+    vec![
+        bot_command("menu", "打开交互菜单"),
+        bot_command("m", "打开交互菜单"),
+        bot_command("transfer", "转存链接或回复消息"),
+        bot_command("t", "转存链接或回复消息"),
+        bot_command("lookup", "查询历史转存结果"),
+        bot_command("lk", "查询历史转存结果"),
+        bot_command("downloads", "查看任务列表和下载进度"),
+        bot_command("d", "查看任务列表和下载进度"),
+        bot_command("job", "查看或控制任务"),
+        bot_command("j", "查看或控制任务"),
+        bot_command("balance", "查看积分余额"),
+        bot_command("bal", "查看积分余额"),
+        bot_command("points", "管理员调整积分"),
+        bot_command("pts", "管理员调整积分"),
+        bot_command("config", "查看或调整运行配置"),
+        bot_command("cfg", "查看或调整运行配置"),
+        bot_command("health", "查看运行健康状态"),
+        bot_command("hl", "查看运行健康状态"),
+        bot_command("cache", "查看文件缓存"),
+        bot_command("fc", "查看文件缓存"),
+        bot_command("help", "查看命令帮助"),
+        bot_command("h", "查看命令帮助"),
+    ]
+}
+
+/// 构造单条 bot command。
+fn bot_command(command: &str, description: &str) -> tdlib_rs::types::BotCommand {
+    tdlib_rs::types::BotCommand {
+        command: command.to_owned(),
+        description: description.to_owned(),
     }
 }
 
@@ -303,7 +387,11 @@ fn should_retry_legacy_database_key(key: &str, err: &tdlib_rs::types::Error) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{should_retry_legacy_database_key, tdlib_database_encryption_key_for_json};
+    use super::{
+        bot_command_definitions, should_retry_legacy_database_key,
+        tdlib_database_encryption_key_for_json,
+    };
+    use std::collections::BTreeSet;
 
     // TDLib JSON bytes 字段要求 base64；空 key 编码后仍是空字符串。
     #[test]
@@ -337,5 +425,46 @@ mod tests {
             "dXNlci1rZXk=",
             &wrong_padding
         ));
+    }
+
+    // 注册给 Telegram 的命令不能带 `/`，且短命令和长命令都需要保留。
+    #[test]
+    fn test_bot_command_definitions_cover_short_and_long_commands() {
+        let commands = bot_command_definitions();
+        let names = commands
+            .iter()
+            .map(|command| command.command.as_str())
+            .collect::<BTreeSet<_>>();
+
+        for expected in [
+            "menu",
+            "m",
+            "transfer",
+            "t",
+            "lookup",
+            "lk",
+            "downloads",
+            "d",
+            "job",
+            "j",
+            "config",
+            "cfg",
+            "help",
+            "h",
+        ] {
+            assert!(names.contains(expected), "missing command {expected}");
+        }
+
+        assert_eq!(names.len(), commands.len());
+        for command in commands {
+            assert!(!command.command.starts_with('/'));
+            assert!(
+                command
+                    .command
+                    .chars()
+                    .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+            );
+            assert!(!command.description.trim().is_empty());
+        }
     }
 }

@@ -2,21 +2,30 @@
 // - 按命令职责拆分子模块
 // - 对外保持统一导出，避免上层调用方感知文件结构变化
 
+mod cache;
 pub(super) mod common;
 mod config_cmd;
 mod downloads;
+mod health;
 mod help;
 mod job;
 mod lookup;
 mod menu;
+mod points;
 mod transfer_cmd;
 
+pub use cache::cache_command;
 pub use config_cmd::config_command;
 pub use downloads::downloads_command;
+pub use health::health_command;
 pub use help::help_command;
 pub use job::job_command;
 pub use lookup::lookup_command;
-pub use menu::{cancel_menu_input, discard_menu_input, handle_menu_text_input, menu_command};
+pub use menu::{
+    cancel_menu_input, discard_menu_input, discard_menu_input_for_command,
+    handle_menu_shared_chat_input, handle_menu_text_input, menu_command,
+};
+pub use points::{balance_command, points_command};
 pub use transfer_cmd::{transfer_bot_message_auto_command, transfer_command};
 
 /// 给转存结果/进度卡片生成“任务详情”按钮数据。
@@ -39,6 +48,16 @@ pub(in crate::tgbot::transfer) fn build_job_resume_button_data(job_id: i64) -> S
 /// 给进度/状态卡片生成“停止任务”按钮数据。
 pub(in crate::tgbot::transfer) fn build_job_stop_button_data(job_id: i64) -> String {
     job::build_job_stop_callback_data(job_id)
+}
+
+/// 给进度卡片生成任务状态对应的列表入口。
+///
+/// 返回值依次是 `/downloads` 筛选参数和按钮文案；状态映射仍由 `/job` 模块维护，
+/// 这样任务详情和进度卡片不会出现两套状态解释。
+pub(in crate::tgbot::transfer) fn build_job_list_button_meta(
+    status: &str,
+) -> (&'static str, &'static str) {
+    job::job_list_button_meta(status)
 }
 
 /// 给转存结果/进度卡片生成“按任务状态返回列表”的按钮数据。
@@ -68,6 +87,21 @@ pub(in crate::tgbot::transfer) fn build_downloads_short_command(filter: Option<&
     common::downloads_command(filter, None, None, common::CommandStyle::Short)
 }
 
+/// 给各类状态卡片生成“返回菜单”按钮数据。
+pub(in crate::tgbot::transfer) fn build_menu_home_button_data() -> String {
+    menu::build_menu_home_callback_data()
+}
+
+/// 给菜单页生成“运行健康”按钮数据。
+pub(in crate::tgbot::transfer) fn build_health_button_data() -> String {
+    health::build_health_callback_data()
+}
+
+/// 给菜单页生成“文件缓存”按钮数据。
+pub(in crate::tgbot::transfer) fn build_cache_button_data() -> String {
+    cache::build_cache_summary_callback_data()
+}
+
 /// callback payload 路由。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CallbackRoute {
@@ -75,6 +109,9 @@ enum CallbackRoute {
     Downloads,
     Job,
     Config,
+    Health,
+    Cache,
+    Points,
     Menu,
     Unknown,
     Unsupported,
@@ -84,7 +121,9 @@ enum CallbackRoute {
 ///
 /// 回调 payload 按前缀路由，避免上层 `tgbot` 入口知道每个命令的内部格式。
 pub async fn transfer_callback_query(
-    update: tdlib_rs::enums::UpdateNewCallbackQuery,
+    update: tdlib_rs::types::UpdateNewCallbackQuery,
+    config: std::sync::Arc<crate::config::BotConfig>,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let route = classify_callback_route(&update.payload);
@@ -98,10 +137,24 @@ pub async fn transfer_callback_query(
 
     match route {
         CallbackRoute::Help => help::help_callback_query(update, client_id).await,
-        CallbackRoute::Downloads => downloads::downloads_callback_query(update, client_id).await,
-        CallbackRoute::Job => job::job_callback_query(update, client_id).await,
-        CallbackRoute::Config => config_cmd::config_callback_query(update, client_id).await,
-        CallbackRoute::Menu => menu::menu_callback_query(update, client_id).await,
+        CallbackRoute::Downloads => {
+            downloads::downloads_callback_query(update, actor, client_id).await
+        }
+        CallbackRoute::Job => job::job_callback_query(update, actor, client_id).await,
+        CallbackRoute::Config if actor.is_admin() => {
+            config_cmd::config_callback_query(update, client_id).await
+        }
+        CallbackRoute::Config => send_permission_denied_callback(update, client_id).await,
+        CallbackRoute::Health if actor.is_admin() => {
+            health::health_callback_query(update, client_id).await
+        }
+        CallbackRoute::Health => send_permission_denied_callback(update, client_id).await,
+        CallbackRoute::Cache if actor.is_admin() => {
+            cache::cache_callback_query(update, client_id).await
+        }
+        CallbackRoute::Cache => send_permission_denied_callback(update, client_id).await,
+        CallbackRoute::Points => points::points_callback_query(update, actor, client_id).await,
+        CallbackRoute::Menu => menu::menu_callback_query(update, config, actor, client_id).await,
         CallbackRoute::Unknown => {
             tracing::warn!(
                 chat_id = update.chat_id,
@@ -129,6 +182,15 @@ pub async fn transfer_callback_query(
     }
 }
 
+/// 普通用户点击 admin-only 按钮时的统一提示。
+async fn send_permission_denied_callback(
+    update: tdlib_rs::types::UpdateNewCallbackQuery,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    crate::tgbot::send::answer_callback_query(update.id, Some("没有权限执行此操作"), client_id)
+        .await
+}
+
 /// 根据 callback payload 前缀分类路由。
 fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> CallbackRoute {
     match payload {
@@ -153,6 +215,21 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
             CallbackRoute::Config
         }
         tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if health::is_health_callback_data(&data.data) =>
+        {
+            CallbackRoute::Health
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if cache::is_cache_callback_data(&data.data) =>
+        {
+            CallbackRoute::Cache
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if points::is_points_callback_data(&data.data) =>
+        {
+            CallbackRoute::Points
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
             if menu::is_menu_callback_data(&data.data) =>
         {
             CallbackRoute::Menu
@@ -165,9 +242,10 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
 #[cfg(test)]
 mod tests {
     use super::{
-        CallbackRoute, build_downloads_filter_button_data, build_downloads_short_command,
-        build_downloads_status_button_data, build_job_pause_button_data,
-        build_job_resume_button_data, build_job_status_button_data, build_job_stop_button_data,
+        CallbackRoute, build_cache_button_data, build_downloads_filter_button_data,
+        build_downloads_short_command, build_downloads_status_button_data,
+        build_health_button_data, build_job_pause_button_data, build_job_resume_button_data,
+        build_job_status_button_data, build_job_stop_button_data, build_menu_home_button_data,
         classify_callback_route,
     };
 
@@ -189,6 +267,18 @@ mod tests {
         assert_eq!(
             classify_callback_route(&payload("cfg:r")),
             CallbackRoute::Config
+        );
+        assert_eq!(
+            classify_callback_route(&payload("hl:show")),
+            CallbackRoute::Health
+        );
+        assert_eq!(
+            classify_callback_route(&payload("c:v:summary:10:1")),
+            CallbackRoute::Cache
+        );
+        assert_eq!(
+            classify_callback_route(&payload("pt:p:b:1:10:1")),
+            CallbackRoute::Points
         );
         assert_eq!(
             classify_callback_route(&payload("m:home")),
@@ -216,6 +306,9 @@ mod tests {
         let running_data = build_downloads_status_button_data("running", 8);
         let done_data =
             build_downloads_filter_button_data("done", 8).expect("done filter must exist");
+        let health_data = build_health_button_data();
+        let cache_data = build_cache_button_data();
+        let menu_data = build_menu_home_button_data();
 
         assert_eq!(
             classify_callback_route(&payload(&job_data)),
@@ -241,6 +334,18 @@ mod tests {
             classify_callback_route(&payload(&done_data)),
             CallbackRoute::Downloads
         );
+        assert_eq!(
+            classify_callback_route(&payload(&health_data)),
+            CallbackRoute::Health
+        );
+        assert_eq!(
+            classify_callback_route(&payload(&cache_data)),
+            CallbackRoute::Cache
+        );
+        assert_eq!(
+            classify_callback_route(&payload(&menu_data)),
+            CallbackRoute::Menu
+        );
         assert!(build_downloads_filter_button_data("unknown", 8).is_none());
         assert_eq!(build_downloads_short_command(Some("run")), "/d run");
     }
@@ -253,6 +358,9 @@ mod tests {
             ("d:f:run:8:1", CallbackRoute::Downloads),
             ("j:p:42", CallbackRoute::Job),
             ("cfg:a:gc:10", CallbackRoute::Config),
+            ("hl:show", CallbackRoute::Health),
+            ("c:v:summary:10:1", CallbackRoute::Cache),
+            ("pt:p:b:1:10:1", CallbackRoute::Points),
             ("m:t", CallbackRoute::Menu),
         ];
 

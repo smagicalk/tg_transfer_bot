@@ -3,6 +3,7 @@ use crate::send_request;
 use serde_json::json;
 /// Returns gifts received by the given user or chat
 /// # Arguments
+/// * `business_connection_id` - Unique identifier of business connection on behalf of which to send the request; for bots only
 /// * `owner_id` - Identifier of the gift receiver
 /// * `collection_id` - Pass collection identifier to get gifts only from the specified collection; pass 0 to get gifts regardless of collections
 /// * `exclude_unsaved` - Pass true to exclude gifts that aren't saved to the chat's profile page. Always true for gifts received by other users and channel chats without can_post_messages administrator right
@@ -19,6 +20,7 @@ use serde_json::json;
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
 pub async fn get_received_gifts(
+    business_connection_id: String,
     owner_id: crate::enums::MessageSender,
     collection_id: i32,
     exclude_unsaved: bool,
@@ -36,6 +38,7 @@ pub async fn get_received_gifts(
 ) -> Result<crate::enums::ReceivedGifts, crate::types::Error> {
     let request = json!({
     "@type": "getReceivedGifts",
+    "business_connection_id": business_connection_id,
     "owner_id": owner_id,
     "collection_id": collection_id,
     "exclude_unsaved": exclude_unsaved,

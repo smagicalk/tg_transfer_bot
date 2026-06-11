@@ -67,7 +67,12 @@ pub(super) async fn spider_link_bot_first(
                 error = %bot_err,
                 "bot failed to resolve source link, fallback to user"
             );
-            spider_message(source_link, user_client_id, ClientRole::User).await
+            // user fallback 也失败时保留 bot 的前置错误，否则失败卡片只能看到最后一次 user 错误。
+            spider_message(source_link, user_client_id, ClientRole::User)
+                .await
+                .with_context(|| {
+                    format!("bot failed to resolve source link before user fallback: {bot_err:#}")
+                })
         }
     }
 }

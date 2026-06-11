@@ -2,8 +2,9 @@
 // 目录页只展示命令概览，详细参数放到 `/help <command>` 中展开。
 
 use super::super::super::common::{
-    CommandStyle, command_root, downloads_command, help_command as help_command_text,
-    lookup_command, menu_command, short_and_long, transfer_command,
+    CommandStyle, balance_command, cache_command, command_root, downloads_command,
+    health_command as health_command_text, help_command as help_command_text, lookup_command,
+    menu_command, points_show_command, short_and_long, transfer_command,
 };
 use crate::tgbot::transfer::card;
 
@@ -40,6 +41,30 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
             downloads_command(None, None, None, CommandStyle::Long),
         ),
         "说明：查看任务列表、状态和真实下载进度。".to_owned(),
+        String::new(),
+        "积分账户".to_owned(),
+        "命令：".to_owned(),
+        short_and_long(
+            balance_command(CommandStyle::Short),
+            balance_command(CommandStyle::Long),
+        ),
+        "说明：查看当前用户余额和流水；管理员可用 points 调整或查询普通用户积分。".to_owned(),
+        String::new(),
+        "运行健康".to_owned(),
+        "命令：".to_owned(),
+        short_and_long(
+            health_command_text(CommandStyle::Short),
+            health_command_text(CommandStyle::Long),
+        ),
+        "说明：查看运行配置、并发、恢复队列、任务和缓存总体状态。".to_owned(),
+        String::new(),
+        "文件缓存".to_owned(),
+        "命令：".to_owned(),
+        short_and_long(
+            cache_command(None, None, None, CommandStyle::Short),
+            cache_command(None, None, None, CommandStyle::Long),
+        ),
+        "说明：查看 file_cache 概览和最近缓存记录；只读，不执行清理。".to_owned(),
         String::new(),
         "交互菜单".to_owned(),
         "命令：".to_owned(),
@@ -107,6 +132,18 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
             help_command_text(Some("downloads"), CommandStyle::Long),
         ),
         short_and_long(
+            help_command_text(Some("points"), CommandStyle::Short),
+            help_command_text(Some("points"), CommandStyle::Long),
+        ),
+        short_and_long(
+            help_command_text(Some("health"), CommandStyle::Short),
+            help_command_text(Some("health"), CommandStyle::Long),
+        ),
+        short_and_long(
+            help_command_text(Some("cache"), CommandStyle::Short),
+            help_command_text(Some("cache"), CommandStyle::Long),
+        ),
+        short_and_long(
             help_command_text(Some("job"), CommandStyle::Short),
             help_command_text(Some("job"), CommandStyle::Long),
         ),
@@ -117,6 +154,12 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
         short_and_long(
             help_command_text(Some("help"), CommandStyle::Short),
             help_command_text(Some("help"), CommandStyle::Long),
+        ),
+        String::new(),
+        "管理员示例：".to_owned(),
+        short_and_long(
+            points_show_command(123456789, CommandStyle::Short),
+            points_show_command(123456789, CommandStyle::Long),
         ),
     ]
     .join("\n")

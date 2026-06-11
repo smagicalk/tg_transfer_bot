@@ -2,9 +2,11 @@
 // 每个命令的长说明集中在这里，后续调整参数说明时不影响命令入口。
 
 use super::super::super::common::{
-    CommandStyle, command_root, config_set_command, config_show_command, downloads_command,
-    help_command as help_command_text, job_command, lookup_command, menu_command, short_and_long,
-    transfer_command,
+    CommandStyle, balance_command, balance_history_command, cache_command, command_root,
+    config_set_command, config_show_command, downloads_command,
+    health_command as health_command_text, help_command as help_command_text, job_command,
+    lookup_command, menu_command, points_change_command, points_history_command,
+    points_show_command, short_and_long, transfer_command,
 };
 use super::super::topic::normalize_help_topic;
 use crate::tgbot::transfer::card;
@@ -18,6 +20,9 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_detail_text(
         "help" => build_help_detail(),
         "transfer" => build_transfer_detail(),
         "lookup" => build_lookup_detail(),
+        "points" => build_points_detail(),
+        "health" => build_health_detail(),
+        "cache" => build_cache_detail(),
         "config" => build_config_detail(),
         "downloads" => build_downloads_detail(),
         "job" => build_job_detail(),
@@ -47,6 +52,122 @@ fn build_help_detail() -> String {
         short_and_long(
             help_command_text(Some("transfer"), CommandStyle::Short),
             help_command_text(Some("transfer"), CommandStyle::Long),
+        ),
+    ]
+    .join("\n")
+}
+
+/// 构造 `/balance` 和 `/points` 的说明。
+fn build_points_detail() -> String {
+    [
+        "points".to_owned(),
+        "用途：查看余额、查询积分流水，或由管理员调整普通用户积分。".to_owned(),
+        "说明：普通用户创建转存任务前会按消息数量扣积分；admin 不扣积分；失败/取消会按规则退款并写入流水。".to_owned(),
+        card::DIVIDER.to_owned(),
+        "普通用户命令：".to_owned(),
+        short_and_long(
+            balance_command(CommandStyle::Short),
+            balance_command(CommandStyle::Long),
+        ),
+        short_and_long(
+            balance_history_command(10, 1, CommandStyle::Short),
+            balance_history_command(10, 1, CommandStyle::Long),
+        ),
+        String::new(),
+        "管理员命令：".to_owned(),
+        short_and_long(
+            format!(
+                "{} <s|h|a|sub> <user_id> [amount|limit] [reason|page]",
+                command_root("points", CommandStyle::Short)
+            ),
+            format!(
+                "{} <show|history|add|sub> <user_id> [amount|limit] [reason|page]",
+                command_root("points", CommandStyle::Long)
+            ),
+        ),
+        String::new(),
+        "动作：".to_owned(),
+        format!("{}：查看指定用户积分。", card::code("show | s")),
+        format!("{}：分页查看指定用户积分流水。", card::code("history | h")),
+        format!("{}：给指定用户增加积分。", card::code("add | a")),
+        format!("{}：扣除指定用户积分。", card::code("sub")),
+        String::new(),
+        "示例：".to_owned(),
+        short_and_long(
+            balance_command(CommandStyle::Short),
+            balance_command(CommandStyle::Long),
+        ),
+        short_and_long(
+            balance_history_command(10, 1, CommandStyle::Short),
+            balance_history_command(10, 1, CommandStyle::Long),
+        ),
+        short_and_long(
+            points_show_command(123456789, CommandStyle::Short),
+            points_show_command(123456789, CommandStyle::Long),
+        ),
+        short_and_long(
+            points_history_command(123456789, 10, 1, CommandStyle::Short),
+            points_history_command(123456789, 10, 1, CommandStyle::Long),
+        ),
+        short_and_long(
+            points_change_command("a", 123456789, 10, "admin_adjust", CommandStyle::Short),
+            points_change_command("add", 123456789, 10, "admin_adjust", CommandStyle::Long),
+        ),
+        short_and_long(
+            points_change_command("sub", 123456789, 10, "admin_adjust", CommandStyle::Short),
+            points_change_command("sub", 123456789, 10, "admin_adjust", CommandStyle::Long),
+        ),
+    ]
+    .join("\n")
+}
+
+/// 构造 `/health` 的说明。
+fn build_health_detail() -> String {
+    [
+        "health".to_owned(),
+        "用途：只读查看运行健康状态。".to_owned(),
+        "说明：展示任务规模、恢复队列、缓存队列、并发和运行时配置，不修改任何状态。".to_owned(),
+        card::DIVIDER.to_owned(),
+        "命令：".to_owned(),
+        short_and_long(
+            health_command_text(CommandStyle::Short),
+            health_command_text(CommandStyle::Long),
+        ),
+        String::new(),
+        "示例：".to_owned(),
+        short_and_long(
+            health_command_text(CommandStyle::Short),
+            health_command_text(CommandStyle::Long),
+        ),
+    ]
+    .join("\n")
+}
+
+/// 构造 `/cache` 的说明。
+fn build_cache_detail() -> String {
+    [
+        "cache".to_owned(),
+        "用途：只读查看 file_cache 状态。".to_owned(),
+        "说明：默认展示状态概览；page 模式展示最近更新的缓存记录，不执行删除。".to_owned(),
+        card::DIVIDER.to_owned(),
+        "命令：".to_owned(),
+        short_and_long(
+            cache_command(None, None, None, CommandStyle::Short),
+            cache_command(None, None, None, CommandStyle::Long),
+        ),
+        short_and_long(
+            cache_command(Some("page"), None, None, CommandStyle::Short),
+            cache_command(Some("page"), None, None, CommandStyle::Long),
+        ),
+        String::new(),
+        "示例：".to_owned(),
+        short_and_long(
+            cache_command(None, None, None, CommandStyle::Short),
+            cache_command(None, None, None, CommandStyle::Long),
+        ),
+        short_and_long(
+            cache_command(Some("page"), Some(10), Some(1), CommandStyle::Short),
+            cache_command(Some("page"), Some(10), Some(1), CommandStyle::Long),
         ),
     ]
     .join("\n")
@@ -309,10 +430,12 @@ fn build_menu_detail() -> String {
         ),
         String::new(),
         "可做操作：".to_owned(),
-        "转存：bot 模式可按钮引导输入；用户号模式直接复制正文命令。".to_owned(),
-        "下载：直接选择筛选并进入分页列表。".to_owned(),
-        "任务：进入列表后查看详情、暂停、恢复、停止。".to_owned(),
-        "配置/查询/帮助：复制常用命令模板。".to_owned(),
+        "转存：按钮引导输入源链接、目标和确认；也保留复制命令模板。".to_owned(),
+        "查询：按钮引导输入源链接和目标；也保留复制命令模板。".to_owned(),
+        "下载：覆盖全部筛选参数，并可进入分页列表。".to_owned(),
+        "任务：从列表进入详情后可暂停、恢复、停止、刷新。".to_owned(),
+        "配置：覆盖全部可动态修改字段，常用值也保留复制命令。".to_owned(),
+        "帮助：覆盖所有 help topic，可原地切换详情页。".to_owned(),
         String::new(),
         "取消输入：".to_owned(),
         card::code("/cancel"),

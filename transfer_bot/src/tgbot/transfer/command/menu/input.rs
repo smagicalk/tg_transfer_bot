@@ -1,147 +1,173 @@
-// `/menu` ForceReply 输入状态。
-// 这里只保存“正在填写命令”的临时草稿，真实任务状态仍全部落数据库。
+// `/menu` ForceReply 输入流程。
+// 本文件只保留普通输入事件处理；按钮、草稿状态和目标选择视图分别放到子模块。
 
-use std::collections::HashMap;
-use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+mod callbacks;
+mod state;
+mod target;
 
 use crate::config::BotConfig;
 use crate::tgbot::send;
 
-use super::super::common::resolve_target_chat_id;
-use super::super::{lookup, transfer_cmd};
-use super::text::build_transfer_prompt_text;
+use super::super::{job, lookup, points, transfer_cmd};
+use super::text::{build_menu_status_text, build_step_prompt_text, build_transfer_prompt_text};
+pub(super) use callbacks::{
+    cancel_input_callback_query, job_id_input_callback_query,
+    point_ledger_user_input_callback_query, target_alias_callback_query,
+    target_back_callback_query, target_confirm_callback_query, target_default_callback_query,
+    target_manual_callback_query, target_request_chat_callback_query,
+};
+use state::{
+    DraftTakeResult, MenuInputDraft, MenuInputStep, peek_current_draft, put_confirm_draft,
+    put_draft, put_target_choice_draft, remember_last_target, step_uses_reply_keyboard,
+    take_current_draft,
+};
+pub(super) use state::{
+    MenuInputKind, MenuJobAction, cancel_menu_input, cancel_menu_input_with_state, start_menu_input,
+};
+use target::{
+    build_target_choice_buttons, confirm_button_rows, resolve_default_target, resolve_target_by_id,
+    resolve_target_input, send_confirm_prompt, send_target_choice_prompt,
+};
 
-/// 输入草稿索引。
+/// Telegram 原生选群按钮 ID。
 ///
-/// 同一个管理员可能在多个管理 chat 中操作，因此用 `(chat_id, user_id)` 做隔离。
-type DraftKey = (i64, i64);
+/// 同一私聊里同时只保留一个草稿，因此固定 ID 足够；收到 `MessageChatShared` 时仍会校验这个 ID。
+const TARGET_CHAT_REQUEST_BUTTON_ID: i32 = 7001;
 
-/// 全局输入草稿表。
-static MENU_INPUT_DRAFTS: LazyLock<std::sync::Mutex<HashMap<DraftKey, MenuInputDraft>>> =
-    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
-
-/// 菜单输入流程。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MenuInputKind {
-    Transfer,
-    TransferDefault,
-    Lookup,
-    LookupDefault,
-}
-
-impl MenuInputKind {
-    /// 是否只需要源链接，目标 chat 交给配置默认值解析。
-    fn uses_default_target(self) -> bool {
-        matches!(self, Self::TransferDefault | Self::LookupDefault)
-    }
-
-    /// 归一化到实际命令类型。
-    fn command_kind(self) -> Self {
-        match self {
-            Self::Transfer | Self::TransferDefault => Self::Transfer,
-            Self::Lookup | Self::LookupDefault => Self::Lookup,
-        }
-    }
-
-    /// 当前流程的短命令名。
-    fn command_name(self) -> &'static str {
-        match self.command_kind() {
-            Self::Transfer => "/t",
-            Self::Lookup => "/lk",
-            Self::TransferDefault | Self::LookupDefault => unreachable!("kind is normalized"),
-        }
-    }
-
-    /// 源链接输入标题。
-    pub(super) fn source_title(self) -> &'static str {
-        match self {
-            Self::Transfer => "转存源链接",
-            Self::TransferDefault => "快速转存",
-            Self::Lookup => "查询源链接",
-            Self::LookupDefault => "快速查询",
-        }
-    }
-
-    /// 源链接输入说明。
-    pub(super) fn source_detail(self) -> &'static str {
-        match self {
-            Self::Transfer => "请回复要转存的 Telegram 消息或相册链接。",
-            Self::TransferDefault => "请回复源链接，目标 chat 将使用配置默认值。",
-            Self::Lookup => "请回复要查询的 Telegram 消息或相册链接。",
-            Self::LookupDefault => "请回复源链接，目标 chat 将使用配置默认值。",
-        }
-    }
-
-    /// 日志中使用的输入流程名，避免直接打印 Debug 后未来重命名影响排查关键词。
-    fn log_name(self) -> &'static str {
-        match self {
-            Self::Transfer => "transfer",
-            Self::TransferDefault => "transfer_default",
-            Self::Lookup => "lookup",
-            Self::LookupDefault => "lookup_default",
-        }
-    }
-}
-
-/// 菜单输入阶段。
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum MenuInputStep {
-    SourceLink {
-        kind: MenuInputKind,
-    },
-    TargetChat {
-        kind: MenuInputKind,
-        source_link: String,
-    },
-}
-
-/// 菜单输入草稿。
+/// 当前输入草稿的首页摘要。
 #[derive(Debug, Clone)]
-struct MenuInputDraft {
-    step: MenuInputStep,
-    updated_at: Instant,
+pub(super) struct MenuDraftSummary {
+    /// 首页按钮标题。
+    pub(super) title: &'static str,
 }
 
-/// 取草稿的结果。
-#[derive(Debug, Clone)]
-enum DraftTakeResult {
-    None,
-    Active(MenuInputDraft),
-    Expired,
-}
-
-/// 开始一个菜单输入流程。
-pub(super) fn start_menu_input(chat_id: i64, user_id: i64, kind: MenuInputKind) {
-    let mut drafts = MENU_INPUT_DRAFTS
-        .lock()
-        .expect("menu input draft mutex poisoned");
-    purge_expired_locked(&mut drafts);
-    drafts.insert(
-        (chat_id, user_id),
-        MenuInputDraft {
-            step: MenuInputStep::SourceLink { kind },
-            updated_at: Instant::now(),
-        },
-    );
-    tracing::debug!(
-        chat_id,
-        user_id,
-        input_kind = kind.log_name(),
-        "menu input draft started"
-    );
-}
-
-/// 取消一个菜单输入流程。
-pub(super) fn cancel_menu_input(chat_id: i64, user_id: i64) -> bool {
-    let mut drafts = MENU_INPUT_DRAFTS
-        .lock()
-        .expect("menu input draft mutex poisoned");
-    let removed = drafts.remove(&(chat_id, user_id)).is_some();
-    if removed {
-        tracing::debug!(chat_id, user_id, "menu input draft cancelled");
+/// 读取当前输入草稿摘要，不消费草稿。
+pub(super) async fn current_draft_summary(
+    chat_id: i64,
+    user_id: i64,
+) -> anyhow::Result<Option<MenuDraftSummary>> {
+    match peek_current_draft((chat_id, user_id)).await? {
+        DraftTakeResult::Active(draft) => Ok(Some(MenuDraftSummary {
+            title: draft.continue_title(),
+        })),
+        DraftTakeResult::Expired | DraftTakeResult::None => Ok(None),
     }
-    removed
+}
+
+/// 重新发送当前草稿所在阶段的提示。
+///
+/// 这里不消费草稿；后续文本回复或确认按钮仍会使用原草稿继续执行。
+pub(super) async fn continue_current_input(
+    chat_id: i64,
+    user_id: i64,
+    config: std::sync::Arc<BotConfig>,
+    client_id: i32,
+) -> anyhow::Result<bool> {
+    let draft = match peek_current_draft((chat_id, user_id)).await? {
+        DraftTakeResult::Active(draft) => draft,
+        DraftTakeResult::Expired => {
+            send::ReplyPanel::card(build_transfer_prompt_text(
+                "输入已过期",
+                "上一次菜单输入已超过 10 分钟，请重新打开 /menu。",
+            ))
+            .row(vec![send::build_copy_button(
+                "复制 /menu",
+                "/menu",
+                tdlib_rs::enums::ButtonStyle::Primary,
+            )])
+            .send(chat_id, client_id)
+            .await?;
+            return Ok(true);
+        }
+        DraftTakeResult::None => return Ok(false),
+    };
+
+    match draft.step {
+        MenuInputStep::SourceLink { kind } => {
+            send::send_card_message_with_force_reply_returning(
+                build_step_prompt_text("1/3", kind.source_title(), kind.source_detail()),
+                chat_id,
+                "输入源链接，或发送 /cancel",
+                client_id,
+            )
+            .await?;
+        }
+        MenuInputStep::TargetChoice { kind, source_link } => {
+            send_target_choice_prompt(
+                config.as_ref(),
+                chat_id,
+                user_id,
+                client_id,
+                kind,
+                &source_link,
+            )
+            .await?;
+        }
+        MenuInputStep::TargetChat { kind, .. } => {
+            send::send_card_message_with_force_reply_returning(
+                build_step_prompt_text(
+                    "2/3",
+                    "输入目标 chat",
+                    "请回复目标 chat_id、别名或 default，或发送 /cancel。",
+                ),
+                chat_id,
+                "输入目标 chat_id、alias 或 default",
+                client_id,
+            )
+            .await?;
+            tracing::debug!(
+                chat_id,
+                user_id,
+                input_kind = kind.log_name(),
+                "continued menu target chat input"
+            );
+        }
+        MenuInputStep::ChatPicker { .. } => {
+            send::send_card_message_with_chat_request_keyboard_returning(
+                build_step_prompt_text(
+                    "2/3",
+                    "选择目标群组",
+                    "点击输入框下方的“选择群组”，Telegram 会打开原生群组选择器；不想继续就点“取消”。",
+                ),
+                chat_id,
+                TARGET_CHAT_REQUEST_BUTTON_ID,
+                "选择群组",
+                "选择目标群组，或发送 /cancel",
+                client_id,
+            )
+            .await?;
+        }
+        MenuInputStep::Confirm {
+            kind,
+            source_link,
+            target_chat_id,
+        } => {
+            send_confirm_prompt(kind, &source_link, target_chat_id, chat_id, client_id).await?;
+        }
+        MenuInputStep::JobId { action } => {
+            send::send_card_message_with_force_reply_returning(
+                build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
+                chat_id,
+                "输入 job_id，或发送 /cancel",
+                client_id,
+            )
+            .await?;
+        }
+        MenuInputStep::PointLedgerUserId => {
+            send::send_card_message_with_force_reply_returning(
+                build_step_prompt_text(
+                    "1/1",
+                    "用户积分流水",
+                    "请回复 Telegram 用户 ID，例如 123456789；或发送 /cancel 取消。",
+                ),
+                chat_id,
+                "输入 Telegram user_id，或发送 /cancel",
+                client_id,
+            )
+            .await?;
+        }
+    }
+    Ok(true)
 }
 
 /// 处理菜单输入。
@@ -153,6 +179,7 @@ pub(super) async fn handle_menu_input(
     request_chat_id: i64,
     request_message_id: i64,
     sender_user_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<bool> {
     let input = text.trim();
@@ -161,7 +188,7 @@ pub(super) async fn handle_menu_input(
     }
 
     let key = (request_chat_id, sender_user_id);
-    let draft = match take_current_draft(key) {
+    let draft = match take_current_draft(key).await? {
         DraftTakeResult::Active(draft) => draft,
         DraftTakeResult::Expired => {
             tracing::debug!(
@@ -172,11 +199,11 @@ pub(super) async fn handle_menu_input(
             );
             send::ReplyPanel::card(build_transfer_prompt_text(
                 "输入已过期",
-                "上一次菜单输入已超过 10 分钟，请重新打开 /m。",
+                "上一次菜单输入已超过 10 分钟，请重新打开 /menu。",
             ))
             .row(vec![send::build_copy_button(
-                "复制 /m",
-                "/m",
+                "复制 /menu",
+                "/menu",
                 tdlib_rs::enums::ButtonStyle::Primary,
             )])
             .send(request_chat_id, client_id)
@@ -194,6 +221,23 @@ pub(super) async fn handle_menu_input(
         }
     };
 
+    if is_cancel_text(input) {
+        tracing::debug!(
+            request_chat_id,
+            sender_user_id,
+            request_message_id,
+            needs_reply_keyboard_cleanup = step_uses_reply_keyboard(&draft.step),
+            "menu input cancelled by text"
+        );
+        send_cancelled_notice(
+            request_chat_id,
+            client_id,
+            step_uses_reply_keyboard(&draft.step),
+        )
+        .await?;
+        return Ok(true);
+    }
+
     match draft.step {
         MenuInputStep::SourceLink { kind } => {
             tracing::debug!(
@@ -204,13 +248,7 @@ pub(super) async fn handle_menu_input(
                 "menu input source link received"
             );
             if !looks_like_telegram_link(input) {
-                put_draft(
-                    key,
-                    MenuInputDraft {
-                        step: MenuInputStep::SourceLink { kind },
-                        updated_at: Instant::now(),
-                    },
-                );
+                put_draft(key, MenuInputDraft::source_link(kind)).await?;
                 tracing::debug!(
                     request_chat_id,
                     sender_user_id,
@@ -219,7 +257,8 @@ pub(super) async fn handle_menu_input(
                     "menu input source link rejected"
                 );
                 send::send_card_message_with_force_reply_returning(
-                    build_transfer_prompt_text(
+                    build_step_prompt_text(
+                        "1/3",
                         "源链接格式不正确",
                         "请回复 t.me 消息链接，或发送 /cancel 取消。",
                     ),
@@ -235,29 +274,23 @@ pub(super) async fn handle_menu_input(
                 let Some(target_chat_id) = resolve_default_target(&config, request_chat_id) else {
                     put_draft(
                         key,
-                        MenuInputDraft {
-                            step: MenuInputStep::TargetChat {
-                                kind: kind.command_kind(),
-                                source_link: input.to_owned(),
-                            },
-                            updated_at: Instant::now(),
-                        },
-                    );
+                        MenuInputDraft::target_choice(kind.command_kind(), input.to_owned()),
+                    )
+                    .await?;
                     tracing::debug!(
                         request_chat_id,
                         sender_user_id,
                         request_message_id,
                         input_kind = kind.log_name(),
-                        "menu input default target missing, asking target chat"
+                        "menu input default target missing, asking target choice"
                     );
-                    send::send_card_message_with_force_reply_returning(
-                        build_transfer_prompt_text(
-                            "缺少默认目标",
-                            "配置里没有当前 chat 的默认目标，请回复目标 chat_id。",
-                        ),
+                    send_target_choice_prompt(
+                        &config,
                         request_chat_id,
-                        "输入目标 chat_id",
+                        sender_user_id,
                         client_id,
+                        kind.command_kind(),
+                        input,
                     )
                     .await?;
                     return Ok(true);
@@ -267,6 +300,7 @@ pub(super) async fn handle_menu_input(
                     input.to_owned(),
                     target_chat_id.to_string(),
                 ];
+                remember_last_target(request_chat_id, sender_user_id, target_chat_id);
                 tracing::debug!(
                     request_chat_id,
                     sender_user_id,
@@ -281,42 +315,35 @@ pub(super) async fn handle_menu_input(
                     config,
                     request_chat_id,
                     request_message_id,
+                    actor,
                     client_id,
                 )
                 .await?;
                 return Ok(true);
             }
 
-            put_draft(
-                key,
-                MenuInputDraft {
-                    step: MenuInputStep::TargetChat {
-                        kind,
-                        source_link: input.to_owned(),
-                    },
-                    updated_at: Instant::now(),
-                },
-            );
+            put_draft(key, MenuInputDraft::target_choice(kind, input.to_owned())).await?;
             tracing::debug!(
                 request_chat_id,
                 sender_user_id,
                 request_message_id,
                 input_kind = kind.log_name(),
-                "menu input asking target chat"
+                "menu input asking target choice"
             );
-            send::send_card_message_with_force_reply_returning(
-                build_transfer_prompt_text(
-                    "目标 chat",
-                    "请回复目标 chat_id 或目标别名；如果配置了默认目标，也可以回复 default。",
-                ),
+            send_target_choice_prompt(
+                &config,
                 request_chat_id,
-                "输入目标 chat_id、别名或 default",
+                sender_user_id,
                 client_id,
+                kind,
+                input,
             )
             .await?;
             Ok(true)
         }
-        MenuInputStep::TargetChat { kind, source_link } => {
+        MenuInputStep::TargetChoice { kind, source_link }
+        | MenuInputStep::TargetChat { kind, source_link }
+        | MenuInputStep::ChatPicker { kind, source_link } => {
             tracing::debug!(
                 request_chat_id,
                 sender_user_id,
@@ -324,18 +351,8 @@ pub(super) async fn handle_menu_input(
                 input_kind = kind.log_name(),
                 "menu input target chat received"
             );
-            let target_arg = if input.eq_ignore_ascii_case("default") {
-                None
-            } else if input.parse::<i64>().is_ok() || config.target_aliases.contains_key(input) {
-                Some(input.to_owned())
-            } else {
-                put_draft(
-                    key,
-                    MenuInputDraft {
-                        step: MenuInputStep::TargetChat { kind, source_link },
-                        updated_at: Instant::now(),
-                    },
-                );
+            let Some(target_chat_id) = resolve_target_input(input, &config, request_chat_id) else {
+                put_draft(key, MenuInputDraft::target_chat(kind, source_link)).await?;
                 tracing::debug!(
                     request_chat_id,
                     sender_user_id,
@@ -344,7 +361,8 @@ pub(super) async fn handle_menu_input(
                     "menu input target chat rejected"
                 );
                 send::send_card_message_with_force_reply_returning(
-                    build_transfer_prompt_text(
+                    build_step_prompt_text(
+                        "2/3",
                         "目标 chat 格式不正确",
                         "请回复数字 chat_id、配置里的目标别名，或回复 default 使用配置默认目标。",
                     ),
@@ -356,30 +374,262 @@ pub(super) async fn handle_menu_input(
                 return Ok(true);
             };
 
-            let mut command_owned = vec![kind.command_name().to_owned(), source_link];
-            if let Some(target_arg) = target_arg {
-                command_owned.push(target_arg);
-            }
+            put_confirm_draft(key, kind, source_link.clone(), target_chat_id).await?;
             tracing::debug!(
                 request_chat_id,
                 sender_user_id,
                 request_message_id,
                 input_kind = kind.log_name(),
-                target_is_default = command_owned.len() == 2,
-                "menu input completed, dispatching command"
+                target_chat_id,
+                "menu input target resolved, asking confirmation"
             );
-            run_existing_command(
+            send_confirm_prompt(
                 kind,
-                command_owned,
-                config,
+                &source_link,
+                target_chat_id,
                 request_chat_id,
-                request_message_id,
                 client_id,
             )
             .await?;
             Ok(true)
         }
+        MenuInputStep::Confirm {
+            kind,
+            source_link,
+            target_chat_id,
+        } => {
+            put_confirm_draft(key, kind, source_link, target_chat_id).await?;
+            send::ReplyPanel::card(build_step_prompt_text(
+                "3/3",
+                "等待确认",
+                "请点击确认卡片里的“执行”，或发送 /cancel 取消。",
+            ))
+            .rows(confirm_button_rows())
+            .send(request_chat_id, client_id)
+            .await?;
+            Ok(true)
+        }
+        MenuInputStep::JobId { action } => {
+            tracing::debug!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                job_action = action.log_name(),
+                "menu input job id received"
+            );
+            let Some(job_id) = parse_job_id_input(input) else {
+                put_draft(key, MenuInputDraft::job_id(action)).await?;
+                tracing::debug!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    job_action = action.log_name(),
+                    "menu input job id rejected"
+                );
+                send::send_card_message_with_force_reply_returning(
+                    build_step_prompt_text(
+                        "1/1",
+                        "job_id 格式不正确",
+                        "请回复纯数字 job_id，例如 42；或发送 /cancel 取消。",
+                    ),
+                    request_chat_id,
+                    "输入数字 job_id，或发送 /cancel",
+                    client_id,
+                )
+                .await?;
+                return Ok(true);
+            };
+
+            tracing::info!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                job_id,
+                job_action = action.log_name(),
+                "menu input dispatching job command"
+            );
+            run_existing_job_command(action, job_id, actor, client_id).await?;
+            Ok(true)
+        }
+        MenuInputStep::PointLedgerUserId => {
+            tracing::debug!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                "menu input point ledger user id received"
+            );
+            let Some(user_id) = parse_user_id_input(input) else {
+                put_draft(key, MenuInputDraft::point_ledger_user_id()).await?;
+                tracing::debug!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    "menu input point ledger user id rejected"
+                );
+                send::send_card_message_with_force_reply_returning(
+                    build_step_prompt_text(
+                        "1/1",
+                        "用户 ID 格式不正确",
+                        "请回复纯数字 Telegram 用户 ID，例如 123456789；或发送 /cancel 取消。",
+                    ),
+                    request_chat_id,
+                    "输入数字 user_id，或发送 /cancel",
+                    client_id,
+                )
+                .await?;
+                return Ok(true);
+            };
+
+            tracing::info!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                target_user_id = user_id,
+                "menu input dispatching points history command"
+            );
+            run_existing_points_history_command(user_id, actor, client_id).await?;
+            Ok(true)
+        }
     }
+}
+
+/// 处理 Telegram 原生选群结果。
+///
+/// 返回 true 表示这条 `MessageChatShared` 已被输入流消费。
+pub(super) async fn handle_shared_chat_input(
+    shared: &tdlib_rs::types::MessageChatShared,
+    config: std::sync::Arc<BotConfig>,
+    request_chat_id: i64,
+    sender_user_id: i64,
+    client_id: i32,
+) -> anyhow::Result<bool> {
+    if shared.button_id != TARGET_CHAT_REQUEST_BUTTON_ID {
+        return Ok(false);
+    }
+
+    let key = (request_chat_id, sender_user_id);
+    let draft = match take_current_draft(key).await? {
+        DraftTakeResult::Active(draft) => draft,
+        DraftTakeResult::Expired => {
+            send::send_card_message_with_remove_keyboard(
+                build_menu_status_text(
+                    "输入已过期",
+                    "expired",
+                    "上一次选群操作已超过有效时间，请重新打开 /menu。",
+                ),
+                request_chat_id,
+                client_id,
+            )
+            .await?;
+            return Ok(true);
+        }
+        DraftTakeResult::None => return Ok(false),
+    };
+
+    let MenuInputStep::ChatPicker { kind, source_link } = draft.step else {
+        put_draft(key, draft).await?;
+        return Ok(false);
+    };
+
+    let target_chat_id = shared.chat.chat_id;
+    if let Err(err) = resolve_target_by_id(target_chat_id, &config, request_chat_id) {
+        put_target_choice_draft(key, kind, source_link).await?;
+        tracing::warn!(
+            request_chat_id,
+            sender_user_id,
+            target_chat_id,
+            error = %err,
+            "shared target chat rejected"
+        );
+        send_keyboard_cleanup_notice(
+            request_chat_id,
+            client_id,
+            "目标不可用",
+            "已移除选群键盘；选中的群不在允许列表，请重新选择或手动输入。",
+        )
+        .await?;
+        send::ReplyPanel::card(build_transfer_prompt_text(
+            "目标不可用",
+            "选中的群不在 allowed_target_chat_ids 允许列表中，请重新选择或手动输入。",
+        ))
+        .rows(build_target_choice_buttons(
+            &config,
+            request_chat_id,
+            sender_user_id,
+        ))
+        .send(request_chat_id, client_id)
+        .await?;
+        return Ok(true);
+    }
+
+    put_confirm_draft(key, kind, source_link.clone(), target_chat_id).await?;
+    send_keyboard_cleanup_notice(
+        request_chat_id,
+        client_id,
+        "已选择目标",
+        "已移除输入框下方的选群键盘，请在确认卡片中继续。",
+    )
+    .await?;
+    send_confirm_prompt(
+        kind,
+        &source_link,
+        target_chat_id,
+        request_chat_id,
+        client_id,
+    )
+    .await?;
+    Ok(true)
+}
+
+/// 判断普通文本是否表示取消。
+///
+/// `取消` 来自 reply keyboard 的文本按钮；`cancel` 作为英文兜底，`/cancel` 由上层命令路由优先处理。
+fn is_cancel_text(input: &str) -> bool {
+    input == "取消" || input.eq_ignore_ascii_case("cancel") || input.eq_ignore_ascii_case("/cancel")
+}
+
+/// 发送取消提示；如果选群键盘可能残留，则顺带移除 reply keyboard。
+async fn send_cancelled_notice(
+    request_chat_id: i64,
+    client_id: i32,
+    needs_reply_keyboard_cleanup: bool,
+) -> anyhow::Result<()> {
+    let text = build_menu_status_text(
+        "已取消",
+        "cancelled",
+        "当前输入流程已取消，可重新打开 /menu。",
+    );
+    if needs_reply_keyboard_cleanup {
+        return send::send_card_message_with_remove_keyboard(text, request_chat_id, client_id)
+            .await;
+    }
+
+    send::ReplyPanel::card(text)
+        .row(vec![send::build_copy_button(
+            "复制 /menu",
+            "/menu",
+            tdlib_rs::enums::ButtonStyle::Primary,
+        )])
+        .send(request_chat_id, client_id)
+        .await
+}
+
+/// 发送“键盘已清理”提示。
+///
+/// TDLib 不能同时在同一条消息上携带 inline keyboard 和 remove keyboard，
+/// 因此清理 reply keyboard 必须单独发一条短卡片，再发送确认/目标选择卡片。
+async fn send_keyboard_cleanup_notice(
+    request_chat_id: i64,
+    client_id: i32,
+    title: &str,
+    detail: &str,
+) -> anyhow::Result<()> {
+    send::send_card_message_with_remove_keyboard(
+        build_menu_status_text(title, "keyboard-cleared", detail),
+        request_chat_id,
+        client_id,
+    )
+    .await
 }
 
 /// 调用已有命令入口，避免菜单输入流复制转存/查询业务逻辑。
@@ -389,6 +639,7 @@ async fn run_existing_command(
     config: std::sync::Arc<BotConfig>,
     request_chat_id: i64,
     request_message_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
@@ -399,12 +650,13 @@ async fn run_existing_command(
                 config,
                 request_chat_id,
                 request_message_id,
+                actor,
                 client_id,
             )
             .await
         }
         MenuInputKind::Lookup => {
-            lookup::lookup_command(command_refs, config, request_chat_id, client_id).await
+            lookup::lookup_command(command_refs, config, actor, client_id).await
         }
         MenuInputKind::TransferDefault | MenuInputKind::LookupDefault => {
             unreachable!("kind is normalized")
@@ -412,45 +664,54 @@ async fn run_existing_command(
     }
 }
 
-/// 取出当前草稿；若草稿过期，则清理后返回 None。
-fn take_current_draft(key: DraftKey) -> DraftTakeResult {
-    let mut drafts = MENU_INPUT_DRAFTS
-        .lock()
-        .expect("menu input draft mutex poisoned");
-    let Some(draft) = drafts.remove(&key) else {
-        purge_expired_locked(&mut drafts);
-        return DraftTakeResult::None;
-    };
-    if Instant::now().duration_since(draft.updated_at) > input_ttl() {
-        purge_expired_locked(&mut drafts);
-        return DraftTakeResult::Expired;
+/// 调用已有 `/job` 命令入口，避免菜单输入流复制任务状态迁移逻辑。
+async fn run_existing_job_command(
+    action: MenuJobAction,
+    job_id: i64,
+    actor: crate::config::RequestActor,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let command_owned = [
+        "/job".to_owned(),
+        action.command_action().to_owned(),
+        job_id.to_string(),
+    ];
+    let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
+    job::job_command(command_refs, actor, client_id).await
+}
+
+/// 调用已有 `/points history` 命令，避免菜单输入流复制积分流水查询逻辑。
+async fn run_existing_points_history_command(
+    user_id: i64,
+    actor: crate::config::RequestActor,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let command_owned = [
+        "/points".to_owned(),
+        "history".to_owned(),
+        user_id.to_string(),
+    ];
+    let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
+    points::points_command(command_refs, actor, client_id).await
+}
+
+/// 解析用户回复的任务编号。
+///
+/// job_id 来自数据库自增主键，必须是正整数；这里先过滤空白、符号和混合文本，避免把错误输入传到命令层。
+fn parse_job_id_input(input: &str) -> Option<i64> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || !trimmed.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
     }
-    purge_expired_locked(&mut drafts);
-    DraftTakeResult::Active(draft)
+    let job_id = trimmed.parse::<i64>().ok()?;
+    (job_id > 0).then_some(job_id)
 }
 
-/// 写回草稿。
-fn put_draft(key: DraftKey, draft: MenuInputDraft) {
-    let mut drafts = MENU_INPUT_DRAFTS
-        .lock()
-        .expect("menu input draft mutex poisoned");
-    drafts.insert(key, draft);
-}
-
-/// 清理超时草稿。
-fn purge_expired_locked(drafts: &mut HashMap<DraftKey, MenuInputDraft>) {
-    let now = Instant::now();
-    let ttl = input_ttl();
-    drafts.retain(|_, draft| now.duration_since(draft.updated_at) <= ttl);
-}
-
-/// 菜单输入草稿超时时间。
-fn input_ttl() -> Duration {
-    Duration::from_secs(
-        crate::tgbot::transfer::runtime_config()
-            .menu_input_timeout_seconds
-            .max(1),
-    )
+/// 解析用户回复的 Telegram 用户 ID。
+///
+/// user_id 也使用纯数字输入，避免把 `@username` 误当成可解析目标；后续如需 username 解析再单独接 TDLib 查询。
+fn parse_user_id_input(input: &str) -> Option<i64> {
+    parse_job_id_input(input)
 }
 
 /// 粗略判断是否是 Telegram 消息链接。
@@ -460,13 +721,6 @@ fn looks_like_telegram_link(input: &str) -> bool {
     input.starts_with("https://t.me/")
         || input.starts_with("http://t.me/")
         || input.starts_with("t.me/")
-}
-
-/// 解析菜单“快速转存/查询”使用的默认目标。
-///
-/// 这里提前解析是为了在缺少默认目标时继续引导输入目标，而不是让复用的命令入口直接报错。
-fn resolve_default_target(config: &BotConfig, request_chat_id: i64) -> Option<i64> {
-    resolve_target_chat_id(&["/menu-input", "placeholder"], config, request_chat_id).ok()
 }
 
 #[cfg(test)]
@@ -481,43 +735,31 @@ mod tests {
         assert!(!looks_like_telegram_link("https://example.com"));
     }
 
-    // 草稿应按 chat + user 隔离，避免多个管理员互相覆盖输入。
+    // reply keyboard 的“取消”按钮会发回普通文本，状态机必须能直接识别。
     #[test]
-    fn test_start_and_cancel_menu_input() {
-        start_menu_input(1, 2, MenuInputKind::Transfer);
-        assert!(cancel_menu_input(1, 2));
-        assert!(!cancel_menu_input(1, 2));
+    fn test_is_cancel_text() {
+        assert!(is_cancel_text("取消"));
+        assert!(is_cancel_text("cancel"));
+        assert!(is_cancel_text("/cancel"));
+        assert!(!is_cancel_text("继续"));
     }
 
-    // 不同输入流程应使用对应的短命令，最终复用已有命令入口。
+    // 任务控制输入只接受正整数 job_id，避免把说明文字或负数传给 `/job`。
     #[test]
-    fn test_menu_input_kind_command_name() {
-        assert_eq!(MenuInputKind::Transfer.command_name(), "/t");
-        assert_eq!(MenuInputKind::TransferDefault.command_name(), "/t");
-        assert_eq!(MenuInputKind::Lookup.command_name(), "/lk");
-        assert_eq!(MenuInputKind::LookupDefault.command_name(), "/lk");
+    fn test_parse_job_id_input() {
+        assert_eq!(parse_job_id_input("42"), Some(42));
+        assert_eq!(parse_job_id_input(" 42 "), Some(42));
+        assert_eq!(parse_job_id_input("0"), None);
+        assert_eq!(parse_job_id_input("-1"), None);
+        assert_eq!(parse_job_id_input("job 42"), None);
+        assert_eq!(parse_job_id_input(""), None);
     }
 
-    // 快速转存应优先使用当前请求 chat 的默认目标，再使用全局兜底目标。
+    // 用户积分流水输入同样只接受 Telegram 数字 user_id，username 解析后续单独接 TDLib。
     #[test]
-    fn test_resolve_default_target() {
-        let mut config = BotConfig::default();
-        assert_eq!(resolve_default_target(&config, 1), None);
-
-        config.target_map.insert(0, -100);
-        assert_eq!(resolve_default_target(&config, 1), Some(-100));
-
-        config.target_map.insert(1, -200);
-        assert_eq!(resolve_default_target(&config, 1), Some(-200));
-    }
-
-    // 快速转存的默认目标也必须遵守 allowed_target_chat_ids。
-    #[test]
-    fn test_resolve_default_target_respects_allowed_targets() {
-        let mut config = BotConfig::default();
-        config.target_map.insert(0, -200);
-        config.allowed_target_chat_ids = vec![-100];
-
-        assert_eq!(resolve_default_target(&config, 1), None);
+    fn test_parse_user_id_input() {
+        assert_eq!(parse_user_id_input("123456789"), Some(123456789));
+        assert_eq!(parse_user_id_input("@alice"), None);
+        assert_eq!(parse_user_id_input("-123"), None);
     }
 }

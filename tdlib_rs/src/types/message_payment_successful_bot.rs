@@ -17,6 +17,10 @@ pub struct MessagePaymentSuccessfulBot {
     pub is_first_recurring: bool,
     /// Invoice payload
     pub invoice_payload: String,
+    /// Identifier of the shipping option chosen by the user; may be empty if not applicable; for bots only
+    pub shipping_option_id: String,
+    /// Information about the order; may be null; for bots only
+    pub order_info: Option<crate::types::OrderInfo>,
     /// Telegram payment identifier
     pub telegram_payment_charge_id: String,
     /// Provider payment identifier

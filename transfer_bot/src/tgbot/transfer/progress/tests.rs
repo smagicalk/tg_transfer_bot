@@ -6,7 +6,7 @@ use super::text::{
     format_progress_bytes, format_transfer_control_text, format_transfer_progress_text,
     format_transfer_waiting_text,
 };
-use crate::ClientRole;
+use crate::config::{ActorRole, BillingConfig, ClientRole, RequestActor};
 use crate::tgbot::transfer::types::SourceKind;
 use crate::tgbot::transfer::{store, types};
 
@@ -22,9 +22,16 @@ fn test_format_progress_bytes() {
 #[test]
 fn test_format_transfer_waiting_text() {
     let text = format_transfer_waiting_text(&types::TransferPlan {
+        actor: RequestActor {
+            request_chat_id: 10,
+            user_id: 10,
+            role: ActorRole::Admin,
+        },
         source_link: "https://t.me/c/1/2".to_owned(),
         source_kind: SourceKind::Link,
         preferred_source_client_role: ClientRole::Bot,
+        allow_user_fallback: true,
+        billing: BillingConfig::default(),
         source_message_chat_id: None,
         source_message_id: None,
         target_chat_id: -100,
@@ -93,23 +100,18 @@ fn test_build_transfer_result_keyboard_uses_result_state_filter() {
     );
     let fail_keyboard = build_transfer_result_keyboard("https://t.me/c/1/2", -100, None, None);
 
-    let success_last = success_keyboard
-        .rows
-        .last()
-        .and_then(|row| row.last())
-        .expect("success keyboard must have last button");
-    let fail_last = fail_keyboard
-        .rows
-        .last()
-        .and_then(|row| row.last())
-        .expect("fail keyboard must have last button");
-
-    assert_eq!(success_last.text, "复制列表命令");
-    assert_eq!(fail_last.text, "复制列表命令");
+    assert_eq!(success_keyboard.rows[1][2].text, "复制列表命令");
+    assert_eq!(fail_keyboard.rows[1][2].text, "复制列表命令");
     assert_eq!(success_keyboard.rows[1][1].text, "查看完成列表");
     assert_eq!(fail_keyboard.rows[1][1].text, "查看失败列表");
+    assert_eq!(success_keyboard.rows[1][3].text, "菜单");
+    assert_eq!(fail_keyboard.rows[1][3].text, "菜单");
     assert!(matches!(
         success_keyboard.rows[1][1].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert!(matches!(
+        success_keyboard.rows[1][3].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }
@@ -171,6 +173,7 @@ fn test_build_transfer_progress_keyboard_has_callback_buttons() {
     );
 
     assert_eq!(keyboard.rows[0][0].text, "查看运行列表");
+    assert_eq!(keyboard.rows[0][2].text, "菜单");
     assert_eq!(keyboard.rows[1][0].text, "查看任务详情");
     assert_eq!(keyboard.rows[1][1].text, "暂停");
     assert_eq!(keyboard.rows[1][2].text, "停止");
@@ -185,6 +188,10 @@ fn test_build_transfer_progress_keyboard_has_callback_buttons() {
     ));
     assert!(matches!(
         keyboard.rows[1][1].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert!(matches!(
+        keyboard.rows[0][2].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }

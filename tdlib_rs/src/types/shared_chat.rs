@@ -7,4 +7,10 @@ use serde_with::{serde_as, DisplayFromStr};
 pub struct SharedChat {
     /// Chat identifier
     pub chat_id: i64,
+    /// Title of the chat; for bots only
+    pub title: String,
+    /// Username of the chat; for bots only
+    pub username: String,
+    /// Photo of the chat; for bots only; may be null
+    pub photo: Option<crate::types::Photo>,
 }

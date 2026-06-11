@@ -6,6 +6,7 @@ mod status;
 mod success;
 
 pub(super) use failure::send_failure_message;
+pub(in crate::tgbot) use failure::{TransferErrorKind, classify_transfer_error_text};
 pub(super) use status::{
     send_cancelled_message, send_cancelling_message, send_paused_message, send_running_message,
 };

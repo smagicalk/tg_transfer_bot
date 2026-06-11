@@ -197,7 +197,9 @@ pub struct UserClientConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct BotClientConfig {
-    #[serde(default)]
+    // bot 是当前交互模式的必需 client；该开关只保留给旧配置兼容。
+    // 新配置省略时按启用处理，避免模板里出现一个不能实际关闭的误导项。
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
     pub token: String,
     pub tdlib: ClientTdlibConfig,
@@ -215,8 +217,20 @@ pub struct ClientsConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkflowConfig {
+    // 交互端固定为 bot；保留字段是为了兼容旧配置和内部运行时视图。
+    #[serde(
+        default = "default_client_role_bot",
+        skip_serializing_if = "is_bot_role"
+    )]
     pub interaction_client: ClientRole,
+    // 链接源真实策略是 bot-first + user fallback；该字段只作为旧配置兼容下载端。
+    #[serde(
+        default = "default_client_role_bot",
+        skip_serializing_if = "is_bot_role"
+    )]
     pub download_client: ClientRole,
+    // 上传端是当前 workflow 中唯一需要用户主动选择的角色。
+    #[serde(default = "default_client_role_bot")]
     pub upload_client: ClientRole,
 }
 
@@ -253,11 +267,113 @@ impl Default for DeduplicateConfig {
     }
 }
 
+impl DeduplicateConfig {
+    /// 当前查重策略固定为 source_link + target_chat_id。
+    /// 配置写回时隐藏固定值，避免用户误以为可以通过配置切换查重语义。
+    fn is_fixed(&self) -> bool {
+        self.enabled && self.return_running_job && self.return_finished_result
+    }
+}
+
+// 交互用户角色。
+// admin 不消耗积分且可管理全局；user 只能查看和控制自己的任务。
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorRole {
+    Admin,
+    User,
+}
+
+impl ActorRole {
+    /// 数据库存储值与日志字段统一使用小写英文。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::User => "user",
+        }
+    }
+
+    /// 普通用户权限判断的反向辅助。
+    pub fn is_admin(self) -> bool {
+        self == Self::Admin
+    }
+}
+
+// 一次 bot 交互的身份上下文。
+// chat_id 表示这条命令发到哪里；user_id 表示真正点击按钮或发送命令的人。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestActor {
+    pub request_chat_id: i64,
+    pub user_id: i64,
+    pub role: ActorRole,
+}
+
+impl RequestActor {
+    /// 是否管理员。
+    pub fn is_admin(self) -> bool {
+        self.role.is_admin()
+    }
+
+    /// 任务可见范围：None 表示 admin 全局可见，Some 表示普通用户只能看自己的任务。
+    pub fn owner_scope(self) -> Option<i64> {
+        if self.is_admin() {
+            None
+        } else {
+            Some(self.user_id)
+        }
+    }
+}
+
+// 积分计费配置。
+// 第一版按任务和条目数计费，不按文件大小计费，避免下载前无法准确估算成本。
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "snake_case")]
+pub struct BillingConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_billing_base_cost_points")]
+    pub base_cost_points: i64,
+    #[serde(default = "default_billing_item_cost_points")]
+    pub item_cost_points: i64,
+    #[serde(default)]
+    pub initial_user_points: i64,
+}
+
+impl Default for BillingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            base_cost_points: default_billing_base_cost_points(),
+            item_cost_points: default_billing_item_cost_points(),
+            initial_user_points: 0,
+        }
+    }
+}
+
+impl BillingConfig {
+    /// 根据抓取到的消息数量计算本次转存成本。
+    pub fn cost_for_items(&self, item_count: usize) -> i64 {
+        if !self.enabled {
+            return 0;
+        }
+        let item_count = i64::try_from(item_count).unwrap_or(i64::MAX);
+        self.base_cost_points
+            .saturating_add(self.item_cost_points.saturating_mul(item_count))
+            .max(0)
+    }
+}
+
 // 访问控制配置。
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct AccessControlConfig {
     pub admin_user_ids: Vec<i64>,
+    #[serde(default)]
+    pub allowed_user_ids: Vec<i64>,
+    #[serde(default)]
+    pub allow_all_private_users: bool,
+    #[serde(default)]
+    pub banned_user_ids: Vec<i64>,
     #[serde(default)]
     pub allowed_request_chat_ids: Vec<i64>,
     #[serde(default)]
@@ -309,11 +425,14 @@ pub struct BotConfigV2 {
     #[serde(default)]
     pub storage: StorageConfig,
     pub clients: ClientsConfig,
-    pub workflow: WorkflowConfig,
     #[serde(default)]
+    pub workflow: WorkflowConfig,
+    #[serde(default, skip_serializing_if = "DeduplicateConfig::is_fixed")]
     pub deduplicate: DeduplicateConfig,
     pub access_control: AccessControlConfig,
     pub targets: TargetsConfig,
+    #[serde(default)]
+    pub billing: BillingConfig,
     #[serde(default)]
     pub transfer_config: TransferConfig,
 }
@@ -400,6 +519,22 @@ pub struct BotConfig {
     // 兼容旧代码的管理员 chat/user id 白名单。
     pub admin_ids: Vec<i64>,
 
+    // 明确的管理员用户 ID；权限判断以 sender_user_id 为准，不再只看 chat_id。
+    pub admin_user_ids: Vec<i64>,
+
+    // 允许管理员在其中发命令的 chat ID。
+    // 普通用户只允许私聊，避免群聊里多人共享同一个 request_chat_id。
+    pub allowed_request_chat_ids: Vec<i64>,
+
+    // 允许作为普通用户使用 bot 的用户 ID。
+    pub allowed_user_ids: Vec<i64>,
+
+    // 是否允许任意私聊用户作为普通用户使用。
+    pub allow_all_private_users: bool,
+
+    // 被禁止使用 bot 的用户 ID。
+    pub banned_user_ids: Vec<i64>,
+
     // 兼容旧代码的默认 client id，取 interaction client。
     pub client_id: Option<i32>,
 
@@ -416,6 +551,9 @@ pub struct BotConfig {
 
     // 转存相关运行参数。
     pub transfer_config: TransferConfig,
+
+    // 普通用户积分计费参数。
+    pub billing: BillingConfig,
 
     // 兼容旧代码的默认登录方式，取 interaction client。
     pub login_info: LoginInfo,
@@ -439,11 +577,17 @@ impl Default for BotConfig {
             tdlib_config: TdlibConfig::default(),
             storage: StorageConfig::default(),
             admin_ids: Vec::new(),
+            admin_user_ids: Vec::new(),
+            allowed_request_chat_ids: Vec::new(),
+            allowed_user_ids: Vec::new(),
+            allow_all_private_users: false,
+            banned_user_ids: Vec::new(),
             client_id: None,
             target_map: HashMap::new(),
             target_aliases: HashMap::new(),
             allowed_target_chat_ids: Vec::new(),
             transfer_config: TransferConfig::default(),
+            billing: BillingConfig::default(),
             login_info: LoginInfo::default(),
             workflow: WorkflowConfig::default(),
             client_ids: RuntimeClientIds::default(),
@@ -536,6 +680,49 @@ impl BotConfig {
         self.workflow.interaction_client == ClientRole::Bot
     }
 
+    /// 根据请求 chat 与发送者 user 判断是否允许交互。
+    ///
+    /// 普通用户第一版只支持私聊 bot，避免群聊里多人共用同一个 chat_id 时产生任务归属混乱。
+    /// admin 可在配置允许的 request chat 中管理全局任务。
+    pub fn request_actor(&self, request_chat_id: i64, sender_user_id: i64) -> Option<RequestActor> {
+        if self.banned_user_ids.contains(&sender_user_id) {
+            return None;
+        }
+
+        if self.admin_user_ids.contains(&sender_user_id) {
+            if self.admin_request_chat_allowed(request_chat_id, sender_user_id) {
+                return Some(RequestActor {
+                    request_chat_id,
+                    user_id: sender_user_id,
+                    role: ActorRole::Admin,
+                });
+            }
+            return None;
+        }
+
+        if self.normal_user_request_allowed(request_chat_id, sender_user_id) {
+            return Some(RequestActor {
+                request_chat_id,
+                user_id: sender_user_id,
+                role: ActorRole::User,
+            });
+        }
+
+        None
+    }
+
+    /// admin 可在私聊或显式允许的请求 chat 中操作。
+    fn admin_request_chat_allowed(&self, request_chat_id: i64, sender_user_id: i64) -> bool {
+        request_chat_id == sender_user_id
+            || self.allowed_request_chat_ids.contains(&request_chat_id)
+    }
+
+    /// 普通用户只允许私聊，且必须在白名单中或开启 allow_all_private_users。
+    fn normal_user_request_allowed(&self, request_chat_id: i64, sender_user_id: i64) -> bool {
+        request_chat_id == sender_user_id
+            && (self.allow_all_private_users || self.allowed_user_ids.contains(&sender_user_id))
+    }
+
     /// 从 v2 配置构造运行时视图。
     fn from_v2(config: BotConfigV2) -> anyhow::Result<Self> {
         config.validate()?;
@@ -579,11 +766,17 @@ impl BotConfig {
             tdlib_config: interaction_runtime.tdlib_config.clone(),
             storage: config.storage,
             admin_ids: config.access_control.merged_admin_ids(),
+            admin_user_ids: config.access_control.admin_user_ids,
+            allowed_request_chat_ids: config.access_control.allowed_request_chat_ids,
+            allowed_user_ids: config.access_control.allowed_user_ids,
+            allow_all_private_users: config.access_control.allow_all_private_users,
+            banned_user_ids: config.access_control.banned_user_ids,
             client_id: None,
             target_map: config.targets.to_target_map(),
             target_aliases: config.targets.aliases,
             allowed_target_chat_ids: config.access_control.allowed_target_chat_ids,
             transfer_config: config.transfer_config,
+            billing: config.billing,
             login_info: interaction_runtime.login_info.clone(),
             workflow: config.workflow,
             client_ids: RuntimeClientIds::default(),
@@ -602,6 +795,10 @@ impl BotConfigV2 {
 
         if self.storage.database_url.trim().is_empty() {
             anyhow::bail!("storage.database_url cannot be empty");
+        }
+
+        if self.billing.base_cost_points < 0 || self.billing.item_cost_points < 0 {
+            anyhow::bail!("billing cost points cannot be negative");
         }
 
         // 交互链路依赖 bot-only 的 inline keyboard、callback 和 copy-text 按钮。
@@ -776,6 +973,16 @@ fn default_downloads_page_size() -> u64 {
     8
 }
 
+// 默认单次转存基础积分成本。
+fn default_billing_base_cost_points() -> i64 {
+    1
+}
+
+// 默认每条消息积分成本。
+fn default_billing_item_cost_points() -> i64 {
+    1
+}
+
 // 默认菜单输入超时时间秒数。
 fn default_menu_input_timeout_seconds() -> u64 {
     10 * 60
@@ -810,6 +1017,21 @@ fn looks_like_bot_token(token: &str) -> bool {
 // serde 默认 true 辅助函数。
 fn default_true() -> bool {
     true
+}
+
+// serde 跳过默认 true 字段时使用，避免配置写回时保留冗余开关。
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+// workflow 的交互端和兼容下载端都默认 bot。
+fn default_client_role_bot() -> ClientRole {
+    ClientRole::Bot
+}
+
+// workflow 固定 bot 的字段在写回时隐藏，只保留真正需要选择的 upload_client。
+fn is_bot_role(role: &ClientRole) -> bool {
+    *role == ClientRole::Bot
 }
 
 #[cfg(test)]
@@ -858,7 +1080,7 @@ mod tests {
         assert!(err.to_string().contains("config_version 2 is required"));
     }
 
-    // v2 配置应解析出 bot 交互、user 下载、bot 上传这三个角色。
+    // v2 配置应解析出 bot 交互、bot 兼容下载、bot 上传这三个角色。
     #[test]
     fn test_v2_config_maps_to_runtime_clients() {
         let config = BotConfig::from_json_str(v2_config_text()).unwrap();
@@ -880,6 +1102,25 @@ mod tests {
             config.storage.database_url,
             "sqlite://tg/app/transfer.sqlite?mode=rwc"
         );
+        assert_eq!(config.billing.base_cost_points, 1);
+        assert_eq!(config.billing.item_cost_points, 1);
+        assert!(
+            config
+                .request_actor(123, 1)
+                .is_some_and(|actor| actor.is_admin())
+        );
+        assert!(
+            config
+                .request_actor(1, 1)
+                .is_some_and(|actor| actor.is_admin())
+        );
+        assert!(config.request_actor(999, 1).is_none());
+        assert!(
+            config
+                .request_actor(2, 2)
+                .is_some_and(|actor| !actor.is_admin())
+        );
+        assert!(config.request_actor(3, 3).is_none());
     }
 
     // 同一个链接转到同一个目标是否复用由数据库层 source_link + target_chat_id 决定，
@@ -960,6 +1201,31 @@ mod tests {
         assert_eq!(workflow.upload_client, ClientRole::Bot);
     }
 
+    // 新模板只保留真正需要选择的 upload_client：
+    // - bot.enabled 省略时默认启用
+    // - interaction/download 省略时默认 bot
+    // - deduplicate 省略时使用固定查重策略
+    #[test]
+    fn test_v2_accepts_simplified_workflow_and_fixed_defaults() {
+        let simplified = v2_config_text()
+            .replace("              \"enabled\": true,\n", "")
+            .replace(
+                "            \"interaction_client\": \"bot\",\n            \"download_client\": \"bot\",\n",
+                "",
+            )
+            .replace(
+                "          \"deduplicate\": {\n            \"enabled\": true,\n            \"return_running_job\": true,\n            \"return_finished_result\": true\n          },\n",
+                "",
+            );
+
+        let config = BotConfig::from_json_str(&simplified).unwrap();
+
+        assert_eq!(config.workflow.interaction_client, ClientRole::Bot);
+        assert_eq!(config.workflow.download_client, ClientRole::Bot);
+        assert_eq!(config.workflow.upload_client, ClientRole::Bot);
+        assert!(config.runtime_client(ClientRole::Bot).is_ok());
+    }
+
     // 当前重复转存策略固定开启，避免配置写成 false 但数据库仍按固定规则查重。
     #[test]
     fn test_v2_rejects_disabled_deduplicate() {
@@ -1038,8 +1304,14 @@ mod tests {
             raw.clients.bot.token,
             "123456789:abcdefghijklmnopqrstuvwxyzABCDEF"
         );
+        assert!(raw.clients.bot.enabled);
         assert_eq!(raw.transfer_config.job_concurrency, 5);
         assert_eq!(raw.transfer_config.file_delete_delay_minutes, 7);
+        assert!(raw.billing.enabled);
+        assert!(!updated.contains("\"bot\": {\n      \"enabled\": true"));
+        assert!(!updated.contains("\"interaction_client\""));
+        assert!(!updated.contains("\"download_client\""));
+        assert!(!updated.contains("\"deduplicate\""));
     }
 
     // bot token 明显不是 BotFather 格式时应在配置阶段失败，避免 TDLib 登录阶段无明确反馈。
@@ -1130,6 +1402,9 @@ mod tests {
           },
           "access_control": {
             "admin_user_ids": [1],
+            "allowed_user_ids": [2],
+            "allow_all_private_users": false,
+            "banned_user_ids": [],
             "allowed_request_chat_ids": [123],
             "allowed_target_chat_ids": [-100]
           },
@@ -1141,6 +1416,12 @@ mod tests {
             "aliases": {
               "archive": -100
             }
+          },
+          "billing": {
+            "enabled": true,
+            "base_cost_points": 1,
+            "item_cost_points": 1,
+            "initial_user_points": 0
           },
           "transfer_config": {
             "job_concurrency": 2,

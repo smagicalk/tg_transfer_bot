@@ -45,14 +45,17 @@ pub(super) enum TransferOutcome {
 
 /// 执行单次转存任务（命令入口）。
 pub(super) async fn transfer(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: TransferPlan,
     client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferOutcome> {
     let start = build_transfer_start(plan, client_ids).await?;
     match start {
         TransferStart::Outcome(outcome) => Ok(outcome),
-        TransferStart::Resume(job) => resume_one_job(job, client_ids).await,
-        TransferStart::Run(job, messages, _guard) => run_job_inner(job, messages, client_ids).await,
+        TransferStart::Resume(job) => resume_one_job(app_context.clone(), job, client_ids).await,
+        TransferStart::Run(job, messages, _guard) => {
+            run_job_inner(app_context, job, messages, client_ids).await
+        }
     }
 }
 

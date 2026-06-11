@@ -14,13 +14,16 @@ use super::render::{format_job_action_text, format_job_status_text};
 /// 当前正在执行的 TDLib 单次下载/上传不会被强制中断；工作流会在下一个安全点停止。
 pub(super) async fn pause_job(
     job_id: i64,
-    request_chat_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let job = store::pause_job(job_id, request_chat_id).await?;
+    let job = store::pause_job_with_owner_scope(job_id, actor.request_chat_id, actor.owner_scope())
+        .await?;
     tracing::info!(
         job_id = job.id,
-        request_chat_id,
+        request_chat_id = actor.request_chat_id,
+        owner_user_id = actor.user_id,
+        actor_role = actor.role.as_str(),
         status = %job.status,
         "transfer job paused by command"
     );
@@ -47,7 +50,7 @@ pub(super) async fn pause_job(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ])
-    .send(request_chat_id, client_id)
+    .send(actor.request_chat_id, client_id)
     .await
 }
 
@@ -56,20 +59,24 @@ pub(super) async fn pause_job(
 /// paused 会先改回 pending；pending/running 若当前进程没有执行器，也会重新派发后台任务。
 pub(super) async fn resume_job(
     job_id: i64,
-    request_chat_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let job = store::wake_job(job_id, request_chat_id).await?;
+    let job = store::wake_job_with_owner_scope(job_id, actor.request_chat_id, actor.owner_scope())
+        .await?;
     let is_running = workflow::is_job_running_in_process(job.id).await;
     if !is_running {
         super::super::super::spawn_recovery_job(
+            crate::app_context::app_context(),
             job.clone(),
             super::super::super::transfer_client_ids()?,
         );
     }
     tracing::info!(
         job_id = job.id,
-        request_chat_id,
+        request_chat_id = actor.request_chat_id,
+        owner_user_id = actor.user_id,
+        actor_role = actor.role.as_str(),
         status = %job.status,
         is_running,
         "transfer job resumed by command"
@@ -104,7 +111,7 @@ pub(super) async fn resume_job(
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
         ])
-        .send(request_chat_id, client_id)
+        .send(actor.request_chat_id, client_id)
         .await
 }
 
@@ -115,10 +122,15 @@ pub(super) async fn resume_job(
 /// - 无执行器：当前命令立即收敛为 cancelled 并释放引用。
 pub(super) async fn stop_job(
     job_id: i64,
-    request_chat_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let requested = store::request_cancel_job(job_id, request_chat_id).await?;
+    let requested = store::request_cancel_job_with_owner_scope(
+        job_id,
+        actor.request_chat_id,
+        actor.owner_scope(),
+    )
+    .await?;
     let is_running = workflow::is_job_running_in_process(job_id).await;
     let job = if is_running {
         requested
@@ -134,7 +146,9 @@ pub(super) async fn stop_job(
     };
     tracing::info!(
         job_id = job.id,
-        request_chat_id,
+        request_chat_id = actor.request_chat_id,
+        owner_user_id = actor.user_id,
+        actor_role = actor.role.as_str(),
         status = %job.status,
         is_running,
         "transfer job stopped by command"
@@ -164,7 +178,7 @@ pub(super) async fn stop_job(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
-        .send(request_chat_id, client_id)
+        .send(actor.request_chat_id, client_id)
         .await
 }
 
@@ -173,23 +187,23 @@ pub(super) async fn stop_job(
 /// 只读取轻量进度快照，不会影响后台任务状态。
 pub(super) async fn show_job_status(
     job_id: i64,
-    request_chat_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let Some(snapshot) =
-        store::get_job_progress_snapshot_for_request_chat(job_id, request_chat_id).await?
-    else {
+    let Some(snapshot) = store::get_job_progress_snapshot_for_actor(job_id, actor).await? else {
         anyhow::bail!("job not found: {}", job_id);
     };
     tracing::info!(
         job_id,
-        request_chat_id,
+        request_chat_id = actor.request_chat_id,
+        owner_user_id = actor.user_id,
+        actor_role = actor.role.as_str(),
         status = %snapshot.job.status,
         "transfer job status requested"
     );
 
     send::ReplyPanel::card(format_job_status_text(&snapshot))
         .rows(build_job_status_buttons(&snapshot))
-        .send(request_chat_id, client_id)
+        .send(actor.request_chat_id, client_id)
         .await
 }

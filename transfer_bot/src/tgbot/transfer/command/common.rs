@@ -118,6 +118,76 @@ pub(crate) fn job_command(action: &str, job_id: i64, style: CommandStyle) -> Str
     format!("{} {} {}", command_name("job", style), action, job_id)
 }
 
+/// 构造 `/balance` 或 `/bal` 命令。
+pub(crate) fn balance_command(style: CommandStyle) -> String {
+    command_name("balance", style).to_owned()
+}
+
+/// 构造 `/balance history ...` 或 `/bal h ...` 命令。
+pub(crate) fn balance_history_command(limit: u64, page: u64, style: CommandStyle) -> String {
+    let action = match style {
+        CommandStyle::Short => "h",
+        CommandStyle::Long => "history",
+    };
+    format!(
+        "{} {} {} {}",
+        command_name("balance", style),
+        action,
+        limit,
+        page
+    )
+}
+
+/// 构造 `/points show ...` 或 `/pts s ...` 命令。
+pub(crate) fn points_show_command(user_id: i64, style: CommandStyle) -> String {
+    let action = match style {
+        CommandStyle::Short => "s",
+        CommandStyle::Long => "show",
+    };
+    format!("{} {} {}", command_name("points", style), action, user_id)
+}
+
+/// 构造 `/points history ...` 或 `/pts h ...` 命令。
+pub(crate) fn points_history_command(
+    user_id: i64,
+    limit: u64,
+    page: u64,
+    style: CommandStyle,
+) -> String {
+    let action = match style {
+        CommandStyle::Short => "h",
+        CommandStyle::Long => "history",
+    };
+    format!(
+        "{} {} {} {} {}",
+        command_name("points", style),
+        action,
+        user_id,
+        limit,
+        page
+    )
+}
+
+/// 构造 `/points add/sub ...` 或 `/pts a/sub ...` 命令。
+///
+/// `reason` 会进入积分账本，命令帮助中统一给出可复制模板，避免手动输入时漏掉原因。
+pub(crate) fn points_change_command(
+    action: &str,
+    user_id: i64,
+    amount: i64,
+    reason: &str,
+    style: CommandStyle,
+) -> String {
+    format!(
+        "{} {} {} {} {}",
+        command_name("points", style),
+        action,
+        user_id,
+        amount,
+        reason
+    )
+}
+
 /// 构造 `/config show` 或 `/cfg show` 命令。
 pub(crate) fn config_show_command(style: CommandStyle) -> String {
     format!("{} show", command_name("config", style))
@@ -139,6 +209,31 @@ pub(crate) fn help_command(topic: Option<&str>, style: CommandStyle) -> String {
         Some(topic) => format!("{} {}", command_name("help", style), topic),
         None => command_name("help", style).to_owned(),
     }
+}
+
+/// 构造 `/health` 或 `/hl` 命令。
+pub(crate) fn health_command(style: CommandStyle) -> String {
+    command_name("health", style).to_owned()
+}
+
+/// 构造 `/cache` 或 `/fc` 命令。
+pub(crate) fn cache_command(
+    view: Option<&str>,
+    limit: Option<u64>,
+    page: Option<u64>,
+    style: CommandStyle,
+) -> String {
+    let mut parts = vec![command_name("cache", style).to_owned()];
+    if let Some(view) = view {
+        parts.push(view.to_owned());
+    }
+    if let Some(limit) = limit {
+        parts.push(limit.to_string());
+    }
+    if let Some(page) = page {
+        parts.push(page.to_string());
+    }
+    parts.join(" ")
 }
 
 /// 构造 `/menu` 或 `/m` 命令。
@@ -185,16 +280,24 @@ fn command_name(kind: &str, style: CommandStyle) -> &'static str {
     match (kind, style) {
         ("help", CommandStyle::Short) => "/h",
         ("help", CommandStyle::Long) => "/help",
+        ("health", CommandStyle::Short) => "/hl",
+        ("health", CommandStyle::Long) => "/health",
         ("transfer", CommandStyle::Short) => "/t",
         ("transfer", CommandStyle::Long) => "/transfer",
         ("lookup", CommandStyle::Short) => "/lk",
         ("lookup", CommandStyle::Long) => "/lookup",
+        ("cache", CommandStyle::Short) => "/fc",
+        ("cache", CommandStyle::Long) => "/cache",
         ("config", CommandStyle::Short) => "/cfg",
         ("config", CommandStyle::Long) => "/config",
         ("downloads", CommandStyle::Short) => "/d",
         ("downloads", CommandStyle::Long) => "/downloads",
         ("job", CommandStyle::Short) => "/j",
         ("job", CommandStyle::Long) => "/job",
+        ("balance", CommandStyle::Short) => "/bal",
+        ("balance", CommandStyle::Long) => "/balance",
+        ("points", CommandStyle::Short) => "/pts",
+        ("points", CommandStyle::Long) => "/points",
         ("menu", CommandStyle::Short) => "/m",
         ("menu", CommandStyle::Long) => "/menu",
         _ => unreachable!("unknown command kind"),
@@ -227,11 +330,36 @@ mod tests {
         );
         assert_eq!(job_command("p", 42, CommandStyle::Short), "/j p 42");
         assert_eq!(job_command("st", 42, CommandStyle::Short), "/j st 42");
+        assert_eq!(balance_command(CommandStyle::Short), "/bal");
+        assert_eq!(balance_command(CommandStyle::Long), "/balance");
+        assert_eq!(
+            balance_history_command(10, 2, CommandStyle::Short),
+            "/bal h 10 2"
+        );
+        assert_eq!(points_show_command(7, CommandStyle::Short), "/pts s 7");
+        assert_eq!(
+            points_history_command(7, 10, 2, CommandStyle::Long),
+            "/points history 7 10 2"
+        );
+        assert_eq!(
+            points_change_command("add", 7, 10, "admin_adjust", CommandStyle::Long),
+            "/points add 7 10 admin_adjust"
+        );
         assert_eq!(
             config_set_command("job_concurrency", 2, CommandStyle::Long),
             "/config set job_concurrency 2"
         );
         assert_eq!(help_command(Some("job"), CommandStyle::Short), "/h job");
+        assert_eq!(health_command(CommandStyle::Short), "/hl");
+        assert_eq!(health_command(CommandStyle::Long), "/health");
+        assert_eq!(
+            cache_command(Some("page"), Some(10), Some(2), CommandStyle::Short),
+            "/fc page 10 2"
+        );
+        assert_eq!(
+            cache_command(None, None, None, CommandStyle::Long),
+            "/cache"
+        );
         assert_eq!(menu_command(CommandStyle::Short), "/m");
         assert_eq!(menu_command(CommandStyle::Long), "/menu");
     }

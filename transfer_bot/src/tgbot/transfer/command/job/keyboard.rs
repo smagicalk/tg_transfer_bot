@@ -2,12 +2,13 @@
 // 只负责根据任务状态构造 inline keyboard，不执行任务状态变更。
 
 use crate::tgbot::send;
-use crate::tgbot::transfer::store;
 use crate::tgbot::transfer::store::JobProgressSnapshot;
 
 use super::super::common::{CommandStyle, downloads_command, job_command as build_job_command};
 use super::super::downloads::build_downloads_return_list_callback_data;
+use super::super::menu::build_menu_home_callback_data;
 use super::args::{JobCallbackAction, build_job_callback_data};
+use super::status_meta::job_status_meta;
 
 /// 构造单任务详情按钮。
 pub(super) fn build_job_status_buttons(
@@ -15,37 +16,33 @@ pub(super) fn build_job_status_buttons(
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let job_id = snapshot.job.id;
     let status = snapshot.job.status.as_str();
+    let meta = job_status_meta(status);
     let mut rows = Vec::new();
 
-    if matches!(
-        status,
-        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING
-    ) {
-        rows.push(vec![
-            send::build_callback_button(
+    if meta.show_pause || meta.show_resume || meta.show_stop {
+        let mut action_row = Vec::new();
+        if meta.show_pause {
+            action_row.push(send::build_callback_button(
                 "暂停",
                 &build_job_callback_data(JobCallbackAction::Pause, job_id),
                 tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_callback_button(
-                "停止",
-                &build_job_callback_data(JobCallbackAction::Stop, job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ]);
-    } else if status == store::JOB_STATUS_PAUSED {
-        rows.push(vec![
-            send::build_callback_button(
+            ));
+        }
+        if meta.show_resume {
+            action_row.push(send::build_callback_button(
                 "恢复",
                 &build_job_callback_data(JobCallbackAction::Resume, job_id),
                 tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_callback_button(
+            ));
+        }
+        if meta.show_stop {
+            action_row.push(send::build_callback_button(
                 "停止",
                 &build_job_callback_data(JobCallbackAction::Stop, job_id),
                 tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ]);
+            ));
+        }
+        rows.push(action_row);
     }
 
     rows.push(vec![
@@ -61,12 +58,12 @@ pub(super) fn build_job_status_buttons(
         ),
         send::build_copy_button(
             "复制列表命令",
-            &downloads_command(
-                Some(job_status_list_filter(status)),
-                None,
-                None,
-                CommandStyle::Short,
-            ),
+            &downloads_command(Some(meta.list_filter), None, None, CommandStyle::Short),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        send::build_callback_button(
+            "菜单",
+            &build_menu_home_callback_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ]);
@@ -78,22 +75,9 @@ pub(super) fn build_job_status_buttons(
     rows
 }
 
-/// 根据任务状态选择最接近的 `/downloads` 筛选器。
-fn job_status_list_filter(status: &str) -> &'static str {
-    match status {
-        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING => "run",
-        store::JOB_STATUS_PAUSED => "pause",
-        store::JOB_STATUS_CANCELLING | store::JOB_STATUS_CANCEL_FINALIZING => "cancelling",
-        store::JOB_STATUS_CANCELLED => "cancel",
-        store::JOB_STATUS_SUCCESS => "done",
-        store::JOB_STATUS_FAILED | store::JOB_STATUS_PARTIAL => "fail",
-        _ => "all",
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{build_job_status_buttons, job_status_list_filter};
+    use super::{build_job_status_buttons, job_status_meta};
     use crate::tgbot::transfer::store;
 
     // 运行中任务详情应提供暂停/停止 callback 按钮，便于直接控制。
@@ -104,8 +88,13 @@ mod tests {
         assert_eq!(buttons[0][0].text, "暂停");
         assert_eq!(buttons[0][1].text, "停止");
         assert_eq!(buttons[1][0].text, "刷新详情");
+        assert_eq!(buttons[1][3].text, "菜单");
         assert!(matches!(
             buttons[0][0].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+        ));
+        assert!(matches!(
+            buttons[1][3].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
     }
@@ -134,10 +123,22 @@ mod tests {
     // 任务状态应映射到最接近的 downloads 筛选。
     #[test]
     fn test_job_status_list_filter() {
-        assert_eq!(job_status_list_filter(store::JOB_STATUS_RUNNING), "run");
-        assert_eq!(job_status_list_filter(store::JOB_STATUS_PAUSED), "pause");
-        assert_eq!(job_status_list_filter(store::JOB_STATUS_SUCCESS), "done");
-        assert_eq!(job_status_list_filter(store::JOB_STATUS_FAILED), "fail");
+        assert_eq!(
+            job_status_meta(store::JOB_STATUS_RUNNING).list_filter,
+            "run"
+        );
+        assert_eq!(
+            job_status_meta(store::JOB_STATUS_PAUSED).list_filter,
+            "pause"
+        );
+        assert_eq!(
+            job_status_meta(store::JOB_STATUS_SUCCESS).list_filter,
+            "done"
+        );
+        assert_eq!(
+            job_status_meta(store::JOB_STATUS_FAILED).list_filter,
+            "fail"
+        );
     }
 
     fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {

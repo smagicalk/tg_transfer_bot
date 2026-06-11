@@ -10,7 +10,6 @@ pub mod send;
 pub mod transfer;
 
 use crate::tgbot;
-use crate::tgbot::transfer::card;
 use base64::{Engine as _, engine::general_purpose};
 pub use error::*;
 pub use login::*;
@@ -56,7 +55,10 @@ pub async fn set_log(client_id: i32, verbosity_level: i32) {
 }
 
 // 主循环：持续接收 TDLib update 并异步处理。
-pub async fn receive(config: std::sync::Arc<crate::config::BotConfig>) -> anyhow::Result<()> {
+pub async fn receive(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
+    config: std::sync::Arc<crate::config::BotConfig>,
+) -> anyhow::Result<()> {
     let ready_roles = std::sync::Arc::new(tokio::sync::Mutex::new(BTreeSet::new()));
     loop {
         let receive = tokio::task::spawn_blocking(tdlib_rs::receive).await?;
@@ -71,11 +73,18 @@ pub async fn receive(config: std::sync::Arc<crate::config::BotConfig>) -> anyhow
                     update_kind = update_kind(&msg_update),
                     "tdlib update received"
                 );
+                let app_context = app_context.clone();
                 let config = config.clone();
                 let ready_roles = ready_roles.clone();
                 tokio::spawn(async move {
-                    let res =
-                        handle_update(msg_update, client_id, config.clone(), ready_roles).await;
+                    let res = handle_update(
+                        app_context,
+                        msg_update,
+                        client_id,
+                        config.clone(),
+                        ready_roles,
+                    )
+                    .await;
                     if let Err(err) = res {
                         tracing::error!(error = %err, "handle tdlib update failed");
                     }
@@ -91,6 +100,7 @@ pub async fn receive(config: std::sync::Arc<crate::config::BotConfig>) -> anyhow
 // - NewCallbackQuery => inline keyboard 回调
 // - File => 进度快照
 pub async fn handle_update(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     update: Update,
     client_id: i32,
     config: std::sync::Arc<crate::config::BotConfig>,
@@ -104,6 +114,7 @@ pub async fn handle_update(
     // 授权状态更新：交给登录处理逻辑。
     if let Update::AuthorizationState(update) = update {
         handle_authorization(
+            app_context,
             update.authorization_state,
             role,
             client_id,
@@ -115,7 +126,8 @@ pub async fn handle_update(
     }
 
     // 非交互 client 的 update 只用于登录和文件进度，不能处理命令或 callback。
-    let is_interaction_client = role == config.workflow.interaction_client;
+    let is_interaction_client =
+        should_process_interactive_update(role, config.workflow.interaction_client);
 
     // 发送成功/失败更新：用于把 sendMessage 返回的临时 message_id 对齐到最终 message_id。
     if let Update::MessageSendSucceeded(update_send_succeeded) = update {
@@ -144,8 +156,22 @@ pub async fn handle_update(
         return Ok(());
     }
 
-    // 新消息更新：执行命令分发。
-    if is_interaction_client && let Update::NewMessage(update_new_message) = update {
+    // 新消息更新：只有交互端允许处理命令、菜单输入和直接转发来的媒体。
+    //
+    // user client 只作为链接读取/下载 fallback 使用，不能消费自己收到的普通消息，
+    // 否则用户号所在聊天里的杂散消息可能被误当成转存输入。
+    if let Update::NewMessage(update_new_message) = update {
+        if !is_interaction_client {
+            tracing::debug!(
+                role = role.as_str(),
+                client_id,
+                chat_id = update_new_message.message.chat_id,
+                message_id = update_new_message.message.id,
+                "ignored new message from non-interaction client"
+            );
+            return Ok(());
+        }
+
         let message = update_new_message.message;
         let chat_id = message.chat_id;
 
@@ -167,18 +193,17 @@ pub async fn handle_update(
             tdlib_rs::enums::MessageSender::Chat(chat_id) => chat_id.chat_id,
         };
 
-        // 仅允许管理员 chat 且发送者也在管理员列表中。
-        if !(config.admin_ids.contains(&chat_id) && config.admin_ids.contains(&sender_id)) {
+        let Some(actor) = config.request_actor(chat_id, sender_id) else {
             tracing::debug!(
                 chat_id,
                 sender_id,
                 message_id = message.id,
-                chat_allowed = config.admin_ids.contains(&chat_id),
-                sender_allowed = config.admin_ids.contains(&sender_id),
-                "ignored non-admin message"
+                "ignored unauthorized interactive message"
             );
             return Ok(());
-        }
+        };
+        tgbot::transfer::ensure_user_account_for_actor(actor, config.billing.initial_user_points)
+            .await?;
 
         let request_message = message.clone();
         let message_content = message.content;
@@ -191,8 +216,9 @@ pub async fn handle_update(
             tracing::debug!(
                 chat_id,
                 sender_id,
+                actor_role = actor.role.as_str(),
                 message_id = message.id,
-                "admin text message received"
+                "authorized text message received"
             );
             let raw_text = message_text.text.text;
             let text = raw_text.split_whitespace().collect::<Vec<&str>>();
@@ -228,7 +254,14 @@ pub async fn handle_update(
             if text[0].starts_with("/") {
                 let raw_command = text[0];
                 let command = normalize_bot_command(raw_command);
-                if command != "/cancel" && tgbot::transfer::discard_menu_input(chat_id, sender_id) {
+                if command != "/cancel"
+                    && tgbot::transfer::discard_menu_input_for_command(
+                        chat_id,
+                        sender_id,
+                        interaction_client_id,
+                    )
+                    .await?
+                {
                     tracing::debug!(
                         command = raw_command,
                         normalized_command = command,
@@ -244,8 +277,9 @@ pub async fn handle_update(
                     normalized_command = command,
                     chat_id,
                     sender_id,
+                    actor_role = actor.role.as_str(),
                     message_id = message.id,
-                    "admin command received"
+                    "bot command received"
                 );
 
                 let command_result = match command {
@@ -254,6 +288,15 @@ pub async fn handle_update(
                     "/help" | "/h" => {
                         tgbot::transfer::help_command(text, chat_id, interaction_client_id).await
                     }
+                    "/balance" | "/bal" => {
+                        tgbot::transfer::balance_command(text, actor, interaction_client_id).await
+                    }
+                    "/points" | "/pts" if actor.is_admin() => {
+                        tgbot::transfer::points_command(text, actor, interaction_client_id).await
+                    }
+                    "/points" | "/pts" => {
+                        send_permission_denied_message(chat_id, interaction_client_id).await
+                    }
                     // /transfer 命令入口。
                     "/transfer" | "/t" => {
                         // request_message_id 用于请求级幂等（防止同一条指令重复建任务）。
@@ -261,6 +304,7 @@ pub async fn handle_update(
                             text,
                             config.clone(),
                             &request_message,
+                            actor,
                             interaction_client_id,
                         )
                         .await
@@ -271,26 +315,44 @@ pub async fn handle_update(
                         tgbot::transfer::lookup_command(
                             text,
                             config.clone(),
-                            chat_id,
+                            actor,
                             interaction_client_id,
                         )
                         .await
                     }
                     // /config 命令入口。
                     // 仅开放运行时安全可调的配置项。
-                    "/config" | "/cfg" => {
+                    "/config" | "/cfg" if actor.is_admin() => {
                         tgbot::transfer::config_command(text, chat_id, interaction_client_id).await
+                    }
+                    "/config" | "/cfg" => {
+                        send_permission_denied_message(chat_id, interaction_client_id).await
+                    }
+                    // /health 命令入口。
+                    // 只读展示运行状态、任务规模和缓存状态，方便排障。
+                    "/health" | "/hl" if actor.is_admin() => {
+                        tgbot::transfer::health_command(text, chat_id, interaction_client_id).await
+                    }
+                    "/health" | "/hl" => {
+                        send_permission_denied_message(chat_id, interaction_client_id).await
+                    }
+                    // /cache 命令入口。
+                    // 只读展示 file_cache 汇总和最近记录，不执行清理。
+                    "/cache" | "/fc" if actor.is_admin() => {
+                        tgbot::transfer::cache_command(text, chat_id, interaction_client_id).await
+                    }
+                    "/cache" | "/fc" => {
+                        send_permission_denied_message(chat_id, interaction_client_id).await
                     }
                     // /downloads 命令入口。
                     // 展示当前聊天最近的转存任务进度列表。
                     "/downloads" | "/d" => {
-                        tgbot::transfer::downloads_command(text, chat_id, interaction_client_id)
-                            .await
+                        tgbot::transfer::downloads_command(text, actor, interaction_client_id).await
                     }
                     // /job 命令入口。
                     // 手动暂停、恢复、停止指定转存任务。
                     "/job" | "/j" => {
-                        tgbot::transfer::job_command(text, chat_id, interaction_client_id).await
+                        tgbot::transfer::job_command(text, actor, interaction_client_id).await
                     }
                     // /menu 命令入口。
                     // 正常配置下交互端固定为 bot；supports_reply_markup 只作为异常配置/测试场景的兜底开关。
@@ -298,7 +360,7 @@ pub async fn handle_update(
                         let supports_reply_markup = config.supports_reply_markup();
                         tgbot::transfer::menu_command(
                             text,
-                            chat_id,
+                            actor,
                             interaction_client_id,
                             supports_reply_markup,
                         )
@@ -346,6 +408,7 @@ pub async fn handle_update(
                 chat_id,
                 message.id,
                 sender_id,
+                actor,
                 interaction_client_id,
             )
             .await?
@@ -366,6 +429,25 @@ pub async fn handle_update(
                 );
             }
         } else {
+            if let tdlib_rs::enums::MessageContent::MessageChatShared(shared) =
+                &request_message.content
+                && tgbot::transfer::handle_menu_shared_chat_input(
+                    shared,
+                    config.clone(),
+                    chat_id,
+                    sender_id,
+                    interaction_client_id,
+                )
+                .await?
+            {
+                tracing::debug!(
+                    chat_id,
+                    sender_id,
+                    message_id = request_message.id,
+                    "admin shared chat message consumed by menu input"
+                );
+                return Ok(());
+            }
             if tgbot::transfer::is_transferable_message(&request_message) {
                 tracing::info!(
                     chat_id,
@@ -377,6 +459,7 @@ pub async fn handle_update(
                 match tgbot::transfer::transfer_bot_message_auto_command(
                     config.clone(),
                     request_message.clone(),
+                    actor,
                     interaction_client_id,
                 )
                 .await
@@ -414,37 +497,52 @@ pub async fn handle_update(
         return Ok(());
     }
 
-    // inline keyboard 回调：用于 `/downloads` 分页和 `/job` 原地控制。
-    if is_interaction_client && let Update::NewCallbackQuery(mut update_callback_query) = update {
-        decode_callback_query_payload(&mut update_callback_query);
-
-        // 只接受管理员在管理员聊天里点击的按钮。
-        if !(config.admin_ids.contains(&update_callback_query.chat_id)
-            && config
-                .admin_ids
-                .contains(&update_callback_query.sender_user_id))
-        {
+    // inline keyboard 回调：只允许交互端处理，用于 `/downloads` 分页和 `/job` 原地控制。
+    if let Update::NewCallbackQuery(mut update_callback_query) = update {
+        if !is_interaction_client {
             tracing::debug!(
+                role = role.as_str(),
+                client_id,
                 chat_id = update_callback_query.chat_id,
-                sender_user_id = update_callback_query.sender_user_id,
                 message_id = update_callback_query.message_id,
-                chat_allowed = config.admin_ids.contains(&update_callback_query.chat_id),
-                sender_allowed = config
-                    .admin_ids
-                    .contains(&update_callback_query.sender_user_id),
-                "ignored non-admin callback query"
+                sender_user_id = update_callback_query.sender_user_id,
+                "ignored callback query from non-interaction client"
             );
             return Ok(());
         }
 
+        decode_callback_query_payload(&mut update_callback_query);
+
+        let Some(actor) = config.request_actor(
+            update_callback_query.chat_id,
+            update_callback_query.sender_user_id,
+        ) else {
+            tracing::debug!(
+                chat_id = update_callback_query.chat_id,
+                sender_user_id = update_callback_query.sender_user_id,
+                message_id = update_callback_query.message_id,
+                "ignored unauthorized callback query"
+            );
+            return Ok(());
+        };
+        tgbot::transfer::ensure_user_account_for_actor(actor, config.billing.initial_user_points)
+            .await?;
+
         tracing::debug!(
             chat_id = update_callback_query.chat_id,
             sender_user_id = update_callback_query.sender_user_id,
-            "admin callback query received"
+            actor_role = actor.role.as_str(),
+            "authorized callback query received"
         );
         // callback update 已经确认来自 interaction client，直接使用当前 client_id 回答并编辑消息。
         // 这能避免双 client 运行时误把 callback 交给 download/upload client。
-        tgbot::transfer::transfer_callback_query(update_callback_query, client_id).await?;
+        tgbot::transfer::transfer_callback_query(
+            update_callback_query,
+            config.clone(),
+            actor,
+            client_id,
+        )
+        .await?;
         return Ok(());
     }
 
@@ -454,7 +552,9 @@ pub async fn handle_update(
     // 因此这里不能只监听 workflow.download_client；该字段只是兼容配置，不代表实际下载端。
     if let Update::File(update_file) = update {
         // 将 TDLib 实时文件进度写入内存快照，供 `/downloads` 查询。
-        queue::update_download_progress(client_id, &update_file.file);
+        app_context
+            .download_progress
+            .update_download_progress(client_id, &update_file.file);
         tracing::trace!(
             role = role.as_str(),
             file_id = update_file.file.id,
@@ -485,7 +585,7 @@ fn normalize_bot_command(command: &str) -> &str {
 /// - 收到 update 时 TDLib 也会把 bytes 表示为 base64。
 ///
 /// 业务路由只认识 `m:home`、`d:r:all:8:1` 这类短字符串，因此入口统一解码。
-fn decode_callback_query_payload(update: &mut tdlib_rs::enums::UpdateNewCallbackQuery) {
+fn decode_callback_query_payload(update: &mut tdlib_rs::types::UpdateNewCallbackQuery) {
     if let tdlib_rs::enums::CallbackQueryPayload::Data(data) = &mut update.payload {
         match general_purpose::STANDARD.decode(&data.data) {
             Ok(decoded) => match String::from_utf8(decoded) {
@@ -538,6 +638,17 @@ fn update_kind(update: &Update) -> &'static str {
     }
 }
 
+/// 判断指定 client 角色是否允许处理交互 update。
+///
+/// 当前配置校验强制交互端为 bot；这里仍保留显式判断，避免未来新增角色或配置迁移时
+/// user client 误消费收到的普通消息、菜单输入或 callback。
+fn should_process_interactive_update(
+    role: crate::config::ClientRole,
+    interaction_role: crate::config::ClientRole,
+) -> bool {
+    role == interaction_role
+}
+
 /// 返回消息内容类型名，用于 debug 排查“为什么消息没有被当成命令处理”。
 fn message_content_kind(content: &tdlib_rs::enums::MessageContent) -> &'static str {
     match content {
@@ -553,120 +664,20 @@ fn message_content_kind(content: &tdlib_rs::enums::MessageContent) -> &'static s
     }
 }
 
-/// 回复未知命令，避免用户输入错误时只在日志里可见。
-async fn send_unknown_command_message(
-    command: &str,
-    chat_id: i64,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    crate::tgbot::send::ReplyPanel::card(
-        [
-            "未知命令".to_owned(),
-            format!("状态：{}", card::code("invalid-command")),
-            card::DIVIDER.to_owned(),
-            card::section("输入"),
-            card::command_line("命令", command),
-            card::section("下一步"),
-            card::command_line("帮助", "/h"),
-        ]
-        .join("\n"),
-    )
-    .row(vec![crate::tgbot::send::build_copy_button(
-        "复制 /h",
-        "/h",
-        tdlib_rs::enums::ButtonStyle::Primary,
-    )])
-    .send(chat_id, client_id)
-    .await
-}
-
-/// 回复命令执行错误。
-///
-/// 命令处理失败大多是参数错误或当前任务状态不允许操作；这里给用户明确反馈，
-/// 同时保留可复制错误详情，避免问题只出现在日志中。
-async fn send_command_error_message(
-    command: &str,
-    err: &anyhow::Error,
-    chat_id: i64,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    crate::tgbot::send::ReplyPanel::card(
-        [
-            "命令执行失败".to_owned(),
-            format!("状态：{}", card::code("failed")),
-            card::DIVIDER.to_owned(),
-            card::section("输入"),
-            card::command_line("命令", command),
-            card::section("错误"),
-            card::pre_code(format!("{:#}", err)),
-            card::section("下一步"),
-            card::command_line("帮助", "/h"),
-        ]
-        .join("\n"),
-    )
-    .row(vec![
-        crate::tgbot::send::build_copy_button(
-            "复制 /h",
-            "/h",
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制错误",
-            &format!("{:#}", err),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .send(chat_id, client_id)
-    .await
-}
-
-/// 自动转存媒体失败时给出可执行提示。
-///
-/// 最常见原因是当前请求 chat 没配置默认 target；用户可以直接回复这条媒体发送 `/t <target>`。
-async fn send_auto_transfer_hint_message(
-    err: &anyhow::Error,
-    chat_id: i64,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    crate::tgbot::send::ReplyPanel::card(
-        [
-            "自动转存未启动".to_owned(),
-            format!("状态：{}", card::code("need-target")),
-            card::DIVIDER.to_owned(),
-            card::section("原因"),
-            card::pre_code(format!("{:#}", err)),
-            card::section("下一步"),
-            "请回复要转存的媒体消息，并发送下面命令。".to_owned(),
-            card::command_line("指定目标", "/t <target_chat_id_or_alias>"),
-        ]
-        .join("\n"),
-    )
-    .row(vec![
-        crate::tgbot::send::build_copy_button(
-            "复制 /t",
-            "/t ",
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制帮助",
-            "/h transfer",
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .send(chat_id, client_id)
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use base64::{Engine as _, engine::general_purpose};
 
-    use super::{decode_callback_query_payload, normalize_bot_command};
+    use super::{
+        command_error_hint, decode_callback_query_payload, normalize_bot_command,
+        should_process_interactive_update,
+    };
+    use crate::config::ClientRole;
 
     // TDLib JSON 协议会用 base64 表示 callback bytes；入口应解回业务短 payload。
     #[test]
     fn test_decode_callback_query_payload() {
-        let mut update = tdlib_rs::enums::UpdateNewCallbackQuery {
+        let mut update = tdlib_rs::types::UpdateNewCallbackQuery {
             id: 1,
             sender_user_id: 2,
             chat_id: 3,
@@ -690,7 +701,7 @@ mod tests {
     // 兼容已有测试构造的明文 payload，避免单元测试和未来绑定差异直接崩掉。
     #[test]
     fn test_decode_callback_query_payload_keeps_plain_text() {
-        let mut update = tdlib_rs::enums::UpdateNewCallbackQuery {
+        let mut update = tdlib_rs::types::UpdateNewCallbackQuery {
             id: 1,
             sender_user_id: 2,
             chat_id: 3,
@@ -718,5 +729,57 @@ mod tests {
         assert_eq!(normalize_bot_command("/t@TransferBot"), "/t");
         assert_eq!(normalize_bot_command("/help@TransferBot"), "/help");
         assert_eq!(normalize_bot_command("/cancel@TransferBot"), "/cancel");
+    }
+
+    // user client 只用于链接读取/下载 fallback，不应处理普通消息或 callback。
+    #[test]
+    fn test_user_client_is_not_interaction_client() {
+        assert!(should_process_interactive_update(
+            ClientRole::Bot,
+            ClientRole::Bot
+        ));
+        assert!(!should_process_interactive_update(
+            ClientRole::User,
+            ClientRole::Bot
+        ));
+    }
+
+    // 余额不足应提示用户查看余额和联系管理员，而不是只显示英文异常。
+    #[test]
+    fn test_command_error_hint_for_insufficient_points() {
+        let hint = command_error_hint("insufficient points: user=1, balance=0, required=3");
+
+        assert_eq!(hint.title, "积分不足");
+        assert_eq!(hint.primary_command, "/balance");
+        assert!(hint.advice.contains("联系管理员加分"));
+    }
+
+    // 目标白名单失败时，应指向目标配置，而不是提示源链接错误。
+    #[test]
+    fn test_command_error_hint_for_target_denied() {
+        let hint = command_error_hint("target chat is not allowed: -100");
+
+        assert_eq!(hint.title, "目标不可用");
+        assert!(hint.advice.contains("allowed_target_chat_ids"));
+        assert_eq!(hint.help_command, "/h transfer");
+    }
+
+    // 私有源不可读时，应明确区分普通用户处理方式和管理员 user fallback 前提。
+    #[test]
+    fn test_command_error_hint_for_source_access() {
+        let hint = command_error_hint("code=400, message=Message not found");
+
+        assert_eq!(hint.title, "源不可访问");
+        assert!(hint.advice.contains("普通用户请转发源消息给 bot"));
+        assert!(hint.advice.contains("备用 user"));
+    }
+
+    // 未分类错误仍保留通用排查建议。
+    #[test]
+    fn test_command_error_hint_fallback() {
+        let hint = command_error_hint("network timeout");
+
+        assert_eq!(hint.title, "命令执行失败");
+        assert_eq!(hint.primary_command, "/h");
     }
 }

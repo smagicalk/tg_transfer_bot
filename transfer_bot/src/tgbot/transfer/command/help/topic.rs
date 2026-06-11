@@ -7,8 +7,11 @@
 pub(super) fn normalize_help_topic(command_name: &str) -> anyhow::Result<&'static str> {
     match command_name.trim_start_matches('/') {
         "help" | "h" => Ok("help"),
+        "health" | "hl" => Ok("health"),
         "transfer" | "t" => Ok("transfer"),
         "lookup" | "lk" => Ok("lookup"),
+        "cache" | "fc" | "file" | "files" => Ok("cache"),
+        "balance" | "bal" | "points" | "pts" => Ok("points"),
         "config" | "cfg" => Ok("config"),
         "downloads" | "download" | "d" => Ok("downloads"),
         "job" | "j" => Ok("job"),

@@ -25,9 +25,10 @@ use super::{
 pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
     source_link: &str,
     target_chat_id: i64,
+    owner_user_id: Option<i64>,
 ) -> anyhow::Result<Option<SuccessfulJobResult>> {
     let db_conn = db::get_db().await?;
-    let row = db::transfer_job::Entity::find()
+    let mut query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .column(db::transfer_job::Column::TargetChatId)
@@ -36,7 +37,11 @@ pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
         .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
         .filter(db::transfer_job::Column::TargetChatId.eq(target_chat_id))
         .filter(db::transfer_job::Column::Status.eq(JOB_STATUS_SUCCESS))
-        .filter(db::transfer_job::Column::ResultMessageLink.is_not_null())
+        .filter(db::transfer_job::Column::ResultMessageLink.is_not_null());
+    if let Some(owner_user_id) = owner_user_id {
+        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
+    }
+    let row = query
         .order_by_desc(db::transfer_job::Column::FinishedAt)
         .into_tuple::<(i64, i64, Option<i64>, Option<String>)>()
         .one(db_conn)
@@ -60,9 +65,10 @@ pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
 pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
     source_link: &str,
     target_chat_id: i64,
+    owner_user_id: Option<i64>,
 ) -> anyhow::Result<Option<db::transfer_job::Model>> {
     let db_conn = db::get_db().await?;
-    db::transfer_job::Entity::find()
+    let mut query = db::transfer_job::Entity::find()
         .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
         .filter(db::transfer_job::Column::TargetChatId.eq(target_chat_id))
         .filter(
@@ -72,7 +78,11 @@ pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_PAUSED))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCELLING))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCEL_FINALIZING)),
-        )
+        );
+    if let Some(owner_user_id) = owner_user_id {
+        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
+    }
+    query
         .order_by_desc(db::transfer_job::Column::CreatedAt)
         .one(db_conn)
         .await
@@ -85,9 +95,10 @@ pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
 pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
     source_link: &str,
     target_chat_id: i64,
+    owner_user_id: Option<i64>,
 ) -> anyhow::Result<Option<i64>> {
     let db_conn = db::get_db().await?;
-    db::transfer_job::Entity::find()
+    let mut query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
@@ -99,7 +110,11 @@ pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_PAUSED))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCELLING))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCEL_FINALIZING)),
-        )
+        );
+    if let Some(owner_user_id) = owner_user_id {
+        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
+    }
+    query
         .order_by_desc(db::transfer_job::Column::CreatedAt)
         .into_tuple::<i64>()
         .one(db_conn)
@@ -107,22 +122,35 @@ pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
         .map_err(Into::into)
 }
 
-/// 查询某个请求聊天最近的任务列表，并汇总每个任务的子项状态。
-/// 这是 `/downloads` 命令的基础数据源。
-pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
-    request_chat_id: i64,
+/// 按 actor 权限范围查询最近任务。
+///
+/// admin 的 owner_scope 为 None，因此可查看全局任务；普通用户只查看自己的任务。
+pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots_for_actor(
+    app_context: &crate::app_context::AppContext,
+    actor: crate::config::RequestActor,
+    limit: u64,
+) -> anyhow::Result<Vec<JobProgressSnapshot>> {
+    list_recent_job_snapshots_with_scope(app_context, actor.owner_scope(), limit).await
+}
+
+async fn list_recent_job_snapshots_with_scope(
+    app_context: &crate::app_context::AppContext,
+    owner_scope: Option<i64>,
     limit: u64,
 ) -> anyhow::Result<Vec<JobProgressSnapshot>> {
     let db_conn = db::get_db().await?;
-    let jobs = db::transfer_job::Entity::find()
+    let mut query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .column(db::transfer_job::Column::Status)
         .column(db::transfer_job::Column::TotalItems)
         .column(db::transfer_job::Column::TargetChatId)
         .column(db::transfer_job::Column::CreatedAt)
-        .column(db::transfer_job::Column::UpdatedAt)
-        .filter(db::transfer_job::Column::RequestChatId.eq(request_chat_id))
+        .column(db::transfer_job::Column::UpdatedAt);
+    if let Some(owner_user_id) = owner_scope {
+        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
+    }
+    let jobs = query
         .order_by_desc(db::transfer_job::Column::CreatedAt)
         .limit(limit)
         .into_tuple::<(
@@ -152,35 +180,41 @@ pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
         return Ok(vec![]);
     }
 
-    build_job_progress_snapshots(jobs).await
+    build_job_progress_snapshots(app_context, jobs).await
 }
 
 /// 查询单个任务的进度快照。
 ///
 /// `/transfer` 进度面板会按 job_id 轮询该快照，然后编辑同一条消息。
-pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot(
+pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_context(
+    app_context: &crate::app_context::AppContext,
     job_id: i64,
 ) -> anyhow::Result<Option<JobProgressSnapshot>> {
-    get_job_progress_snapshot_with_request_chat(job_id, None).await
+    get_job_progress_snapshot_with_request_chat(app_context, job_id, None, None).await
 }
 
-/// 查询当前请求聊天可见的单个任务进度快照。
-///
-/// `/job status` 是用户手动输入 job_id 的命令，必须同时校验 request_chat_id，
-/// 避免一个聊天通过猜测 job_id 看到其他聊天发起的任务详情。
-pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_for_request_chat(
+/// 查询当前 actor 可见的单个任务进度快照。
+pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_for_actor(
     job_id: i64,
-    request_chat_id: i64,
+    actor: crate::config::RequestActor,
 ) -> anyhow::Result<Option<JobProgressSnapshot>> {
-    get_job_progress_snapshot_with_request_chat(job_id, Some(request_chat_id)).await
+    get_job_progress_snapshot_with_request_chat(
+        crate::app_context::app_context().as_ref(),
+        job_id,
+        None,
+        actor.owner_scope(),
+    )
+    .await
 }
 
 /// 查询单个任务进度快照的内部实现。
 ///
 /// `request_chat_id` 为空时用于进度面板内部轮询；非空时用于命令权限边界。
-async fn get_job_progress_snapshot_with_request_chat(
+pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_request_chat(
+    app_context: &crate::app_context::AppContext,
     job_id: i64,
     request_chat_id: Option<i64>,
+    owner_scope: Option<i64>,
 ) -> anyhow::Result<Option<JobProgressSnapshot>> {
     let db_conn = db::get_db().await?;
     let mut query = db::transfer_job::Entity::find()
@@ -195,6 +229,9 @@ async fn get_job_progress_snapshot_with_request_chat(
 
     if let Some(request_chat_id) = request_chat_id {
         query = query.filter(db::transfer_job::Column::RequestChatId.eq(request_chat_id));
+    }
+    if let Some(owner_user_id) = owner_scope {
+        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
     }
 
     let Some((id, status, total_items, target_chat_id, created_at, updated_at)) = query
@@ -219,7 +256,7 @@ async fn get_job_progress_snapshot_with_request_chat(
         created_at,
         updated_at,
     };
-    Ok(build_job_progress_snapshots(vec![job])
+    Ok(build_job_progress_snapshots(app_context, vec![job])
         .await?
         .into_iter()
         .next())
@@ -230,6 +267,7 @@ async fn get_job_progress_snapshot_with_request_chat(
 /// 该函数集中处理子项状态统计和 TDLib 实时下载进度，避免 `/downloads`
 /// 与单任务进度面板各自实现一套统计逻辑。
 async fn build_job_progress_snapshots(
+    app_context: &crate::app_context::AppContext,
     jobs: Vec<JobProgressJob>,
 ) -> anyhow::Result<Vec<JobProgressSnapshot>> {
     let db_conn = db::get_db().await?;
@@ -339,7 +377,7 @@ async fn build_job_progress_snapshots(
 
         snapshot.active_download_files += 1;
         let runtime_progress = file_cache.td_file_id.and_then(|td_file_id| {
-            progress_client_id_for_owner(&owner)
+            progress_client_id_for_owner(app_context, &owner)
                 .and_then(|client_id| queue::get_download_progress(client_id, td_file_id))
         });
         if let Some(progress) = runtime_progress {
@@ -369,10 +407,14 @@ async fn build_job_progress_snapshots(
 ///
 /// 进度快照是非关键展示能力：如果转存后台还没 ready 或 owner 是历史异常值，
 /// 返回 None 后会回退到数据库中的预估大小，不影响任务执行。
-fn progress_client_id_for_owner(owner_client_role: &str) -> Option<i32> {
+fn progress_client_id_for_owner(
+    app_context: &crate::app_context::AppContext,
+    owner_client_role: &str,
+) -> Option<i32> {
     let role = super::super::types::client_role_from_str(owner_client_role)?;
-    super::super::transfer_client_ids()
-        .ok()
+    app_context
+        .transfer_runtime
+        .transfer_client_ids()
         .and_then(|client_ids| client_ids.get(role).ok())
 }
 

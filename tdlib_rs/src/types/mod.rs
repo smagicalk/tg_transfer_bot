@@ -1864,6 +1864,9 @@ pub use passport_elements_with_errors::PassportElementsWithErrors;
 mod encrypted_credentials;
 pub use encrypted_credentials::EncryptedCredentials;
 
+mod encrypted_passport_element;
+pub use encrypted_passport_element::EncryptedPassportElement;
+
 mod input_passport_element_error_source_unspecified;
 pub use input_passport_element_error_source_unspecified::InputPassportElementErrorSourceUnspecified;
 
@@ -1890,6 +1893,9 @@ pub use input_passport_element_error_source_file::InputPassportElementErrorSourc
 
 mod input_passport_element_error_source_files;
 pub use input_passport_element_error_source_files::InputPassportElementErrorSourceFiles;
+
+mod input_passport_element_error;
+pub use input_passport_element_error::InputPassportElementError;
 
 mod message_text;
 pub use message_text::MessageText;
@@ -2140,8 +2146,14 @@ pub use message_bot_write_access_allowed::MessageBotWriteAccessAllowed;
 mod message_web_app_data_sent;
 pub use message_web_app_data_sent::MessageWebAppDataSent;
 
+mod message_web_app_data_received;
+pub use message_web_app_data_received::MessageWebAppDataReceived;
+
 mod message_passport_data_sent;
 pub use message_passport_data_sent::MessagePassportDataSent;
+
+mod message_passport_data_received;
+pub use message_passport_data_received::MessagePassportDataReceived;
 
 mod message_proximity_alert_triggered;
 pub use message_proximity_alert_triggered::MessageProximityAlertTriggered;
@@ -4302,6 +4314,69 @@ pub use update_contact_close_birthdays::UpdateContactCloseBirthdays;
 
 mod update_autosave_settings;
 pub use update_autosave_settings::UpdateAutosaveSettings;
+
+mod update_business_connection;
+pub use update_business_connection::UpdateBusinessConnection;
+
+mod update_new_business_message;
+pub use update_new_business_message::UpdateNewBusinessMessage;
+
+mod update_business_message_edited;
+pub use update_business_message_edited::UpdateBusinessMessageEdited;
+
+mod update_business_messages_deleted;
+pub use update_business_messages_deleted::UpdateBusinessMessagesDeleted;
+
+mod update_new_inline_query;
+pub use update_new_inline_query::UpdateNewInlineQuery;
+
+mod update_new_chosen_inline_result;
+pub use update_new_chosen_inline_result::UpdateNewChosenInlineResult;
+
+mod update_new_callback_query;
+pub use update_new_callback_query::UpdateNewCallbackQuery;
+
+mod update_new_inline_callback_query;
+pub use update_new_inline_callback_query::UpdateNewInlineCallbackQuery;
+
+mod update_new_business_callback_query;
+pub use update_new_business_callback_query::UpdateNewBusinessCallbackQuery;
+
+mod update_new_shipping_query;
+pub use update_new_shipping_query::UpdateNewShippingQuery;
+
+mod update_new_pre_checkout_query;
+pub use update_new_pre_checkout_query::UpdateNewPreCheckoutQuery;
+
+mod update_new_custom_event;
+pub use update_new_custom_event::UpdateNewCustomEvent;
+
+mod update_new_custom_query;
+pub use update_new_custom_query::UpdateNewCustomQuery;
+
+mod update_poll;
+pub use update_poll::UpdatePoll;
+
+mod update_poll_answer;
+pub use update_poll_answer::UpdatePollAnswer;
+
+mod update_chat_member;
+pub use update_chat_member::UpdateChatMember;
+
+mod update_new_chat_join_request;
+pub use update_new_chat_join_request::UpdateNewChatJoinRequest;
+
+mod update_chat_boost;
+pub use update_chat_boost::UpdateChatBoost;
+
+mod update_message_reaction;
+pub use update_message_reaction::UpdateMessageReaction;
+
+mod update_message_reactions;
+pub use update_message_reactions::UpdateMessageReactions;
+
+mod update_paid_media_purchased;
+pub use update_paid_media_purchased::UpdatePaidMediaPurchased;
 
 mod updates;
 pub use updates::Updates;

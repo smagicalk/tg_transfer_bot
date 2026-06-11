@@ -172,6 +172,9 @@ pub use get_replied_message::get_replied_message;
 mod get_chat_pinned_message;
 pub use get_chat_pinned_message::get_chat_pinned_message;
 
+mod get_callback_query_message;
+pub use get_callback_query_message::get_callback_query_message;
+
 mod get_messages;
 pub use get_messages::get_messages;
 
@@ -529,11 +532,92 @@ pub use edit_message_media::edit_message_media;
 mod edit_message_caption;
 pub use edit_message_caption::edit_message_caption;
 
+mod edit_message_reply_markup;
+pub use edit_message_reply_markup::edit_message_reply_markup;
+
+mod edit_inline_message_text;
+pub use edit_inline_message_text::edit_inline_message_text;
+
+mod edit_inline_message_live_location;
+pub use edit_inline_message_live_location::edit_inline_message_live_location;
+
+mod edit_inline_message_media;
+pub use edit_inline_message_media::edit_inline_message_media;
+
+mod edit_inline_message_caption;
+pub use edit_inline_message_caption::edit_inline_message_caption;
+
+mod edit_inline_message_reply_markup;
+pub use edit_inline_message_reply_markup::edit_inline_message_reply_markup;
+
 mod edit_message_scheduling_state;
 pub use edit_message_scheduling_state::edit_message_scheduling_state;
 
 mod set_message_fact_check;
 pub use set_message_fact_check::set_message_fact_check;
+
+mod send_business_message;
+pub use send_business_message::send_business_message;
+
+mod send_business_message_album;
+pub use send_business_message_album::send_business_message_album;
+
+mod edit_business_message_text;
+pub use edit_business_message_text::edit_business_message_text;
+
+mod edit_business_message_live_location;
+pub use edit_business_message_live_location::edit_business_message_live_location;
+
+mod edit_business_message_checklist;
+pub use edit_business_message_checklist::edit_business_message_checklist;
+
+mod edit_business_message_media;
+pub use edit_business_message_media::edit_business_message_media;
+
+mod edit_business_message_caption;
+pub use edit_business_message_caption::edit_business_message_caption;
+
+mod edit_business_message_reply_markup;
+pub use edit_business_message_reply_markup::edit_business_message_reply_markup;
+
+mod stop_business_poll;
+pub use stop_business_poll::stop_business_poll;
+
+mod set_business_message_is_pinned;
+pub use set_business_message_is_pinned::set_business_message_is_pinned;
+
+mod read_business_message;
+pub use read_business_message::read_business_message;
+
+mod delete_business_messages;
+pub use delete_business_messages::delete_business_messages;
+
+mod edit_business_story;
+pub use edit_business_story::edit_business_story;
+
+mod delete_business_story;
+pub use delete_business_story::delete_business_story;
+
+mod set_business_account_name;
+pub use set_business_account_name::set_business_account_name;
+
+mod set_business_account_bio;
+pub use set_business_account_bio::set_business_account_bio;
+
+mod set_business_account_profile_photo;
+pub use set_business_account_profile_photo::set_business_account_profile_photo;
+
+mod set_business_account_username;
+pub use set_business_account_username::set_business_account_username;
+
+mod set_business_account_gift_settings;
+pub use set_business_account_gift_settings::set_business_account_gift_settings;
+
+mod get_business_account_star_amount;
+pub use get_business_account_star_amount::get_business_account_star_amount;
+
+mod transfer_business_account_stars;
+pub use transfer_business_account_stars::transfer_business_account_stars;
 
 mod check_quick_reply_shortcut_name;
 pub use check_quick_reply_shortcut_name::check_quick_reply_shortcut_name;
@@ -664,6 +748,9 @@ pub use remove_pending_paid_message_reactions::remove_pending_paid_message_react
 mod set_paid_message_reaction_type;
 pub use set_paid_message_reaction_type::set_paid_message_reaction_type;
 
+mod set_message_reactions;
+pub use set_message_reactions::set_message_reactions;
+
 mod get_message_added_reactions;
 pub use get_message_added_reactions::get_message_added_reactions;
 
@@ -739,6 +826,9 @@ pub use hide_suggested_action::hide_suggested_action;
 mod hide_contact_close_birthdays;
 pub use hide_contact_close_birthdays::hide_contact_close_birthdays;
 
+mod get_business_connection;
+pub use get_business_connection::get_business_connection;
+
 mod get_login_url_info;
 pub use get_login_url_info::get_login_url_info;
 
@@ -753,6 +843,12 @@ pub use share_chat_with_bot::share_chat_with_bot;
 
 mod get_inline_query_results;
 pub use get_inline_query_results::get_inline_query_results;
+
+mod answer_inline_query;
+pub use answer_inline_query::answer_inline_query;
+
+mod save_prepared_inline_message;
+pub use save_prepared_inline_message::save_prepared_inline_message;
 
 mod get_prepared_inline_message;
 pub use get_prepared_inline_message::get_prepared_inline_message;
@@ -784,17 +880,44 @@ pub use open_web_app::open_web_app;
 mod close_web_app;
 pub use close_web_app::close_web_app;
 
+mod answer_web_app_query;
+pub use answer_web_app_query::answer_web_app_query;
+
 mod check_web_app_file_download;
 pub use check_web_app_file_download::check_web_app_file_download;
 
 mod get_callback_query_answer;
 pub use get_callback_query_answer::get_callback_query_answer;
 
+mod answer_callback_query;
+pub use answer_callback_query::answer_callback_query;
+
+mod answer_shipping_query;
+pub use answer_shipping_query::answer_shipping_query;
+
+mod answer_pre_checkout_query;
+pub use answer_pre_checkout_query::answer_pre_checkout_query;
+
+mod set_game_score;
+pub use set_game_score::set_game_score;
+
+mod set_inline_game_score;
+pub use set_inline_game_score::set_inline_game_score;
+
+mod get_game_high_scores;
+pub use get_game_high_scores::get_game_high_scores;
+
+mod get_inline_game_high_scores;
+pub use get_inline_game_high_scores::get_inline_game_high_scores;
+
 mod delete_chat_reply_markup;
 pub use delete_chat_reply_markup::delete_chat_reply_markup;
 
 mod send_chat_action;
 pub use send_chat_action::send_chat_action;
+
+mod send_text_message_draft;
+pub use send_text_message_draft::send_text_message_draft;
 
 mod open_chat;
 pub use open_chat::open_chat;
@@ -1234,6 +1357,9 @@ pub use get_chat_boost_link_info::get_chat_boost_link_info;
 mod get_chat_boosts;
 pub use get_chat_boosts::get_chat_boosts;
 
+mod get_user_chat_boosts;
+pub use get_user_chat_boosts::get_user_chat_boosts;
+
 mod get_attachment_menu_bot;
 pub use get_attachment_menu_bot::get_attachment_menu_bot;
 
@@ -1621,6 +1747,9 @@ pub use suggest_user_birthdate::suggest_user_birthdate;
 mod toggle_bot_can_manage_emoji_status;
 pub use toggle_bot_can_manage_emoji_status::toggle_bot_can_manage_emoji_status;
 
+mod set_user_emoji_status;
+pub use set_user_emoji_status::set_user_emoji_status;
+
 mod search_user_by_phone_number;
 pub use search_user_by_phone_number::search_user_by_phone_number;
 
@@ -1890,6 +2019,27 @@ pub use get_user_link::get_user_link;
 
 mod search_user_by_token;
 pub use search_user_by_token::search_user_by_token;
+
+mod set_commands;
+pub use set_commands::set_commands;
+
+mod delete_commands;
+pub use delete_commands::delete_commands;
+
+mod get_commands;
+pub use get_commands::get_commands;
+
+mod set_menu_button;
+pub use set_menu_button::set_menu_button;
+
+mod get_menu_button;
+pub use get_menu_button::get_menu_button;
+
+mod set_default_group_administrator_rights;
+pub use set_default_group_administrator_rights::set_default_group_administrator_rights;
+
+mod set_default_channel_administrator_rights;
+pub use set_default_channel_administrator_rights::set_default_channel_administrator_rights;
 
 mod can_bot_send_messages;
 pub use can_bot_send_messages::can_bot_send_messages;
@@ -2197,6 +2347,12 @@ pub use remove_gift_collection_gifts::remove_gift_collection_gifts;
 mod reorder_gift_collection_gifts;
 pub use reorder_gift_collection_gifts::reorder_gift_collection_gifts;
 
+mod create_invoice_link;
+pub use create_invoice_link::create_invoice_link;
+
+mod refund_star_payment;
+pub use refund_star_payment::refund_star_payment;
+
 mod get_support_user;
 pub use get_support_user::get_support_user;
 
@@ -2419,6 +2575,9 @@ pub use set_passport_element::set_passport_element;
 mod delete_passport_element;
 pub use delete_passport_element::delete_passport_element;
 
+mod set_passport_element_errors;
+pub use set_passport_element_errors::set_passport_element_errors;
+
 mod get_preferred_country_language;
 pub use get_preferred_country_language::get_preferred_country_language;
 
@@ -2439,6 +2598,9 @@ pub use get_passport_authorization_form_available_elements::get_passport_authori
 
 mod send_passport_authorization_form;
 pub use send_passport_authorization_form::send_passport_authorization_form;
+
+mod set_bot_updates_status;
+pub use set_bot_updates_status::set_bot_updates_status;
 
 mod upload_sticker_file;
 pub use upload_sticker_file::upload_sticker_file;
@@ -2524,6 +2686,9 @@ pub use check_premium_gift_code::check_premium_gift_code;
 mod apply_premium_gift_code;
 pub use apply_premium_gift_code::apply_premium_gift_code;
 
+mod gift_premium_with_stars;
+pub use gift_premium_with_stars::gift_premium_with_stars;
+
 mod launch_prepaid_giveaway;
 pub use launch_prepaid_giveaway::launch_prepaid_giveaway;
 
@@ -2553,6 +2718,9 @@ pub use assign_store_transaction::assign_store_transaction;
 
 mod edit_star_subscription;
 pub use edit_star_subscription::edit_star_subscription;
+
+mod edit_user_star_subscription;
+pub use edit_user_star_subscription::edit_user_star_subscription;
 
 mod reuse_star_subscription;
 pub use reuse_star_subscription::reuse_star_subscription;
@@ -2586,6 +2754,12 @@ pub use accept_terms_of_service::accept_terms_of_service;
 
 mod search_strings_by_prefix;
 pub use search_strings_by_prefix::search_strings_by_prefix;
+
+mod send_custom_request;
+pub use send_custom_request::send_custom_request;
+
+mod answer_custom_query;
+pub use answer_custom_query::answer_custom_query;
 
 mod set_alarm;
 pub use set_alarm::set_alarm;

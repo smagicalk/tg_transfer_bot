@@ -15,6 +15,7 @@ use super::runner::run_job_inner;
 
 /// 启动时恢复数据库里未完成任务。
 pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<()> {
     // 上次退出前已经请求停止的任务，启动时先收敛为 cancelled 并释放引用。
@@ -63,7 +64,7 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
             "schedule recover job"
         );
         summaries.add_recoverable(&job);
-        super::super::spawn_recovery_job(job, client_ids);
+        super::super::spawn_recovery_job(app_context.clone(), job, client_ids);
     }
     summaries.send(client_ids.interaction).await;
     Ok(())
@@ -73,6 +74,7 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
 /// - 重新抓取 source_link
 /// - 对齐子项并执行
 pub(in crate::tgbot::transfer) async fn resume_one_job(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: db::transfer_job::Model,
     client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferOutcome> {
@@ -110,11 +112,18 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
         .ok_or_else(|| anyhow::anyhow!("invalid source_kind: {}", job.source_kind))?;
     let bundle = match source_kind {
         SourceKind::Link => {
-            if client_ids.bot.is_some() {
+            if client_ids.bot.is_some() && job.allow_user_fallback {
                 spider::spider_link_bot_first(
                     job.source_link.clone(),
                     client_ids.get(crate::config::ClientRole::Bot)?,
                     client_ids.get(crate::config::ClientRole::User)?,
+                )
+                .await?
+            } else if client_ids.bot.is_some() {
+                spider::spider_message(
+                    job.source_link.clone(),
+                    client_ids.get(crate::config::ClientRole::Bot)?,
+                    crate::config::ClientRole::Bot,
                 )
                 .await?
             } else {
@@ -169,7 +178,7 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
         .one(crate::db::get_db().await?)
         .await?
         .ok_or_else(|| anyhow::anyhow!("transfer job disappeared during recovery: {}", job.id))?;
-    run_job_inner(refreshed_job, bundle.messages, client_ids).await
+    run_job_inner(app_context, refreshed_job, bundle.messages, client_ids).await
 }
 
 /// 启动恢复摘要，按原请求 chat 聚合。
@@ -310,6 +319,11 @@ fn format_recovery_startup_text(summary: &RecoveryStartupSummary) -> String {
 mod tests {
     use super::{RecoveryStartupSummary, format_recovery_startup_text};
 
+    use crate::db;
+    use crate::tgbot::transfer::store;
+    use rand::RngExt;
+    use sea_orm::ActiveModelTrait;
+
     // 启动恢复摘要应展示恢复数量、收敛数量和示例 job，便于启动后快速排查。
     #[test]
     fn test_format_recovery_startup_text() {
@@ -349,5 +363,103 @@ mod tests {
         assert!(text.contains("示例 job：‹无›"));
         assert!(text.contains("没有需要重新执行的任务"));
         assert!(!text.contains("已自动派发可恢复任务"));
+    }
+
+    // 恢复扫描只应捞出 pending/running，而 cancelling/cancel_finalizing 走单独收敛路径。
+    #[tokio::test]
+    async fn test_recovery_scan_collects_recoverable_and_cancelling_jobs() -> anyhow::Result<()> {
+        let _guard = db::TEST_DB_LOCK.lock().await;
+        let pending = insert_job(store::JOB_STATUS_PENDING).await?;
+        let running = insert_job(store::JOB_STATUS_RUNNING).await?;
+        let paused = insert_job(store::JOB_STATUS_PAUSED).await?;
+        let cancelling = insert_job(store::JOB_STATUS_CANCELLING).await?;
+        let finalizing = insert_job(store::JOB_STATUS_CANCEL_FINALIZING).await?;
+        let cancelled = insert_job(store::JOB_STATUS_CANCELLED).await?;
+
+        let recoverable_ids = store::list_recoverable_jobs()
+            .await?
+            .into_iter()
+            .map(|job| job.id)
+            .collect::<std::collections::HashSet<_>>();
+        assert!(recoverable_ids.contains(&pending.id));
+        assert!(recoverable_ids.contains(&running.id));
+        assert!(!recoverable_ids.contains(&paused.id));
+        assert!(!recoverable_ids.contains(&cancelling.id));
+        assert!(!recoverable_ids.contains(&finalizing.id));
+        assert!(!recoverable_ids.contains(&cancelled.id));
+
+        let cancelling_ids = store::list_cancelling_jobs()
+            .await?
+            .into_iter()
+            .map(|job| job.id)
+            .collect::<std::collections::HashSet<_>>();
+        assert!(cancelling_ids.contains(&cancelling.id));
+        assert!(cancelling_ids.contains(&finalizing.id));
+        assert!(!cancelling_ids.contains(&pending.id));
+        assert!(!cancelling_ids.contains(&paused.id));
+        assert!(!cancelling_ids.contains(&cancelled.id));
+        Ok(())
+    }
+
+    async fn prepare_test_schema() -> anyhow::Result<&'static sea_orm::DatabaseConnection> {
+        let db_conn = db::get_db().await?;
+        db::ensure_test_schema_current(db_conn).await?;
+        Ok(db_conn)
+    }
+
+    async fn insert_job(status: &str) -> anyhow::Result<db::transfer_job::Model> {
+        let db_conn = prepare_test_schema().await?;
+        let now = store::now_utc8();
+        db::transfer_job::ActiveModel {
+            request_chat_id: sea_orm::ActiveValue::Set(unique_id()),
+            request_message_id: sea_orm::ActiveValue::Set(unique_id()),
+            owner_user_id: sea_orm::ActiveValue::Set(unique_id()),
+            source_link: sea_orm::ActiveValue::Set(unique_source_link()),
+            source_kind: sea_orm::ActiveValue::Set("link".to_owned()),
+            source_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
+            allow_user_fallback: sea_orm::ActiveValue::Set(false),
+            source_chat_id: sea_orm::ActiveValue::Set(unique_id()),
+            source_message_id: sea_orm::ActiveValue::Set(unique_id()),
+            source_album_id: sea_orm::ActiveValue::Set(0),
+            target_chat_id: sea_orm::ActiveValue::Set(unique_id()),
+            result_message_id: sea_orm::ActiveValue::Set(None),
+            result_message_link: sea_orm::ActiveValue::Set(None),
+            status: sea_orm::ActiveValue::Set(status.to_owned()),
+            total_items: sea_orm::ActiveValue::Set(1),
+            done_items: sea_orm::ActiveValue::Set(0),
+            failed_items: sea_orm::ActiveValue::Set(0),
+            retry_count: sea_orm::ActiveValue::Set(0),
+            cost_points: sea_orm::ActiveValue::Set(0),
+            charged_points: sea_orm::ActiveValue::Set(0),
+            billing_status: sea_orm::ActiveValue::Set("free".to_owned()),
+            last_error: sea_orm::ActiveValue::Set(None),
+            created_at: sea_orm::ActiveValue::Set(now),
+            updated_at: sea_orm::ActiveValue::Set(now),
+            finished_at: sea_orm::ActiveValue::Set(
+                if matches!(
+                    status,
+                    store::JOB_STATUS_SUCCESS
+                        | store::JOB_STATUS_FAILED
+                        | store::JOB_STATUS_PARTIAL
+                        | store::JOB_STATUS_CANCELLED
+                ) {
+                    Some(now)
+                } else {
+                    None
+                },
+            ),
+            ..Default::default()
+        }
+        .insert(db_conn)
+        .await
+        .map_err(Into::into)
+    }
+
+    fn unique_id() -> i64 {
+        rand::rng().random_range(1_000_000..=9_999_999)
+    }
+
+    fn unique_source_link() -> String {
+        format!("https://t.me/c/{}/{}", unique_id(), unique_id())
     }
 }

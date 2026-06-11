@@ -18,6 +18,8 @@ use keyboard::{DownloadsCallbackAction, build_downloads_keyboard, parse_download
 use render::{compute_downloads_query_limit, compute_total_pages, format_downloads_text};
 use types::{DownloadsArgs, DownloadsFilter, parse_downloads_args};
 
+use crate::tgbot::send::send_interaction_error_card;
+
 /// 判断 callback payload 是否属于 `/downloads`。
 ///
 /// 统一回调分发器只看前缀，具体参数是否合法仍由 `/downloads` 自己解析和回复。
@@ -62,27 +64,30 @@ pub(super) fn build_downloads_menu_callback_data(filter_value: &str, limit: u64)
 /// - `/downloads done 5 2`
 pub async fn downloads_command(
     text: Vec<&str>,
-    request_chat_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let args = parse_downloads_args(&text)?;
     tracing::info!(
-        request_chat_id,
+        request_chat_id = actor.request_chat_id,
+        owner_user_id = actor.user_id,
+        actor_role = actor.role.as_str(),
         filter = args.filter.command_value(),
         limit = args.limit,
         page = args.page,
         "downloads command started"
     );
-    render_downloads_page(request_chat_id, args)
+    render_downloads_page(actor, args)
         .await?
         .panel
-        .send(request_chat_id, client_id)
+        .send(actor.request_chat_id, client_id)
         .await
 }
 
 /// 处理 `/downloads` 的分页按钮回调。
 pub async fn downloads_callback_query(
-    update: tdlib_rs::enums::UpdateNewCallbackQuery,
+    update: tdlib_rs::types::UpdateNewCallbackQuery,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let payload = match update.payload {
@@ -107,20 +112,45 @@ pub async fn downloads_callback_query(
         "downloads callback page requested"
     );
 
-    let rendered = render_downloads_page(update.chat_id, args).await?;
-    let (text, keyboard) = rendered.panel.into_card_parts()?;
     let callback_tip = match action {
         DownloadsCallbackAction::Page => None,
         DownloadsCallbackAction::Refresh => Some("已刷新"),
         DownloadsCallbackAction::Filter => Some(args.filter.label()),
     };
     send::answer_callback_query(update.id, callback_tip, client_id).await?;
+
+    let rendered = match render_downloads_page(actor, args).await {
+        Ok(rendered) => rendered,
+        Err(err) => {
+            send_downloads_callback_error(update.chat_id, client_id, &err).await?;
+            return Err(err);
+        }
+    };
+    let (text, keyboard) = rendered.panel.into_card_parts()?;
     send::edit_card_message_with_inline_keyboard(
         text,
         update.chat_id,
         update.message_id,
         keyboard,
         client_id,
+    )
+    .await
+}
+
+/// 下载列表按钮失败提示。
+///
+/// callback 已经先 ACK，失败时不能再 answer 同一个 callback，因此发送一条短卡片说明错误。
+async fn send_downloads_callback_error(
+    request_chat_id: i64,
+    client_id: i32,
+    err: &anyhow::Error,
+) -> anyhow::Result<()> {
+    send_interaction_error_card(
+        request_chat_id,
+        client_id,
+        "下载列表刷新失败",
+        "列表未刷新，请检查日志或复制错误信息。",
+        err,
     )
     .await
 }
@@ -132,12 +162,15 @@ struct DownloadsRenderedPage {
 
 /// 查询并渲染某一页下载列表。
 async fn render_downloads_page(
-    request_chat_id: i64,
+    actor: crate::config::RequestActor,
     args: DownloadsArgs,
 ) -> anyhow::Result<DownloadsRenderedPage> {
     // 先拉取更大窗口，再按筛选条件裁剪，避免“最近几条碰巧不匹配”导致空结果。
     let query_limit = compute_downloads_query_limit(args.limit, args.page);
-    let snapshots = store::list_recent_job_snapshots(request_chat_id, query_limit).await?;
+    let app_context = crate::app_context::app_context();
+    let snapshots =
+        store::list_recent_job_snapshots_for_actor(app_context.as_ref(), actor, query_limit)
+            .await?;
     let filtered = snapshots
         .into_iter()
         .filter(|snapshot| args.filter.matches(snapshot))
@@ -154,7 +187,9 @@ async fn render_downloads_page(
         filtered[start..end].to_vec()
     };
     tracing::info!(
-        request_chat_id,
+        request_chat_id = actor.request_chat_id,
+        owner_user_id = actor.user_id,
+        actor_role = actor.role.as_str(),
         filter = normalized_args.filter.command_value(),
         limit = normalized_args.limit,
         page = normalized_args.page,

@@ -3,12 +3,14 @@ use crate::send_request;
 use serde_json::json;
 /// Sends an upgraded gift to another user or channel chat
 /// # Arguments
+/// * `business_connection_id` - Unique identifier of business connection on behalf of which to send the request; for bots only
 /// * `received_gift_id` - Identifier of the gift
 /// * `new_owner_id` - Identifier of the user or the channel chat that will receive the gift
 /// * `star_count` - The Telegram Star amount required to pay for the transfer
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
 pub async fn transfer_gift(
+    business_connection_id: String,
     received_gift_id: String,
     new_owner_id: crate::enums::MessageSender,
     star_count: i64,
@@ -16,6 +18,7 @@ pub async fn transfer_gift(
 ) -> Result<(), crate::types::Error> {
     let request = json!({
     "@type": "transferGift",
+    "business_connection_id": business_connection_id,
     "received_gift_id": received_gift_id,
     "new_owner_id": new_owner_id,
     "star_count": star_count,

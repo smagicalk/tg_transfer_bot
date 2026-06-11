@@ -16,6 +16,10 @@ fn test_build_help_index_text_contains_commands() {
     assert!(text.contains("/lookup"));
     assert!(text.contains("/config"));
     assert!(text.contains("/downloads"));
+    assert!(text.contains("/balance"));
+    assert!(text.contains("/points show"));
+    assert!(text.contains("/health"));
+    assert!(text.contains("/cache"));
     assert!(text.contains("/job"));
     assert!(text.contains("/menu"));
 }
@@ -36,6 +40,20 @@ fn test_build_help_detail_text() {
     ));
     let downloads_short = build_help_detail_text("d").unwrap();
     assert!(downloads_short.contains("/downloads [filter] [limit] [page]"));
+
+    let health = build_help_detail_text("hl").unwrap();
+    assert!(health.contains("/health"));
+
+    let cache = build_help_detail_text("fc").unwrap();
+    assert!(cache.contains("/cache"));
+    assert!(cache.contains("/cache page"));
+
+    let points = build_help_detail_text("points").unwrap();
+    assert!(points.contains("/balance"));
+    assert!(points.contains("/points show 123456789"));
+    assert!(points.contains("/points add 123456789 10 admin_adjust"));
+    let balance = build_help_detail_text("bal").unwrap();
+    assert!(balance.contains("/balance"));
 
     let job = build_help_detail_text("j").unwrap();
     assert!(job.contains("/job pause 123"));
@@ -61,6 +79,18 @@ fn test_help_callback_data_roundtrip() {
     assert_eq!(transfer, "h:transfer");
     assert!(is_help_callback_data(&transfer));
     assert_eq!(parse_help_callback_data(&transfer), Some(Some("transfer")));
+    assert_eq!(
+        parse_help_callback_data(&build_help_callback_data(Some("health"))),
+        Some(Some("health"))
+    );
+    assert_eq!(
+        parse_help_callback_data(&build_help_callback_data(Some("cache"))),
+        Some(Some("cache"))
+    );
+    assert_eq!(
+        parse_help_callback_data(&build_help_callback_data(Some("points"))),
+        Some(Some("points"))
+    );
 
     let index = build_help_callback_data(None);
     assert_eq!(index, "h:index");
@@ -73,10 +103,32 @@ fn test_help_callback_data_roundtrip() {
 #[test]
 fn test_help_index_buttons_have_navigation_callbacks() {
     let buttons = build_help_index_buttons();
-    let transfer = &buttons[1][0];
+    let transfer = buttons
+        .iter()
+        .flatten()
+        .find(|button| button.text == "转存")
+        .expect("help index should have transfer navigation");
+    let menu = buttons
+        .iter()
+        .flatten()
+        .find(|button| button.text == "菜单")
+        .expect("help index should have menu button");
+    let points = buttons
+        .iter()
+        .flatten()
+        .find(|button| button.text == "积分账户")
+        .expect("help index should have points navigation");
     assert_eq!(transfer.text, "转存");
     assert!(matches!(
         transfer.r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert!(matches!(
+        menu.r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert!(matches!(
+        points.r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }
@@ -84,14 +136,24 @@ fn test_help_index_buttons_have_navigation_callbacks() {
 // help 详情页应保留返回目录 callback。
 #[test]
 fn test_help_detail_buttons_have_back_callback() {
-    let buttons = build_help_detail_buttons("job").expect("job help buttons should build");
+    let buttons = build_help_detail_buttons("points").expect("points help buttons should build");
     let back = buttons
-        .first()
-        .and_then(|row| row.last())
+        .iter()
+        .flatten()
+        .find(|button| button.text == "返回目录")
         .expect("detail help should have back button");
+    let menu = buttons
+        .iter()
+        .flatten()
+        .find(|button| button.text == "菜单")
+        .expect("detail help should have menu button");
     assert_eq!(back.text, "返回目录");
     assert!(matches!(
         back.r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert!(matches!(
+        menu.r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }

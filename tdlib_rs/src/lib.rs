@@ -59,12 +59,7 @@ pub fn receive() -> Option<(Update, i32)> {
     None
 }
 
-/// 发送一个原始 TDLib 请求并等待响应。
-///
-/// 之所以公开这个底层入口，是因为上层业务偶尔会遇到生成 wrapper 缺失字段
-/// 或缺少某个方法的情况，此时可以先用原始请求补齐能力，而不必大规模改动
-/// 自动生成代码。
-pub async fn send_request(client_id: i32, mut request: Value) -> Value {
+pub(crate) async fn send_request(client_id: i32, mut request: Value) -> Value {
     let extra = EXTRA_COUNTER.fetch_add(1, Ordering::Relaxed);
     request["@extra"] = serde_json::to_value(extra).unwrap();
 

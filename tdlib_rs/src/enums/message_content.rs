@@ -457,12 +457,24 @@ pub enum MessageContent {
         deserialize = "messageWebAppDataSent"
     ))]
     MessageWebAppDataSent(crate::types::MessageWebAppDataSent),
+    /// Data from a Web App has been received; for bots only
+    #[serde(rename(
+        serialize = "messageWebAppDataReceived",
+        deserialize = "messageWebAppDataReceived"
+    ))]
+    MessageWebAppDataReceived(crate::types::MessageWebAppDataReceived),
     /// Telegram Passport data has been sent to a bot
     #[serde(rename(
         serialize = "messagePassportDataSent",
         deserialize = "messagePassportDataSent"
     ))]
     MessagePassportDataSent(crate::types::MessagePassportDataSent),
+    /// Telegram Passport data has been received; for bots only
+    #[serde(rename(
+        serialize = "messagePassportDataReceived",
+        deserialize = "messagePassportDataReceived"
+    ))]
+    MessagePassportDataReceived(crate::types::MessagePassportDataReceived),
     /// A user in the chat came within proximity alert range
     #[serde(rename(
         serialize = "messageProximityAlertTriggered",

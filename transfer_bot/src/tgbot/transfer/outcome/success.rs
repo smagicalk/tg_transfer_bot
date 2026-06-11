@@ -2,6 +2,7 @@
 // 成功卡片需要同时提供打开链接、复制结果和继续查询/重转的快捷按钮。
 
 use super::super::card;
+use super::super::command::build_menu_home_button_data;
 use super::super::command::common::{
     CommandStyle, downloads_command as build_downloads_command,
     lookup_command as build_lookup_command, transfer_command as build_transfer_command,
@@ -44,6 +45,11 @@ pub(in crate::tgbot::transfer) async fn send_history_hit_message(
             &lookup_command,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
+        crate::tgbot::send::build_callback_button(
+            "菜单",
+            &build_menu_home_button_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
     ]);
 
     let mut panel = crate::tgbot::send::ReplyPanel::card(format_result_card_text(
@@ -79,6 +85,11 @@ fn build_result_list_row(transfer_command: &str) -> Vec<tdlib_rs::types::InlineK
     row.push(crate::tgbot::send::build_copy_button(
         "复制列表命令",
         &build_downloads_command(Some("done"), None, None, CommandStyle::Short),
+        tdlib_rs::enums::ButtonStyle::Default,
+    ));
+    row.push(crate::tgbot::send::build_callback_button(
+        "菜单",
+        &build_menu_home_button_data(),
         tdlib_rs::enums::ButtonStyle::Default,
     ));
     row
@@ -208,7 +219,7 @@ fn build_result_message_rows(
 
 #[cfg(test)]
 mod tests {
-    use super::{ResultMessageRecord, format_result_card_text};
+    use super::{ResultMessageRecord, build_result_list_row, format_result_card_text};
 
     // HTTP(S) 结果应在正文中渲染为 Telegram 原生文本链接，按钮之外也能点击。
     #[test]
@@ -293,5 +304,21 @@ mod tests {
         assert!(text.contains("#2 · 2 条 · album"));
         assert!(text.contains("https://t.me/c/1/734"));
         assert!(text.contains("https://t.me/c/1/735"));
+    }
+
+    // 结果卡片的列表行应提供完成列表和主菜单入口，便于继续操作。
+    #[test]
+    fn test_build_result_list_row_has_menu_button() {
+        let row = build_result_list_row("/t https://t.me/c/1/2 -100");
+
+        assert!(row.iter().any(|button| button.text == "查看完成列表"));
+        let menu = row
+            .iter()
+            .find(|button| button.text == "菜单")
+            .expect("result list row should have menu button");
+        assert!(matches!(
+            menu.r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+        ));
     }
 }

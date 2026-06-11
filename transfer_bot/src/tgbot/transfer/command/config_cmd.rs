@@ -2,13 +2,17 @@
 // - 仅开放安全可调的运行参数
 // - 修改后同时写回 config.json 与内存运行配置
 
+mod callback;
+
 use super::common::{CommandStyle, config_set_command, config_show_command, short_and_long};
 use crate::config;
 use crate::tgbot::send;
+use crate::tgbot::send::send_interaction_error_card;
 use crate::tgbot::transfer::card;
+use callback::{ConfigCallbackAction, ConfigField, parse_config_callback_data};
 
-/// `/config` callback 前缀。
-const CONFIG_CALLBACK_PREFIX: &str = "cfg:";
+pub(super) use callback::build_config_buttons;
+
 /// 后台并发允许的最小值。
 const JOB_CONCURRENCY_MIN: usize = 1;
 /// 后台并发允许的最大值，避免误触把本机和 TDLib 压垮。
@@ -79,14 +83,14 @@ pub async fn config_command(
 
 /// 判断 callback payload 是否属于 `/config`。
 pub(super) fn is_config_callback_data(data: &str) -> bool {
-    data.starts_with(CONFIG_CALLBACK_PREFIX)
+    callback::is_config_callback_data(data)
 }
 
 /// `/config` inline keyboard 回调入口。
 ///
 /// 配置按钮只开放小步增减和刷新，避免把复杂输入塞进 callback。
 pub async fn config_callback_query(
-    update: tdlib_rs::enums::UpdateNewCallbackQuery,
+    update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let payload = match update.payload {
@@ -102,12 +106,17 @@ pub async fn config_callback_query(
         return Ok(());
     };
 
-    let tip = match action {
-        ConfigCallbackAction::Refresh => "已刷新".to_owned(),
-        ConfigCallbackAction::Adjust { field, delta } => adjust_transfer_config(field, delta)
-            .await
-            .map(|_| "配置已更新".to_owned())?,
+    send::answer_callback_query(update.id, Some(action.started_tip()), client_id).await?;
+
+    let action_result = match action {
+        ConfigCallbackAction::Refresh => Ok(()),
+        ConfigCallbackAction::Adjust { field, delta } => adjust_transfer_config(field, delta).await,
     };
+    if let Err(err) = action_result {
+        send_config_callback_error(update.chat_id, client_id, &err).await?;
+        return Err(err);
+    }
+
     let (text, keyboard) =
         send::ReplyPanel::card(format_current_transfer_config_text("当前可调配置"))
             .rows(build_config_buttons())
@@ -120,7 +129,6 @@ pub async fn config_callback_query(
         client_id,
     )
     .await?;
-    send::answer_callback_query(update.id, Some(&tip), client_id).await?;
     Ok(())
 }
 
@@ -241,6 +249,30 @@ async fn adjust_transfer_config(field: ConfigField, delta: i64) -> anyhow::Resul
                 FILE_GC_INTERVAL_SECONDS_MAX as i64,
             ) as u64;
         }
+        ConfigField::ProgressEditIntervalSeconds => {
+            let current = i64::try_from(bot_config.transfer_config.progress_edit_interval_seconds)?;
+            bot_config.transfer_config.progress_edit_interval_seconds = clamp_i64(
+                current + delta,
+                PROGRESS_EDIT_INTERVAL_SECONDS_MIN as i64,
+                PROGRESS_EDIT_INTERVAL_SECONDS_MAX as i64,
+            ) as u64;
+        }
+        ConfigField::DownloadsDefaultPageSize => {
+            let current = i64::try_from(bot_config.transfer_config.downloads_default_page_size)?;
+            bot_config.transfer_config.downloads_default_page_size = clamp_i64(
+                current + delta,
+                DOWNLOADS_DEFAULT_PAGE_SIZE_MIN as i64,
+                DOWNLOADS_DEFAULT_PAGE_SIZE_MAX as i64,
+            ) as u64;
+        }
+        ConfigField::MenuInputTimeoutSeconds => {
+            let current = i64::try_from(bot_config.transfer_config.menu_input_timeout_seconds)?;
+            bot_config.transfer_config.menu_input_timeout_seconds = clamp_i64(
+                current + delta,
+                MENU_INPUT_TIMEOUT_SECONDS_MIN as i64,
+                MENU_INPUT_TIMEOUT_SECONDS_MAX as i64,
+            ) as u64;
+        }
     }
 
     config::save_runtime_bot_config(&bot_config).await?;
@@ -251,6 +283,24 @@ async fn adjust_transfer_config(field: ConfigField, delta: i64) -> anyhow::Resul
         "transfer runtime config adjusted by callback"
     );
     Ok(())
+}
+
+/// 配置按钮失败提示。
+///
+/// callback 已经先 ACK，失败时不能再 answer 同一个 callback，因此发送一条短卡片说明错误。
+async fn send_config_callback_error(
+    request_chat_id: i64,
+    client_id: i32,
+    err: &anyhow::Error,
+) -> anyhow::Result<()> {
+    send_interaction_error_card(
+        request_chat_id,
+        client_id,
+        "配置操作失败",
+        "配置未更新，请检查日志或复制错误信息。",
+        err,
+    )
+    .await
 }
 
 /// 把运行时配置格式化成当前卡片文本。
@@ -317,174 +367,6 @@ fn format_transfer_config_text(title: &str, config: &config::TransferConfig) -> 
     .join("\n")
 }
 
-/// config 页面快捷按钮。
-pub(super) fn build_config_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
-        vec![
-            send::build_callback_button(
-                "刷新",
-                &build_config_callback_data(ConfigCallbackAction::Refresh),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_copy_button(
-                "复制 /cfg show",
-                &config_show_command(CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            send::build_callback_button(
-                "并发 -1",
-                &build_config_callback_data(ConfigCallbackAction::Adjust {
-                    field: ConfigField::JobConcurrency,
-                    delta: -1,
-                }),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "并发 +1",
-                &build_config_callback_data(ConfigCallbackAction::Adjust {
-                    field: ConfigField::JobConcurrency,
-                    delta: 1,
-                }),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            send::build_callback_button(
-                "删除 -1m",
-                &build_config_callback_data(ConfigCallbackAction::Adjust {
-                    field: ConfigField::FileDeleteDelayMinutes,
-                    delta: -1,
-                }),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "删除 +1m",
-                &build_config_callback_data(ConfigCallbackAction::Adjust {
-                    field: ConfigField::FileDeleteDelayMinutes,
-                    delta: 1,
-                }),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            send::build_callback_button(
-                "GC -10s",
-                &build_config_callback_data(ConfigCallbackAction::Adjust {
-                    field: ConfigField::FileGcIntervalSeconds,
-                    delta: -10,
-                }),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "GC +10s",
-                &build_config_callback_data(ConfigCallbackAction::Adjust {
-                    field: ConfigField::FileGcIntervalSeconds,
-                    delta: 10,
-                }),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            send::build_copy_button(
-                "复制并发=4",
-                &config_set_command("job_concurrency", 4, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制删除=3m",
-                &config_set_command("file_delete_delay_minutes", 3, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制GC=30s",
-                &config_set_command("file_gc_interval_seconds", 30, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-    ]
-}
-
-/// 配置 callback 动作。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConfigCallbackAction {
-    Refresh,
-    Adjust { field: ConfigField, delta: i64 },
-}
-
-/// 允许按钮调整的配置字段。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConfigField {
-    JobConcurrency,
-    FileDeleteDelayMinutes,
-    FileGcIntervalSeconds,
-}
-
-impl ConfigField {
-    /// 字段短编码，写入 callback payload。
-    fn code(self) -> &'static str {
-        match self {
-            Self::JobConcurrency => "jc",
-            Self::FileDeleteDelayMinutes => "dd",
-            Self::FileGcIntervalSeconds => "gc",
-        }
-    }
-
-    /// 字段配置键，写入日志。
-    fn key(self) -> &'static str {
-        match self {
-            Self::JobConcurrency => "job_concurrency",
-            Self::FileDeleteDelayMinutes => "file_delete_delay_minutes",
-            Self::FileGcIntervalSeconds => "file_gc_interval_seconds",
-        }
-    }
-
-    /// 从 callback 短编码解析字段。
-    fn parse(code: &str) -> Option<Self> {
-        match code {
-            "jc" => Some(Self::JobConcurrency),
-            "dd" => Some(Self::FileDeleteDelayMinutes),
-            "gc" => Some(Self::FileGcIntervalSeconds),
-            _ => None,
-        }
-    }
-}
-
-/// 构造配置 callback payload。
-fn build_config_callback_data(action: ConfigCallbackAction) -> String {
-    match action {
-        ConfigCallbackAction::Refresh => format!("{}r", CONFIG_CALLBACK_PREFIX),
-        ConfigCallbackAction::Adjust { field, delta } => {
-            format!("{}a:{}:{}", CONFIG_CALLBACK_PREFIX, field.code(), delta)
-        }
-    }
-}
-
-/// 解析配置 callback payload。
-fn parse_config_callback_data(data: &str) -> Option<ConfigCallbackAction> {
-    let payload = data.strip_prefix(CONFIG_CALLBACK_PREFIX)?;
-    let mut parts = payload.split(':');
-    match parts.next()? {
-        "r" => {
-            if parts.next().is_none() {
-                Some(ConfigCallbackAction::Refresh)
-            } else {
-                None
-            }
-        }
-        "a" => {
-            let field = ConfigField::parse(parts.next()?)?;
-            let delta = parts.next()?.parse::<i64>().ok()?;
-            if parts.next().is_some() {
-                return None;
-            }
-            Some(ConfigCallbackAction::Adjust { field, delta })
-        }
-        _ => None,
-    }
-}
-
 /// 把整数限制在安全区间内。
 fn clamp_i64(value: i64, min: i64, max: i64) -> i64 {
     value.clamp(min, max)
@@ -511,33 +393,6 @@ mod tests {
         assert!(text.contains("downloads_default_page_size"));
         assert!(text.contains("menu_input_timeout_seconds"));
         assert!(text.contains("‹/cfg show›"));
-    }
-
-    // 配置 callback 使用短 payload，避免 Telegram callback data 过长。
-    #[test]
-    fn test_config_callback_data_roundtrip() {
-        let refresh = build_config_callback_data(ConfigCallbackAction::Refresh);
-        assert_eq!(refresh, "cfg:r");
-        assert!(is_config_callback_data(&refresh));
-        assert_eq!(
-            parse_config_callback_data(&refresh),
-            Some(ConfigCallbackAction::Refresh)
-        );
-
-        let adjust = build_config_callback_data(ConfigCallbackAction::Adjust {
-            field: ConfigField::FileGcIntervalSeconds,
-            delta: 10,
-        });
-        assert_eq!(adjust, "cfg:a:gc:10");
-        assert_eq!(
-            parse_config_callback_data(&adjust),
-            Some(ConfigCallbackAction::Adjust {
-                field: ConfigField::FileGcIntervalSeconds,
-                delta: 10,
-            })
-        );
-        assert_eq!(parse_config_callback_data("cfg:a:bad:1"), None);
-        assert_eq!(parse_config_callback_data("cfg:a:gc:x"), None);
     }
 
     // 按钮调整必须做边界限制，避免误触后出现 0 并发或过短 GC。

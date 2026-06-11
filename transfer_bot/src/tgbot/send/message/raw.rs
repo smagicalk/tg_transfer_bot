@@ -14,6 +14,7 @@ use crate::tgbot::TdError;
 /// TDLib 成功响应里会带回完整 `message`，其中可能包含 last_message/reply_markup 等复杂嵌套。
 /// 对机器人回复来说只需要消息 ID 和发送状态，所以先解析成轻量结构，降低 worker 栈压力。
 #[derive(Debug, serde::Deserialize)]
+#[cfg(test)]
 struct SentMessageLite {
     id: i64,
     chat_id: i64,
@@ -46,23 +47,31 @@ pub(in crate::tgbot::send::message) async fn send_formatted_text_message_returni
         text_len = text.text.chars().count(),
         "tdlib sendMessage requested"
     );
-    let reply_markup = prepare_optional_reply_markup(reply_markup)?;
-    let response = tdlib_rs::send_request(
+    // 生成函数会负责真正调用 TDLib；这里仍先复用本模块的校验，避免把不支持的按钮类型发出去。
+    let _ = prepare_optional_reply_markup(reply_markup.clone())?;
+    let sent = match tdlib_rs::functions::send_message(
+        chat_id,
+        None,
+        None,
+        None,
+        reply_markup,
+        build_input_message_text_content(text),
         client_id,
-        build_send_message_request(text, chat_id, reply_markup),
     )
-    .await;
-    if response["@type"] == "error" {
-        let err: tdlib_rs::types::Error = serde_json::from_value(response)?;
-        tracing::warn!(
-            chat_id,
-            error_code = err.code,
-            error_message = %err.message,
-            "tdlib sendMessage returned error"
-        );
-        return Err(anyhow::Error::new(TdError(err)));
-    }
-    let message = parse_sent_message_lite(response)?;
+    .await
+    {
+        Ok(sent) => sent,
+        Err(err) => {
+            tracing::warn!(
+                chat_id,
+                error_code = err.code,
+                error_message = %err.message,
+                "tdlib sendMessage returned error"
+            );
+            return Err(anyhow::Error::new(TdError(err)));
+        }
+    };
+    let tdlib_rs::enums::Message::Message(message) = sent;
     tracing::debug!(
         chat_id = message.chat_id,
         message_id = message.id,
@@ -141,7 +150,7 @@ async fn edit_formatted_message_with_inline_keyboard(
         "editMessageText",
     );
     let keyboard = inline_keyboard_from_reply_markup(reply_markup);
-    let response = send_edit_message_text(
+    let edit_result = send_edit_message_text(
         formatted_text.clone(),
         chat_id,
         message_id,
@@ -149,11 +158,10 @@ async fn edit_formatted_message_with_inline_keyboard(
         client_id,
     )
     .await?;
-    if response["@type"] != "error" {
-        return Ok(());
-    }
-
-    let err: tdlib_rs::types::Error = serde_json::from_value(response)?;
+    let err = match edit_result {
+        Ok(()) => return Ok(()),
+        Err(err) => err,
+    };
     if is_message_not_modified(&err) {
         // TDLib 对“文本和按钮都没变化”的编辑会返回 400。
         // 对刷新面板来说这是幂等成功，不应污染日志或中断 callback。
@@ -176,7 +184,7 @@ async fn edit_formatted_message_with_inline_keyboard(
             final_message_id,
             "retry edit message with final sent message id"
         );
-        let retry_response = send_edit_message_text(
+        let retry_result = send_edit_message_text(
             formatted_text,
             chat_id,
             final_message_id,
@@ -184,10 +192,10 @@ async fn edit_formatted_message_with_inline_keyboard(
             client_id,
         )
         .await?;
-        if retry_response["@type"] != "error" {
-            return Ok(());
-        }
-        let retry_err: tdlib_rs::types::Error = serde_json::from_value(retry_response)?;
+        let retry_err = match retry_result {
+            Ok(()) => return Ok(()),
+            Err(err) => err,
+        };
         if is_message_not_modified(&retry_err) {
             tracing::debug!(
                 chat_id,
@@ -209,20 +217,26 @@ async fn send_edit_message_text(
     message_id: i64,
     keyboard: Option<tdlib_rs::types::ReplyMarkupInlineKeyboard>,
     client_id: i32,
-) -> anyhow::Result<serde_json::Value> {
-    let reply_markup =
-        prepare_optional_reply_markup(keyboard.map(tdlib_rs::enums::ReplyMarkup::InlineKeyboard))?;
-    Ok(tdlib_rs::send_request(
+) -> anyhow::Result<Result<(), tdlib_rs::types::Error>> {
+    let reply_markup = keyboard.map(tdlib_rs::enums::ReplyMarkup::InlineKeyboard);
+    // 先走显式校验，保持“只支持本项目允许的按钮类型”的边界。
+    let _ = prepare_optional_reply_markup(reply_markup.clone())?;
+    Ok(tdlib_rs::functions::edit_message_text(
+        chat_id,
+        message_id,
+        reply_markup,
+        build_input_message_text_content(formatted_text),
         client_id,
-        build_edit_message_text_request(formatted_text, chat_id, message_id, reply_markup),
     )
-    .await)
+    .await
+    .map(|_| ()))
 }
 
 /// 构造 `sendMessage` 请求 JSON。
 ///
 /// 发送层显式拼 JSON，而不是把生成的 TDLib enum 直接塞进 `json!`。
 /// 这样可以把 bytes/base64、可支持按钮类型和 null 字段都集中在一个可测试边界。
+#[cfg(test)]
 fn build_send_message_request(
     text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -240,6 +254,7 @@ fn build_send_message_request(
 }
 
 /// 构造 `editMessageText` 请求 JSON。
+#[cfg(test)]
 fn build_edit_message_text_request(
     text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -401,8 +416,74 @@ fn prepare_reply_markup(
             "is_personal": force_reply.is_personal,
             "input_field_placeholder": force_reply.input_field_placeholder,
         })),
-        _ => anyhow::bail!("unsupported reply markup type for bot message"),
+        tdlib_rs::enums::ReplyMarkup::ShowKeyboard(keyboard) => build_show_keyboard_value(keyboard),
+        tdlib_rs::enums::ReplyMarkup::RemoveKeyboard(remove_keyboard) => Ok(json!({
+            "@type": "replyMarkupRemoveKeyboard",
+            "is_personal": remove_keyboard.is_personal,
+        })),
     }
+}
+
+/// 构造 reply keyboard JSON。
+///
+/// 当前只需要 Telegram 原生选群按钮，其他 reply keyboard 类型先不开放，避免无意支持
+/// 电话、位置等敏感输入。
+fn build_show_keyboard_value(
+    keyboard: tdlib_rs::types::ReplyMarkupShowKeyboard,
+) -> anyhow::Result<serde_json::Value> {
+    let rows = keyboard
+        .rows
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(build_keyboard_button_value)
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(json!({
+        "@type": "replyMarkupShowKeyboard",
+        "rows": rows,
+        "is_persistent": keyboard.is_persistent,
+        "resize_keyboard": keyboard.resize_keyboard,
+        "one_time": keyboard.one_time,
+        "is_personal": keyboard.is_personal,
+        "input_field_placeholder": keyboard.input_field_placeholder,
+    }))
+}
+
+/// 构造单个 reply keyboard button JSON。
+fn build_keyboard_button_value(
+    button: tdlib_rs::types::KeyboardButton,
+) -> anyhow::Result<serde_json::Value> {
+    let button_type = match button.r#type {
+        tdlib_rs::enums::KeyboardButtonType::Text => json!({
+            "@type": "keyboardButtonTypeText",
+        }),
+        tdlib_rs::enums::KeyboardButtonType::RequestChat(request) => json!({
+            "@type": "keyboardButtonTypeRequestChat",
+            "id": request.id,
+            "chat_is_channel": request.chat_is_channel,
+            "restrict_chat_is_forum": request.restrict_chat_is_forum,
+            "chat_is_forum": request.chat_is_forum,
+            "restrict_chat_has_username": request.restrict_chat_has_username,
+            "chat_has_username": request.chat_has_username,
+            "chat_is_created": request.chat_is_created,
+            "user_administrator_rights": request.user_administrator_rights,
+            "bot_administrator_rights": request.bot_administrator_rights,
+            "bot_is_member": request.bot_is_member,
+            "request_title": request.request_title,
+            "request_username": request.request_username,
+            "request_photo": request.request_photo,
+        }),
+        _ => anyhow::bail!("unsupported reply keyboard button type"),
+    };
+
+    Ok(json!({
+        "text": button.text,
+        "icon_custom_emoji_id": button.icon_custom_emoji_id.to_string(),
+        "style": build_button_style_value(button.style),
+        "type": button_type,
+    }))
 }
 
 /// 构造 inline keyboard JSON。
@@ -464,6 +545,7 @@ fn build_button_style_value(style: tdlib_rs::enums::ButtonStyle) -> serde_json::
 }
 
 /// 构造文本消息内容 JSON。
+#[cfg(test)]
 fn build_input_message_text_value(text: tdlib_rs::types::FormattedText) -> serde_json::Value {
     json!({
         "@type": "inputMessageText",
@@ -473,7 +555,19 @@ fn build_input_message_text_value(text: tdlib_rs::types::FormattedText) -> serde
     })
 }
 
+/// 构造生成函数需要的文本消息内容。
+fn build_input_message_text_content(
+    text: tdlib_rs::types::FormattedText,
+) -> tdlib_rs::enums::InputMessageContent {
+    tdlib_rs::enums::InputMessageContent::InputMessageText(tdlib_rs::types::InputMessageText {
+        text,
+        link_preview_options: None,
+        clear_draft: true,
+    })
+}
+
 /// 轻量解析 `sendMessage` 返回的 message。
+#[cfg(test)]
 fn parse_sent_message_lite(
     response: serde_json::Value,
 ) -> anyhow::Result<tdlib_rs::types::Message> {
@@ -482,6 +576,7 @@ fn parse_sent_message_lite(
 }
 
 /// 把轻量消息转成现有等待状态模块需要的 TDLib message。
+#[cfg(test)]
 fn build_minimal_sent_message(lite: SentMessageLite) -> tdlib_rs::types::Message {
     tdlib_rs::types::Message {
         id: lite.id,
@@ -561,20 +656,16 @@ pub async fn answer_callback_query(
     text: Option<&str>,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let response = tdlib_rs::send_request(
+    if let Err(err) = tdlib_rs::functions::answer_callback_query(
+        callback_query_id,
+        text.unwrap_or("").to_owned(),
+        false,
+        String::new(),
+        0,
         client_id,
-        json!({
-            "@type": "answerCallbackQuery",
-            "callback_query_id": callback_query_id,
-            "text": text.unwrap_or(""),
-            "show_alert": false,
-            "url": "",
-            "cache_time": 0,
-        }),
     )
-    .await;
-    if response["@type"] == "error" {
-        let err: tdlib_rs::types::Error = serde_json::from_value(response)?;
+    .await
+    {
         tracing::warn!(
             callback_query_id,
             error_code = err.code,
@@ -741,6 +832,100 @@ mod tests {
             request["input_message_content"]["@type"],
             "inputMessageText"
         );
+    }
+
+    // 私聊 bot 的原生选群按钮需要 replyMarkupShowKeyboard，而不是 inline keyboard。
+    #[test]
+    fn test_request_chat_keyboard_send_message_request_can_serialize() {
+        let formatted_text = tdlib_rs::types::FormattedText {
+            text: "请选择目标群".to_owned(),
+            entities: vec![],
+        };
+        let keyboard = tdlib_rs::types::ReplyMarkupShowKeyboard {
+            rows: vec![
+                vec![tdlib_rs::types::KeyboardButton {
+                    text: "选择群组".to_owned(),
+                    icon_custom_emoji_id: 0,
+                    style: tdlib_rs::enums::ButtonStyle::Primary,
+                    r#type: tdlib_rs::enums::KeyboardButtonType::RequestChat(
+                        tdlib_rs::types::KeyboardButtonTypeRequestChat {
+                            id: 7001,
+                            chat_is_channel: false,
+                            restrict_chat_is_forum: false,
+                            chat_is_forum: false,
+                            restrict_chat_has_username: false,
+                            chat_has_username: false,
+                            chat_is_created: false,
+                            user_administrator_rights: None,
+                            bot_administrator_rights: None,
+                            bot_is_member: true,
+                            request_title: false,
+                            request_username: false,
+                            request_photo: false,
+                        },
+                    ),
+                }],
+                vec![tdlib_rs::types::KeyboardButton {
+                    text: "取消".to_owned(),
+                    icon_custom_emoji_id: 0,
+                    style: tdlib_rs::enums::ButtonStyle::Danger,
+                    r#type: tdlib_rs::enums::KeyboardButtonType::Text,
+                }],
+            ],
+            is_persistent: false,
+            resize_keyboard: true,
+            one_time: true,
+            is_personal: true,
+            input_field_placeholder: "选择目标群组".to_owned(),
+        };
+
+        let request = build_send_message_request(
+            formatted_text,
+            1,
+            prepare_optional_reply_markup(Some(tdlib_rs::enums::ReplyMarkup::ShowKeyboard(
+                keyboard,
+            )))
+            .unwrap(),
+        );
+
+        assert_eq!(request["reply_markup"]["@type"], "replyMarkupShowKeyboard");
+        assert_eq!(
+            request["reply_markup"]["rows"][0][0]["type"]["@type"],
+            "keyboardButtonTypeRequestChat"
+        );
+        assert_eq!(request["reply_markup"]["rows"][0][0]["type"]["id"], 7001);
+        assert_eq!(
+            request["reply_markup"]["rows"][0][0]["type"]["bot_is_member"],
+            true
+        );
+        assert_eq!(
+            request["reply_markup"]["rows"][1][0]["type"]["@type"],
+            "keyboardButtonTypeText"
+        );
+    }
+
+    // 选群结束或取消后必须能发送 replyMarkupRemoveKeyboard，避免客户端残留旧的选群键盘。
+    #[test]
+    fn test_remove_keyboard_send_message_request_can_serialize() {
+        let formatted_text = tdlib_rs::types::FormattedText {
+            text: "已选择目标".to_owned(),
+            entities: vec![],
+        };
+
+        let request = build_send_message_request(
+            formatted_text,
+            1,
+            prepare_optional_reply_markup(Some(tdlib_rs::enums::ReplyMarkup::RemoveKeyboard(
+                tdlib_rs::types::ReplyMarkupRemoveKeyboard { is_personal: true },
+            )))
+            .unwrap(),
+        );
+
+        assert_eq!(
+            request["reply_markup"]["@type"],
+            "replyMarkupRemoveKeyboard"
+        );
+        assert_eq!(request["reply_markup"]["is_personal"], true);
     }
 
     // 用户号模式下应统一丢弃 reply_markup，避免 TDLib 请求看似带按钮但客户端实际不显示。
