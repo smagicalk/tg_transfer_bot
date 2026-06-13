@@ -385,8 +385,6 @@ mod tests {
     // 流水页按钮使用 callback 原地翻页，当前页按钮保留 copy-text 方便复制命令。
     #[test]
     fn test_ledger_button_rows() {
-        use base64::{Engine as _, engine::general_purpose};
-
         let page = store::PointLedgerPage {
             telegram_user_id: 1,
             entries: vec![],
@@ -403,9 +401,35 @@ mod tests {
         assert_eq!(rows[0][3].text, "下页");
         assert_eq!(rows[1][0].text, "刷新");
 
+        assert!(matches!(
+            rows[0][0].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+        ));
+        assert!(matches!(
+            rows[0][3].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+        ));
+    }
+
+    // 非边界页仍应使用 callback 原地翻页。
+    #[test]
+    fn test_ledger_button_rows_middle_page_uses_callback_navigation() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let page = store::PointLedgerPage {
+            telegram_user_id: 1,
+            entries: vec![],
+            total: 30,
+            limit: 10,
+            page: 2,
+            total_pages: 3,
+        };
+
+        let rows = ledger_button_rows(LedgerCommandKind::Balance, 1, &page, false);
+
         let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
         else {
-            panic!("ledger navigation must be callback");
+            panic!("ledger navigation must be callback outside boundary page");
         };
         let decoded =
             String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();

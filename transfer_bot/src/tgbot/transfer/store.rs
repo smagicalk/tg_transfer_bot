@@ -131,6 +131,8 @@ pub(super) struct JobProgressJob {
     pub total_items: i32,
     /// 目标转存 chat_id。
     pub target_chat_id: i64,
+    /// 最后一次失败原因；仅失败/部分失败/取消异常时展示给 `/job status`。
+    pub last_error: Option<String>,
     /// 创建时间，用于列表排序。
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     /// 最后更新时间，用于页面展示。
@@ -202,7 +204,11 @@ fn is_text_file_key(file_key: &str) -> bool {
 
 /// 统一生成 UTC+8 时间戳。
 pub(super) fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
-    chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+    let Some(offset) = chrono::FixedOffset::east_opt(8 * 3600) else {
+        tracing::error!("failed to build UTC+8 fixed offset, fallback to UTC");
+        return chrono::Utc::now().fixed_offset();
+    };
+    chrono::Utc::now().with_timezone(&offset)
 }
 
 /// 转存系统健康快照。

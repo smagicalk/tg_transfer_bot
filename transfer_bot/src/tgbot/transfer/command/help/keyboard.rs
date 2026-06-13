@@ -33,47 +33,31 @@ pub(super) fn parse_help_callback_data(data: &str) -> Option<Option<&str>> {
 }
 
 /// help 目录页按钮。
-pub(super) fn build_help_index_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
+pub(super) fn build_help_index_buttons(
+    is_admin: bool,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    // 目录页只保留最常用短命令，长命令和完整示例放到具体帮助详情页。
+    // 这样首页不会变成“命令墙”，用户先点分类再展开即可。
+    let mut rows = vec![
         vec![
-            send::build_copy_button(
-                "复制 /transfer",
-                "/transfer ",
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_copy_button(
-                "复制 /lookup",
-                "/lookup ",
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
+            send::build_copy_button("复制 /t", "/t ", tdlib_rs::enums::ButtonStyle::Primary),
+            send::build_copy_button("复制 /lk", "/lk ", tdlib_rs::enums::ButtonStyle::Default),
         ],
         vec![
             send::build_copy_button(
-                "复制 /downloads",
-                "/downloads",
+                "复制 /d",
+                &downloads_command(None, None, None, CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "复制 /health",
-                &health_command(CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            send::build_copy_button(
-                "复制 /config",
-                &config_show_command(CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制 /balance",
-                &balance_command(CommandStyle::Long),
+                "复制 /bal",
+                &balance_command(CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
         vec![send::build_copy_button(
-            "复制 /cache",
-            &cache_command(None, None, None, CommandStyle::Long),
+            "复制流水",
+            &balance_history_command(10, 1, CommandStyle::Short),
             tdlib_rs::enums::ButtonStyle::Default,
         )],
         vec![
@@ -86,13 +70,8 @@ pub(super) fn build_help_index_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeybo
             ),
         ],
         vec![
-            help_nav_button("运行健康", "health", tdlib_rs::enums::ButtonStyle::Default),
-            help_nav_button("文件缓存", "cache", tdlib_rs::enums::ButtonStyle::Default),
             help_nav_button("积分账户", "points", tdlib_rs::enums::ButtonStyle::Default),
-        ],
-        vec![
             help_nav_button("任务控制", "job", tdlib_rs::enums::ButtonStyle::Default),
-            help_nav_button("运行配置", "config", tdlib_rs::enums::ButtonStyle::Default),
             help_nav_button("交互菜单", "menu", tdlib_rs::enums::ButtonStyle::Default),
         ],
         vec![help_nav_button(
@@ -101,7 +80,40 @@ pub(super) fn build_help_index_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeybo
             tdlib_rs::enums::ButtonStyle::Default,
         )],
         vec![menu_home_button()],
-    ]
+    ];
+
+    if is_admin {
+        rows.insert(
+            2,
+            vec![
+                send::build_copy_button(
+                    "复制 /hl",
+                    &health_command(CommandStyle::Short),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制 /cfg",
+                    &config_show_command(CommandStyle::Short),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制 /fc",
+                    &cache_command(None, None, None, CommandStyle::Short),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
+        );
+        rows.insert(
+            5,
+            vec![
+                help_nav_button("运行健康", "health", tdlib_rs::enums::ButtonStyle::Default),
+                help_nav_button("文件缓存", "cache", tdlib_rs::enums::ButtonStyle::Default),
+                help_nav_button("运行配置", "config", tdlib_rs::enums::ButtonStyle::Default),
+            ],
+        );
+    }
+
+    rows
 }
 
 /// 详细帮助页按钮。

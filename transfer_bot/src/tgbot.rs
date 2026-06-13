@@ -20,11 +20,22 @@ use tdlib_rs::enums::Update;
 // 记录进程启动时间戳。
 // 用于过滤掉程序启动前的历史消息，避免重复处理。
 static START_TS: std::sync::LazyLock<i32> = std::sync::LazyLock::new(|| {
-    let secs = SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("time went backwards")
-        .as_secs();
-    i32::try_from(secs).expect("i32 overflow (Year 2038 problem)")
+    let secs = match SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(err) => {
+            // 系统时间异常时不要让机器人启动即 panic；回退到 0 只会少过滤历史消息。
+            tracing::error!(error = %err, "system time is before unix epoch, fallback start ts");
+            0
+        }
+    };
+    match i32::try_from(secs) {
+        Ok(ts) => ts,
+        Err(err) => {
+            // TDLib message date 仍是 i32；超过可表示范围时使用最大值并记录日志。
+            tracing::error!(error = %err, secs, "system time overflowed tdlib date range");
+            i32::MAX
+        }
+    }
 });
 
 // 创建 TDLib client id。
@@ -173,6 +184,15 @@ pub async fn handle_update(
         }
 
         let message = update_new_message.message;
+        if message.is_outgoing {
+            tracing::trace!(
+                chat_id = message.chat_id,
+                message_id = message.id,
+                "ignored outgoing message update"
+            );
+            return Ok(());
+        }
+
         let chat_id = message.chat_id;
 
         // 忽略进程启动前消息，避免重复处理。
@@ -192,6 +212,19 @@ pub async fn handle_update(
             tdlib_rs::enums::MessageSender::User(user) => user.user_id,
             tdlib_rs::enums::MessageSender::Chat(chat_id) => chat_id.chat_id,
         };
+
+        if !is_private_interaction_chat(chat_id, sender_id) {
+            tracing::debug!(
+                chat_id,
+                sender_id,
+                message_id = message.id,
+                "ignored non-private interactive message"
+            );
+            if should_send_private_only_notice(&message.content) {
+                send_private_chat_only_message(chat_id, client_id).await?;
+            }
+            return Ok(());
+        }
 
         let Some(actor) = config.request_actor(chat_id, sender_id) else {
             tracing::debug!(
@@ -286,7 +319,7 @@ pub async fn handle_update(
                     // /help 命令入口。
                     // 返回机器人当前支持的命令说明。
                     "/help" | "/h" => {
-                        tgbot::transfer::help_command(text, chat_id, interaction_client_id).await
+                        tgbot::transfer::help_command(text, actor, interaction_client_id).await
                     }
                     "/balance" | "/bal" => {
                         tgbot::transfer::balance_command(text, actor, interaction_client_id).await
@@ -513,6 +546,25 @@ pub async fn handle_update(
 
         decode_callback_query_payload(&mut update_callback_query);
 
+        if !is_private_interaction_chat(
+            update_callback_query.chat_id,
+            update_callback_query.sender_user_id,
+        ) {
+            tracing::debug!(
+                chat_id = update_callback_query.chat_id,
+                sender_user_id = update_callback_query.sender_user_id,
+                message_id = update_callback_query.message_id,
+                "ignored non-private callback query"
+            );
+            crate::tgbot::send::answer_callback_query(
+                update_callback_query.id,
+                Some("请私聊 bot 使用"),
+                client_id,
+            )
+            .await?;
+            return Ok(());
+        }
+
         let Some(actor) = config.request_actor(
             update_callback_query.chat_id,
             update_callback_query.sender_user_id,
@@ -576,6 +628,33 @@ pub async fn handle_update(
 /// 这里不校验 bot username，原因是 TDLib update 入口已经做了管理员白名单过滤。
 fn normalize_bot_command(command: &str) -> &str {
     command.split_once('@').map_or(command, |(name, _)| name)
+}
+
+/// 判断交互消息是否来自 bot 私聊。
+///
+/// 本项目不支持群聊命令交互；目标群只作为转存目的地出现。
+fn is_private_interaction_chat(chat_id: i64, sender_user_id: i64) -> bool {
+    chat_id == sender_user_id
+}
+
+/// 群聊里只有明显发给 bot 的命令才回复私聊提示，避免 bot 被误加群后刷屏。
+fn should_send_private_only_notice(content: &tdlib_rs::enums::MessageContent) -> bool {
+    match content {
+        tdlib_rs::enums::MessageContent::MessageText(text) => {
+            text.text.text.trim_start().starts_with('/')
+        }
+        _ => false,
+    }
+}
+
+/// 群聊/频道中触发命令时的统一提示。
+async fn send_private_chat_only_message(chat_id: i64, client_id: i32) -> anyhow::Result<()> {
+    crate::tgbot::send::send_text_message(
+        "当前只支持私聊 bot 使用；目标群请在私聊菜单中选择。".to_owned(),
+        chat_id,
+        client_id,
+    )
+    .await
 }
 
 /// 解码 TDLib callback payload。
@@ -669,8 +748,8 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose};
 
     use super::{
-        command_error_hint, decode_callback_query_payload, normalize_bot_command,
-        should_process_interactive_update,
+        command_error_hint, decode_callback_query_payload, is_private_interaction_chat,
+        normalize_bot_command, should_process_interactive_update, should_send_private_only_notice,
     };
     use crate::config::ClientRole;
 
@@ -742,6 +821,42 @@ mod tests {
             ClientRole::User,
             ClientRole::Bot
         ));
+    }
+
+    // 项目只支持 bot 私聊交互；群聊里 chat_id 与 sender_user_id 不同，必须拒绝。
+    #[test]
+    fn test_private_interaction_chat_only() {
+        assert!(is_private_interaction_chat(100, 100));
+        assert!(!is_private_interaction_chat(-100123, 100));
+        assert!(!is_private_interaction_chat(200, 100));
+    }
+
+    // 群聊里只对命令回复“请私聊”，普通文本和媒体应静默忽略，避免刷屏。
+    #[test]
+    fn test_private_only_notice_only_for_commands() {
+        let command = tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
+            text: tdlib_rs::types::FormattedText {
+                text: " /menu".to_owned(),
+                entities: vec![],
+            },
+            link_preview: None,
+            link_preview_options: None,
+        });
+        let text = tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
+            text: tdlib_rs::types::FormattedText {
+                text: "hello".to_owned(),
+                entities: vec![],
+            },
+            link_preview: None,
+            link_preview_options: None,
+        });
+        let non_text = tdlib_rs::enums::MessageContent::MessageBasicGroupChatCreate(
+            tdlib_rs::types::MessageBasicGroupChatCreate::default(),
+        );
+
+        assert!(should_send_private_only_notice(&command));
+        assert!(!should_send_private_only_notice(&text));
+        assert!(!should_send_private_only_notice(&non_text));
     }
 
     // 余额不足应提示用户查看余额和联系管理员，而不是只显示英文异常。

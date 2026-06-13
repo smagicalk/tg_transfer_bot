@@ -10,7 +10,7 @@ use super::text::{build_help_detail_text, build_help_index_text};
 // help 目录页应包含所有公开命令入口。
 #[test]
 fn test_build_help_index_text_contains_commands() {
-    let text = build_help_index_text();
+    let text = build_help_index_text(true);
     assert!(text.contains("/help"));
     assert!(text.contains("/transfer"));
     assert!(text.contains("/lookup"));
@@ -22,6 +22,21 @@ fn test_build_help_index_text_contains_commands() {
     assert!(text.contains("/cache"));
     assert!(text.contains("/job"));
     assert!(text.contains("/menu"));
+}
+
+// 普通用户 help 正文不展示管理命令，避免文本提示和实际权限不一致。
+#[test]
+fn test_build_help_index_text_for_user_hides_admin_commands() {
+    let text = build_help_index_text(false);
+
+    assert!(text.contains("/transfer"));
+    assert!(text.contains("/downloads"));
+    assert!(text.contains("/balance"));
+    assert!(text.contains("/job"));
+    assert!(!text.contains("/config"));
+    assert!(!text.contains("/health"));
+    assert!(!text.contains("/cache"));
+    assert!(!text.contains("管理员示例"));
 }
 
 // 详细帮助应能分别展开不同命令。
@@ -102,7 +117,7 @@ fn test_help_callback_data_roundtrip() {
 // help 目录页应提供 callback 导航按钮，而不是只能复制命令。
 #[test]
 fn test_help_index_buttons_have_navigation_callbacks() {
-    let buttons = build_help_index_buttons();
+    let buttons = build_help_index_buttons(true);
     let transfer = buttons
         .iter()
         .flatten()
@@ -131,6 +146,47 @@ fn test_help_index_buttons_have_navigation_callbacks() {
         points.r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
+}
+
+// help 目录页只放短命令快捷复制，长命令模板留在详情页，避免首页按钮过密。
+#[test]
+fn test_help_index_buttons_keep_shortcuts_compact() {
+    let buttons = build_help_index_buttons(true);
+    let labels = buttons
+        .iter()
+        .flatten()
+        .map(|button| button.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(labels.contains(&"复制 /t"));
+    assert!(labels.contains(&"复制 /d"));
+    assert!(labels.contains(&"复制 /cfg"));
+    assert!(labels.contains(&"复制 /fc"));
+    assert!(!labels.contains(&"复制 /transfer"));
+    assert!(!labels.contains(&"复制 /downloads"));
+    assert!(!labels.contains(&"复制 /config"));
+    assert!(labels.contains(&"转存"));
+    assert!(labels.contains(&"下载列表"));
+}
+
+// 普通用户帮助目录不展示 admin-only 命令入口，避免按钮提示和实际权限不一致。
+#[test]
+fn test_help_index_buttons_for_user_hide_admin_entries() {
+    let buttons = build_help_index_buttons(false);
+    let labels = buttons
+        .iter()
+        .flatten()
+        .map(|button| button.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(labels.contains(&"复制 /bal"));
+    assert!(labels.contains(&"积分账户"));
+    assert!(!labels.contains(&"复制 /cfg"));
+    assert!(!labels.contains(&"复制 /hl"));
+    assert!(!labels.contains(&"复制 /fc"));
+    assert!(!labels.contains(&"运行配置"));
+    assert!(!labels.contains(&"运行健康"));
+    assert!(!labels.contains(&"文件缓存"));
 }
 
 // help 详情页应保留返回目录 callback。

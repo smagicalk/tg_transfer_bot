@@ -6,13 +6,11 @@ use std::sync::Arc;
 use crate::config::BotConfig;
 use crate::tgbot::send;
 
-use super::super::text::{
-    build_menu_status_text, build_step_prompt_text, build_transfer_prompt_text,
-};
+use super::super::text::{build_menu_status_text, build_step_prompt_text};
 use super::state::{
-    DraftKey, DraftTakeResult, MenuInputDraft, MenuInputKind, MenuInputStep, MenuJobAction,
-    cancel_menu_input_with_state, put_confirm_draft, put_draft, put_target_choice_draft,
-    remember_last_target, take_current_draft, target_context_from_step,
+    ConfirmContextTakeResult, DraftKey, MenuInputDraft, MenuJobAction, TargetContext,
+    TargetContextAdvanceResult, TargetDraftAdvance, advance_target_context,
+    cancel_menu_input_with_state, put_draft, remember_last_target, take_confirm_context,
 };
 use super::target::{
     edit_confirm_prompt, edit_target_choice_prompt, resolve_default_target, resolve_target_by_id,
@@ -28,8 +26,26 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_default_callback_q
     client_id: i32,
 ) -> anyhow::Result<()> {
     let key = (chat_id, sender_user_id);
-    let Some((kind, source_link)) = take_target_context_for_callback(
+    let Some(target_chat_id) = resolve_default_target(&config, chat_id) else {
+        let Some(_context) = advance_target_context_for_callback(
+            key,
+            TargetDraftAdvance::TargetChoice,
+            callback_query_id,
+            chat_id,
+            "没有等待选择目标的输入",
+            client_id,
+        )
+        .await?
+        else {
+            return Ok(());
+        };
+        send::answer_callback_query(callback_query_id, Some("当前没有默认目标"), client_id).await?;
+        return Ok(());
+    };
+
+    let Some(context) = advance_target_context_for_callback(
         key,
+        TargetDraftAdvance::Confirm { target_chat_id },
         callback_query_id,
         chat_id,
         "没有等待选择目标的输入",
@@ -39,18 +55,10 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_default_callback_q
     else {
         return Ok(());
     };
-
-    let Some(target_chat_id) = resolve_default_target(&config, chat_id) else {
-        put_target_choice_draft(key, kind, source_link).await?;
-        send::answer_callback_query(callback_query_id, Some("当前没有默认目标"), client_id).await?;
-        return Ok(());
-    };
-
-    put_confirm_draft(key, kind, source_link.clone(), target_chat_id).await?;
     send::answer_callback_query(callback_query_id, Some("已选择默认目标"), client_id).await?;
     edit_confirm_prompt(
-        kind,
-        &source_link,
+        context.kind,
+        &context.source_link,
         target_chat_id,
         chat_id,
         message_id,
@@ -70,20 +78,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_alias_callback_que
     client_id: i32,
 ) -> anyhow::Result<()> {
     let key = (chat_id, sender_user_id);
-    let Some((kind, source_link)) = take_target_context_for_callback(
-        key,
-        callback_query_id,
-        chat_id,
-        "没有等待选择目标的输入",
-        client_id,
-    )
-    .await?
-    else {
-        return Ok(());
-    };
-
     if let Err(err) = resolve_target_by_id(target_chat_id, &config, chat_id) {
-        put_target_choice_draft(key, kind, source_link).await?;
         send::answer_callback_query(callback_query_id, Some("目标不在允许列表"), client_id).await?;
         tracing::warn!(
             chat_id,
@@ -95,11 +90,22 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_alias_callback_que
         return Ok(());
     }
 
-    put_confirm_draft(key, kind, source_link.clone(), target_chat_id).await?;
+    let Some(context) = advance_target_context_for_callback(
+        key,
+        TargetDraftAdvance::Confirm { target_chat_id },
+        callback_query_id,
+        chat_id,
+        "没有等待选择目标的输入",
+        client_id,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
     send::answer_callback_query(callback_query_id, Some("已选择目标"), client_id).await?;
     edit_confirm_prompt(
-        kind,
-        &source_link,
+        context.kind,
+        &context.source_link,
         target_chat_id,
         chat_id,
         message_id,
@@ -117,8 +123,9 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_qu
     client_id: i32,
 ) -> anyhow::Result<()> {
     let key = (chat_id, sender_user_id);
-    let Some((kind, source_link)) = take_target_context_for_callback(
+    let Some(_context) = advance_target_context_for_callback(
         key,
+        TargetDraftAdvance::TargetChat,
         callback_query_id,
         chat_id,
         "没有等待选择目标的输入",
@@ -129,7 +136,6 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_qu
         return Ok(());
     };
 
-    put_draft(key, MenuInputDraft::target_chat(kind, source_link)).await?;
     send::answer_callback_query(callback_query_id, Some("请输入目标"), client_id).await?;
     edit_input_waiting_card(
         chat_id,
@@ -163,8 +169,9 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_request_chat_callb
     client_id: i32,
 ) -> anyhow::Result<()> {
     let key = (chat_id, sender_user_id);
-    let Some((kind, source_link)) = take_target_context_for_callback(
+    let Some(_context) = advance_target_context_for_callback(
         key,
+        TargetDraftAdvance::ChatPicker,
         callback_query_id,
         chat_id,
         "没有等待选择目标的输入",
@@ -175,7 +182,6 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_request_chat_callb
         return Ok(());
     };
 
-    put_draft(key, MenuInputDraft::chat_picker(kind, source_link)).await?;
     send::answer_callback_query(callback_query_id, Some("请选择群组"), client_id).await?;
     edit_input_waiting_card(
         chat_id,
@@ -290,38 +296,47 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_confirm_callback_q
     client_id: i32,
 ) -> anyhow::Result<()> {
     let key = (chat_id, sender_user_id);
-    let draft = match take_current_draft(key).await? {
-        DraftTakeResult::Active(draft) => draft,
-        DraftTakeResult::Expired => {
+    let confirm = match take_confirm_context(key).await? {
+        ConfirmContextTakeResult::Active(confirm) => confirm,
+        ConfirmContextTakeResult::Expired => {
             send::answer_callback_query(callback_query_id, Some("输入已过期"), client_id).await?;
+            send_input_recovery_card(
+                chat_id,
+                client_id,
+                "输入已过期",
+                "expired",
+                "上一次确认已超过有效时间，请重新打开菜单发起操作。",
+            )
+            .await?;
             return Ok(());
         }
-        DraftTakeResult::None => {
+        ConfirmContextTakeResult::None => {
             send::answer_callback_query(callback_query_id, Some("没有待执行的输入"), client_id)
                 .await?;
+            send_input_recovery_card(
+                chat_id,
+                client_id,
+                "没有待执行的输入",
+                "empty",
+                "当前没有可确认的菜单输入，请重新打开菜单发起操作。",
+            )
+            .await?;
+            return Ok(());
+        }
+        ConfirmContextTakeResult::WrongStep => {
+            send::answer_callback_query(callback_query_id, Some("请先选择目标"), client_id).await?;
             return Ok(());
         }
     };
 
-    let MenuInputStep::Confirm {
-        kind,
-        source_link,
-        target_chat_id,
-    } = draft.step
-    else {
-        put_draft(key, draft).await?;
-        send::answer_callback_query(callback_query_id, Some("请先选择目标"), client_id).await?;
-        return Ok(());
-    };
-
-    remember_last_target(chat_id, sender_user_id, target_chat_id);
+    remember_last_target(chat_id, sender_user_id, confirm.target_chat_id);
     send::answer_callback_query(callback_query_id, Some("开始执行"), client_id).await?;
     super::run_existing_command(
-        kind,
+        confirm.kind,
         vec![
-            kind.command_name().to_owned(),
-            source_link,
-            target_chat_id.to_string(),
+            confirm.kind.command_name().to_owned(),
+            confirm.source_link,
+            confirm.target_chat_id.to_string(),
         ],
         config,
         chat_id,
@@ -342,8 +357,9 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_back_callback_quer
     client_id: i32,
 ) -> anyhow::Result<()> {
     let key = (chat_id, sender_user_id);
-    let Some((kind, source_link)) = take_target_context_for_callback(
+    let Some(context) = advance_target_context_for_callback(
         key,
+        TargetDraftAdvance::TargetChoice,
         callback_query_id,
         chat_id,
         "没有可返回的目标选择",
@@ -353,7 +369,6 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_back_callback_quer
     else {
         return Ok(());
     };
-    put_target_choice_draft(key, kind, source_link.clone()).await?;
     send::answer_callback_query(callback_query_id, Some("已返回目标选择"), client_id).await?;
     edit_target_choice_prompt(
         &config,
@@ -361,8 +376,8 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_back_callback_quer
         sender_user_id,
         message_id,
         client_id,
-        kind,
-        &source_link,
+        context.kind,
+        &context.source_link,
     )
     .await?;
     Ok(())
@@ -394,8 +409,16 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_input_callback_que
         tdlib_rs::enums::ButtonStyle::Primary,
     )])
     .into_card_parts()?;
-    send::edit_card_message_with_inline_keyboard(text, chat_id, message_id, keyboard, client_id)
-        .await?;
+    send::edit_interaction_card_or_error(
+        text,
+        chat_id,
+        message_id,
+        keyboard,
+        client_id,
+        "取消输入刷新失败",
+        "输入流程已处理，但原消息编辑失败；请复制错误或重新打开 /menu。",
+    )
+    .await?;
     if cancelled
         .map(|cancelled| cancelled.needs_reply_keyboard_cleanup)
         .unwrap_or(false)
@@ -448,36 +471,67 @@ async fn edit_input_waiting_card(
     }
 }
 
-/// 从 callback 取出当前目标选择上下文。
-async fn take_target_context_for_callback(
+/// 从 callback 原子推进目标上下文。
+async fn advance_target_context_for_callback(
     key: DraftKey,
+    advance: TargetDraftAdvance,
     callback_query_id: i64,
     chat_id: i64,
     missing_tip: &str,
     client_id: i32,
-) -> anyhow::Result<Option<(MenuInputKind, String)>> {
-    let draft = match take_current_draft(key).await? {
-        DraftTakeResult::Active(draft) => draft,
-        DraftTakeResult::Expired => {
+) -> anyhow::Result<Option<TargetContext>> {
+    match advance_target_context(key, advance).await? {
+        TargetContextAdvanceResult::Active(context) => Ok(Some(context)),
+        TargetContextAdvanceResult::Expired => {
             send::answer_callback_query(callback_query_id, Some("输入已过期"), client_id).await?;
-            send::ReplyPanel::card(build_transfer_prompt_text(
+            send_input_recovery_card(
+                chat_id,
+                client_id,
                 "输入已过期",
+                "expired",
                 "上一次菜单输入已超过有效时间，请重新打开 /menu。",
-            ))
-            .send(chat_id, client_id)
+            )
             .await?;
-            return Ok(None);
+            Ok(None)
         }
-        DraftTakeResult::None => {
+        TargetContextAdvanceResult::None => {
             send::answer_callback_query(callback_query_id, Some(missing_tip), client_id).await?;
-            return Ok(None);
+            send_input_recovery_card(
+                chat_id,
+                client_id,
+                missing_tip,
+                "empty",
+                "当前按钮对应的输入流程已经不存在，请重新打开菜单。",
+            )
+            .await?;
+            Ok(None)
         }
-    };
+        TargetContextAdvanceResult::WrongStep => {
+            send::answer_callback_query(callback_query_id, Some("请先发送源链接"), client_id)
+                .await?;
+            Ok(None)
+        }
+    }
+}
 
-    let Some(context) = target_context_from_step(&draft.step) else {
-        put_draft(key, draft).await?;
-        send::answer_callback_query(callback_query_id, Some("请先发送源链接"), client_id).await?;
-        return Ok(None);
-    };
-    Ok(Some(context))
+/// 输入流程无法继续时给出可点击恢复入口。
+///
+/// 只弹 callback 提示容易被 Telegram 客户端很快收起；额外发一张短卡片能让用户明确知道下一步。
+async fn send_input_recovery_card(
+    chat_id: i64,
+    client_id: i32,
+    title: &str,
+    status: &str,
+    detail: &str,
+) -> anyhow::Result<()> {
+    send::ReplyPanel::card(build_menu_status_text(title, status, detail))
+        .row(vec![send::build_callback_button(
+            "重新打开菜单",
+            &super::super::callback::menu_page_callback_data(
+                super::super::callback::MenuPage::Home,
+            ),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        )])
+        .send(chat_id, client_id)
+        .await
 }

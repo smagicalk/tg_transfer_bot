@@ -13,7 +13,7 @@ pub use buttons::{
     build_callback_button, build_copy_button, build_inline_keyboard, build_url_button,
     is_openable_url,
 };
-pub use error::send_interaction_error_card;
+pub use error::{edit_interaction_card_or_error, send_interaction_error_card};
 pub use message::{
     answer_callback_query, edit_card_message_with_inline_keyboard,
     edit_markdown_message_with_inline_keyboard, observe_message_send_failed_for_client,

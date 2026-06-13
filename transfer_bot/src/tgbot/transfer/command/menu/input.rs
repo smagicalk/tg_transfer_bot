@@ -68,7 +68,7 @@ pub(super) async fn continue_current_input(
         DraftTakeResult::Expired => {
             send::ReplyPanel::card(build_transfer_prompt_text(
                 "输入已过期",
-                "上一次菜单输入已超过 10 分钟，请重新打开 /menu。",
+                &expired_input_detail(),
             ))
             .row(vec![send::build_copy_button(
                 "复制 /menu",
@@ -199,7 +199,7 @@ pub(super) async fn handle_menu_input(
             );
             send::ReplyPanel::card(build_transfer_prompt_text(
                 "输入已过期",
-                "上一次菜单输入已超过 10 分钟，请重新打开 /menu。",
+                &expired_input_detail(),
             ))
             .row(vec![send::build_copy_button(
                 "复制 /menu",
@@ -556,6 +556,7 @@ pub(super) async fn handle_shared_chat_input(
             &config,
             request_chat_id,
             sender_user_id,
+            kind,
         ))
         .send(request_chat_id, client_id)
         .await?;
@@ -643,8 +644,8 @@ async fn run_existing_command(
     client_id: i32,
 ) -> anyhow::Result<()> {
     let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
-    match kind.command_kind() {
-        MenuInputKind::Transfer => {
+    match kind {
+        MenuInputKind::Transfer | MenuInputKind::TransferDefault => {
             transfer_cmd::transfer_link_command(
                 command_refs,
                 config,
@@ -655,11 +656,8 @@ async fn run_existing_command(
             )
             .await
         }
-        MenuInputKind::Lookup => {
+        MenuInputKind::Lookup | MenuInputKind::LookupDefault => {
             lookup::lookup_command(command_refs, config, actor, client_id).await
-        }
-        MenuInputKind::TransferDefault | MenuInputKind::LookupDefault => {
-            unreachable!("kind is normalized")
         }
     }
 }
@@ -723,6 +721,32 @@ fn looks_like_telegram_link(input: &str) -> bool {
         || input.starts_with("t.me/")
 }
 
+/// 菜单输入过期提示，跟随运行时配置展示实际超时时间。
+fn expired_input_detail() -> String {
+    format!(
+        "上一次菜单输入已超过 {}，请重新打开 /menu。",
+        format_duration_hint(
+            crate::tgbot::transfer::runtime_config()
+                .menu_input_timeout_seconds
+                .max(1)
+        )
+    )
+}
+
+/// 把秒数压缩成适合卡片展示的短文案。
+fn format_duration_hint(seconds: u64) -> String {
+    if seconds < 60 {
+        return format!("{} 秒", seconds);
+    }
+    if seconds.is_multiple_of(3600) {
+        return format!("{} 小时", seconds / 3600);
+    }
+    if seconds.is_multiple_of(60) {
+        return format!("{} 分钟", seconds / 60);
+    }
+    format!("{} 秒", seconds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -761,5 +785,14 @@ mod tests {
         assert_eq!(parse_user_id_input("123456789"), Some(123456789));
         assert_eq!(parse_user_id_input("@alice"), None);
         assert_eq!(parse_user_id_input("-123"), None);
+    }
+
+    // 过期提示应跟随可配置秒数展示，不再写死默认 10 分钟。
+    #[test]
+    fn test_format_duration_hint() {
+        assert_eq!(format_duration_hint(45), "45 秒");
+        assert_eq!(format_duration_hint(600), "10 分钟");
+        assert_eq!(format_duration_hint(7200), "2 小时");
+        assert_eq!(format_duration_hint(95), "95 秒");
     }
 }

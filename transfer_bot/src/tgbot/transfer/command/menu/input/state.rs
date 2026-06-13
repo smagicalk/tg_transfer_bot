@@ -1,10 +1,13 @@
 // `/menu` 输入草稿状态。
 // 草稿持久化在业务数据库中，真实转存任务仍全部落 transfer_job。
 
-use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, MutexGuard};
 
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Set, Statement,
+    sea_query::OnConflict,
+};
 
 use crate::db;
 
@@ -18,6 +21,12 @@ pub(super) type DraftKey = (i64, i64);
 /// 这是纯交互优化，不参与转存幂等和任务恢复；进程重启后丢失也不会影响真实任务。
 static MENU_LAST_TARGETS: LazyLock<std::sync::Mutex<HashMap<DraftKey, i64>>> =
     LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+/// 进程内草稿互斥键。
+///
+/// 数据库主键保证最终只有一行草稿；这里额外保证同进程内的“读出并删除”不会被两个 callback
+/// 同时执行，避免确认按钮连点时同一份草稿被消费两次。
+static MENU_DRAFT_ACTIVE_KEYS: LazyLock<std::sync::Mutex<HashSet<DraftKey>>> =
+    LazyLock::new(|| std::sync::Mutex::new(HashSet::new()));
 
 /// 菜单输入流程。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,10 +55,38 @@ impl MenuInputKind {
     ///
     /// bot 私聊场景优先展示长命令；短命令仍由上层路由兼容。
     pub(super) fn command_name(self) -> &'static str {
-        match self.command_kind() {
-            Self::Transfer => "/transfer",
-            Self::Lookup => "/lookup",
-            Self::TransferDefault | Self::LookupDefault => unreachable!("kind is normalized"),
+        match self {
+            Self::Transfer | Self::TransferDefault => "/transfer",
+            Self::Lookup | Self::LookupDefault => "/lookup",
+        }
+    }
+
+    /// 目标选择页标题。
+    ///
+    /// 这里直接覆盖四种输入类型，不依赖 `command_kind()` 后的不可达分支，避免未来调整
+    /// 快速入口时把页面渲染路径变成运行时 panic。
+    pub(super) fn target_choice_title(self) -> &'static str {
+        match self {
+            Self::Transfer | Self::TransferDefault => "选择转存目标",
+            Self::Lookup | Self::LookupDefault => "选择查询目标",
+        }
+    }
+
+    /// 确认页标题。
+    pub(super) fn confirm_title(self) -> &'static str {
+        match self {
+            Self::Transfer | Self::TransferDefault => "确认转存",
+            Self::Lookup | Self::LookupDefault => "确认查询",
+        }
+    }
+
+    /// 默认目标按钮文案。
+    ///
+    /// 转存和查询都可能走“快速入口”，按钮文案必须按实际命令语义区分。
+    pub(super) fn default_target_button_label(self) -> &'static str {
+        match self {
+            Self::Transfer | Self::TransferDefault => "快速转存",
+            Self::Lookup | Self::LookupDefault => "快速查询",
         }
     }
 
@@ -283,26 +320,26 @@ impl MenuInputDraft {
     }
 
     /// 从数据库行恢复草稿。
-    fn from_model(model: db::menu_input_draft::Model) -> Option<Self> {
+    fn from_model(model: &db::menu_input_draft::Model) -> Option<Self> {
         let step = match model.step.as_str() {
             "source_link" => MenuInputStep::SourceLink {
                 kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
             },
             "target_choice" => MenuInputStep::TargetChoice {
                 kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
-                source_link: model.source_link?,
+                source_link: model.source_link.clone()?,
             },
             "target_chat" => MenuInputStep::TargetChat {
                 kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
-                source_link: model.source_link?,
+                source_link: model.source_link.clone()?,
             },
             "chat_picker" => MenuInputStep::ChatPicker {
                 kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
-                source_link: model.source_link?,
+                source_link: model.source_link.clone()?,
             },
             "confirm" => MenuInputStep::Confirm {
                 kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
-                source_link: model.source_link?,
+                source_link: model.source_link.clone()?,
                 target_chat_id: model.target_chat_id?,
             },
             "job_id" => MenuInputStep::JobId {
@@ -402,6 +439,48 @@ pub(super) enum DraftTakeResult {
     Expired,
 }
 
+/// 目标选择上下文。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TargetContext {
+    pub(super) kind: MenuInputKind,
+    pub(super) source_link: String,
+}
+
+/// 目标选择按钮要推进到的下一步。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TargetDraftAdvance {
+    TargetChoice,
+    TargetChat,
+    ChatPicker,
+    Confirm { target_chat_id: i64 },
+}
+
+/// 目标选择推进结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum TargetContextAdvanceResult {
+    None,
+    Active(TargetContext),
+    Expired,
+    WrongStep,
+}
+
+/// 确认执行上下文。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ConfirmContext {
+    pub(super) kind: MenuInputKind,
+    pub(super) source_link: String,
+    pub(super) target_chat_id: i64,
+}
+
+/// 确认按钮消费结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ConfirmContextTakeResult {
+    None,
+    Active(ConfirmContext),
+    Expired,
+    WrongStep,
+}
+
 /// 开始一个菜单输入流程。
 pub(in crate::tgbot::transfer::command::menu) async fn start_menu_input(
     chat_id: i64,
@@ -433,12 +512,16 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input_with_st
     chat_id: i64,
     user_id: i64,
 ) -> anyhow::Result<Option<CancelledMenuInput>> {
+    let _guard = acquire_draft_key_guard((chat_id, user_id)).await;
     purge_expired().await?;
     let Some(removed) = find_draft_model(chat_id, user_id).await? else {
         return Ok(None);
     };
-    delete_draft(chat_id, user_id).await?;
-    let removed = match MenuInputDraft::from_model(removed) {
+    if !delete_draft_if_current(&removed).await? {
+        tracing::debug!(chat_id, user_id, "menu input draft cancel lost write race");
+        return Ok(None);
+    }
+    let removed = match MenuInputDraft::from_model(&removed) {
         Some(removed) => removed,
         None => {
             return Ok(Some(CancelledMenuInput {
@@ -460,6 +543,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input_with_st
 
 /// 取出当前草稿；若草稿过期，则清理后返回过期状态。
 pub(super) async fn take_current_draft(key: DraftKey) -> anyhow::Result<DraftTakeResult> {
+    let _guard = acquire_draft_key_guard(key).await;
     purge_expired().await?;
     let Some(model) = find_draft_model(key.0, key.1).await? else {
         return Ok(DraftTakeResult::None);
@@ -469,8 +553,7 @@ pub(super) async fn take_current_draft(key: DraftKey) -> anyhow::Result<DraftTak
         purge_expired().await?;
         return Ok(DraftTakeResult::Expired);
     }
-    delete_draft(key.0, key.1).await?;
-    let Some(draft) = MenuInputDraft::from_model(model) else {
+    let Some(draft) = MenuInputDraft::from_model(&model) else {
         tracing::warn!(
             chat_id = key.0,
             user_id = key.1,
@@ -478,7 +561,123 @@ pub(super) async fn take_current_draft(key: DraftKey) -> anyhow::Result<DraftTak
         );
         return Ok(DraftTakeResult::None);
     };
+    if !delete_draft_if_current(&model).await? {
+        tracing::debug!(
+            chat_id = key.0,
+            user_id = key.1,
+            "menu input draft was already consumed by another worker"
+        );
+        return Ok(DraftTakeResult::None);
+    }
     Ok(DraftTakeResult::Active(draft))
+}
+
+/// 在同一把草稿互斥下推进目标选择上下文。
+///
+/// callback 连点时，如果调用方自己 `take_current_draft` 后再 `put_draft`，中间会有短暂空窗；
+/// 另一个 callback 可能误判为“没有待输入”。这里把读取和写回收敛到状态层，保证同进程内
+/// 同一个 chat + user 的目标选择推进串行完成。
+pub(super) async fn advance_target_context(
+    key: DraftKey,
+    advance: TargetDraftAdvance,
+) -> anyhow::Result<TargetContextAdvanceResult> {
+    let _guard = acquire_draft_key_guard(key).await;
+    purge_expired().await?;
+    let Some(model) = find_draft_model(key.0, key.1).await? else {
+        return Ok(TargetContextAdvanceResult::None);
+    };
+    if model.expires_at <= now_utc8() {
+        delete_draft(key.0, key.1).await?;
+        purge_expired().await?;
+        return Ok(TargetContextAdvanceResult::Expired);
+    }
+
+    let Some(draft) = MenuInputDraft::from_model(&model) else {
+        tracing::warn!(
+            chat_id = key.0,
+            user_id = key.1,
+            "menu target draft row is invalid, deleting"
+        );
+        delete_draft(key.0, key.1).await?;
+        return Ok(TargetContextAdvanceResult::None);
+    };
+    let Some((kind, source_link)) = target_context_from_step(&draft.step) else {
+        return Ok(TargetContextAdvanceResult::WrongStep);
+    };
+
+    let next = match advance {
+        TargetDraftAdvance::TargetChoice => {
+            MenuInputDraft::target_choice(kind, source_link.clone())
+        }
+        TargetDraftAdvance::TargetChat => MenuInputDraft::target_chat(kind, source_link.clone()),
+        TargetDraftAdvance::ChatPicker => MenuInputDraft::chat_picker(kind, source_link.clone()),
+        TargetDraftAdvance::Confirm { target_chat_id } => {
+            MenuInputDraft::confirm(kind, source_link.clone(), target_chat_id)
+        }
+    };
+    if !update_draft_if_current(&model, next).await? {
+        tracing::debug!(
+            chat_id = key.0,
+            user_id = key.1,
+            "menu target draft advance lost write race"
+        );
+        return Ok(TargetContextAdvanceResult::None);
+    }
+    Ok(TargetContextAdvanceResult::Active(TargetContext {
+        kind,
+        source_link,
+    }))
+}
+
+/// 消费确认态草稿。
+///
+/// 只有处于 Confirm 阶段才删除草稿并返回可执行上下文；其它阶段保持原草稿不变，
+/// 避免用户点错旧按钮后丢失当前输入流程。
+pub(super) async fn take_confirm_context(
+    key: DraftKey,
+) -> anyhow::Result<ConfirmContextTakeResult> {
+    let _guard = acquire_draft_key_guard(key).await;
+    purge_expired().await?;
+    let Some(model) = find_draft_model(key.0, key.1).await? else {
+        return Ok(ConfirmContextTakeResult::None);
+    };
+    if model.expires_at <= now_utc8() {
+        delete_draft(key.0, key.1).await?;
+        purge_expired().await?;
+        return Ok(ConfirmContextTakeResult::Expired);
+    }
+
+    let Some(draft) = MenuInputDraft::from_model(&model) else {
+        tracing::warn!(
+            chat_id = key.0,
+            user_id = key.1,
+            "menu confirm draft row is invalid, deleting"
+        );
+        delete_draft(key.0, key.1).await?;
+        return Ok(ConfirmContextTakeResult::None);
+    };
+    let MenuInputStep::Confirm {
+        kind,
+        source_link,
+        target_chat_id,
+    } = draft.step
+    else {
+        return Ok(ConfirmContextTakeResult::WrongStep);
+    };
+
+    if !delete_draft_if_current(&model).await? {
+        tracing::debug!(
+            chat_id = key.0,
+            user_id = key.1,
+            "menu confirm draft was already consumed by another worker"
+        );
+        return Ok(ConfirmContextTakeResult::None);
+    }
+    Ok(ConfirmContextTakeResult::Active(ConfirmContext {
+        kind,
+        source_link,
+        target_chat_id,
+    }))
 }
 
 /// 读取当前草稿但不消费。
@@ -494,7 +693,7 @@ pub(super) async fn peek_current_draft(key: DraftKey) -> anyhow::Result<DraftTak
         purge_expired().await?;
         return Ok(DraftTakeResult::Expired);
     }
-    let Some(draft) = MenuInputDraft::from_model(model) else {
+    let Some(draft) = MenuInputDraft::from_model(&model) else {
         tracing::warn!(
             chat_id = key.0,
             user_id = key.1,
@@ -508,13 +707,131 @@ pub(super) async fn peek_current_draft(key: DraftKey) -> anyhow::Result<DraftTak
 
 /// 写回草稿。
 pub(super) async fn put_draft(key: DraftKey, draft: MenuInputDraft) -> anyhow::Result<()> {
+    let _guard = acquire_draft_key_guard(key).await;
+    put_draft_unlocked(key, draft).await
+}
+
+/// 写回草稿的无锁实现。
+///
+/// 仅供已经持有草稿 key guard 的状态层函数调用；外部入口必须使用 `put_draft`。
+async fn put_draft_unlocked(key: DraftKey, draft: MenuInputDraft) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
     purge_expired().await?;
-    delete_draft(key.0, key.1).await?;
     db::menu_input_draft::Entity::insert(draft.into_active_model(key))
+        .on_conflict(
+            OnConflict::columns([
+                db::menu_input_draft::Column::RequestChatId,
+                db::menu_input_draft::Column::SenderUserId,
+            ])
+            .update_columns([
+                db::menu_input_draft::Column::Step,
+                db::menu_input_draft::Column::InputKind,
+                db::menu_input_draft::Column::JobAction,
+                db::menu_input_draft::Column::SourceLink,
+                db::menu_input_draft::Column::TargetChatId,
+                db::menu_input_draft::Column::CreatedAt,
+                db::menu_input_draft::Column::UpdatedAt,
+                db::menu_input_draft::Column::ExpiresAt,
+            ])
+            .to_owned(),
+        )
         .exec(db_conn)
         .await?;
     Ok(())
+}
+
+/// 仅当数据库行仍匹配刚才读到的业务字段时才删除。
+///
+/// 进程内已有 `MENU_DRAFT_ACTIVE_KEYS` 串行化，但如果以后同一数据库被多个 bot 进程使用，
+/// 另一个进程可能已经先消费或推进了草稿。SQLite 时间戳精度不适合作为稳定版本字段，
+/// 因此这里用当前步骤相关业务字段做条件匹配，避免旧阶段删除新阶段。
+async fn delete_draft_if_current(model: &db::menu_input_draft::Model) -> anyhow::Result<bool> {
+    let result = db::get_db()
+        .await?
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            r#"
+            DELETE FROM menu_input_draft
+            WHERE request_chat_id = ?
+              AND sender_user_id = ?
+              AND step = ?
+              AND input_kind IS ?
+              AND job_action IS ?
+              AND source_link IS ?
+              AND target_chat_id IS ?
+            "#,
+            current_draft_values(model),
+        ))
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// 仅当数据库行仍匹配刚才读到的业务字段时才推进到下一步。
+///
+/// 这不是为了替代进程内锁，而是补上跨进程/重复 worker 的最后一道保护：如果旧草稿已经被
+/// 其它执行者推进，当前执行者不应再覆盖更新后的状态。
+async fn update_draft_if_current(
+    model: &db::menu_input_draft::Model,
+    draft: MenuInputDraft,
+) -> anyhow::Result<bool> {
+    let now = now_utc8();
+    let expires_at = now + chrono::Duration::seconds(input_ttl_seconds() as i64);
+    let fields = DraftFields::from_step(draft.step);
+    let mut values = vec![
+        fields.step.to_owned().into(),
+        fields.input_kind.map(str::to_owned).into(),
+        fields.job_action.map(str::to_owned).into(),
+        fields.source_link.into(),
+        fields.target_chat_id.into(),
+        now.into(),
+        now.into(),
+        expires_at.into(),
+    ];
+    values.extend(current_draft_values(model));
+
+    let result = db::get_db()
+        .await?
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            r#"
+            UPDATE menu_input_draft
+            SET
+                step = ?,
+                input_kind = ?,
+                job_action = ?,
+                source_link = ?,
+                target_chat_id = ?,
+                created_at = ?,
+                updated_at = ?,
+                expires_at = ?
+            WHERE request_chat_id = ?
+              AND sender_user_id = ?
+              AND step = ?
+              AND input_kind IS ?
+              AND job_action IS ?
+              AND source_link IS ?
+              AND target_chat_id IS ?
+            "#,
+            values,
+        ))
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// 构造草稿当前业务字段绑定值。
+///
+/// SQL 中使用 SQLite 的 `IS ?`，它既能匹配 NULL，也能匹配普通值；比 ORM 组合多列
+/// `IS NULL` / `=` 条件更直接，避免 SQLite 测试库上出现空值字段匹配不到的情况。
+fn current_draft_values(model: &db::menu_input_draft::Model) -> Vec<sea_orm::Value> {
+    vec![
+        model.request_chat_id.into(),
+        model.sender_user_id.into(),
+        model.step.clone().into(),
+        model.input_kind.clone().into(),
+        model.job_action.clone().into(),
+        model.source_link.clone().into(),
+        model.target_chat_id.into(),
+    ]
 }
 
 /// 写入目标选择草稿。
@@ -542,9 +859,7 @@ pub(super) async fn put_confirm_draft(
 
 /// 记录用户最近一次确认执行的目标 chat。
 pub(super) fn remember_last_target(chat_id: i64, user_id: i64, target_chat_id: i64) {
-    let mut targets = MENU_LAST_TARGETS
-        .lock()
-        .expect("menu last target mutex poisoned");
+    let mut targets = lock_menu_last_targets();
     targets.insert((chat_id, user_id), target_chat_id);
     tracing::debug!(
         chat_id,
@@ -556,10 +871,57 @@ pub(super) fn remember_last_target(chat_id: i64, user_id: i64, target_chat_id: i
 
 /// 读取用户最近一次确认执行的目标 chat。
 pub(super) fn last_target(chat_id: i64, user_id: i64) -> Option<i64> {
-    let targets = MENU_LAST_TARGETS
-        .lock()
-        .expect("menu last target mutex poisoned");
+    let targets = lock_menu_last_targets();
     targets.get(&(chat_id, user_id)).copied()
+}
+
+/// 获取最近目标锁；锁中毒时恢复内部 HashMap，避免交互缓存故障扩散成菜单不可用。
+fn lock_menu_last_targets() -> MutexGuard<'static, HashMap<DraftKey, i64>> {
+    match MENU_LAST_TARGETS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::error!("recover poisoned menu last target mutex");
+            poisoned.into_inner()
+        }
+    }
+}
+
+/// 获取某个草稿键的进程内互斥。
+///
+/// 锁表只保存正在处理的 key，不在 await 期间持有 `MutexGuard`，因此不会阻塞其它用户的输入。
+async fn acquire_draft_key_guard(key: DraftKey) -> MenuDraftKeyGuard {
+    loop {
+        {
+            let mut keys = lock_menu_draft_active_keys();
+            if keys.insert(key) {
+                return MenuDraftKeyGuard { key };
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// 草稿键互斥 guard。
+struct MenuDraftKeyGuard {
+    key: DraftKey,
+}
+
+impl Drop for MenuDraftKeyGuard {
+    fn drop(&mut self) {
+        let mut keys = lock_menu_draft_active_keys();
+        keys.remove(&self.key);
+    }
+}
+
+/// 获取草稿互斥锁；锁中毒时恢复集合，避免单个 panic 让所有菜单输入不可用。
+fn lock_menu_draft_active_keys() -> MutexGuard<'static, HashSet<DraftKey>> {
+    match MENU_DRAFT_ACTIVE_KEYS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::error!("recover poisoned menu draft key mutex");
+            poisoned.into_inner()
+        }
+    }
 }
 
 /// 从输入阶段提取目标选择上下文。
@@ -615,7 +977,11 @@ async fn purge_expired() -> anyhow::Result<()> {
 
 /// 统一生成 UTC+8 时间戳。
 fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
-    chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+    let Some(offset) = chrono::FixedOffset::east_opt(8 * 3600) else {
+        tracing::error!("failed to build menu input UTC+8 fixed offset, fallback to UTC");
+        return chrono::Utc::now().fixed_offset();
+    };
+    chrono::Utc::now().with_timezone(&offset)
 }
 
 /// 菜单输入草稿超时时间（秒）。
@@ -702,6 +1068,213 @@ mod tests {
         assert!(matches!(
             take_current_draft(key).await?,
             DraftTakeResult::None
+        ));
+        Ok(())
+    }
+
+    // 并发按钮点击会多次写回同一个 chat + user 草稿；写入必须是 upsert，不能暴露主键冲突。
+    #[tokio::test]
+    async fn test_put_draft_concurrent_writes_keep_single_active_row() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_021, 900_022);
+
+        let first = tokio::spawn(async move {
+            put_draft(key, MenuInputDraft::job_id(MenuJobAction::Pause)).await
+        });
+        let second = tokio::spawn(async move {
+            put_draft(
+                key,
+                MenuInputDraft::target_choice(
+                    MenuInputKind::Transfer,
+                    "https://t.me/c/1/2".to_owned(),
+                ),
+            )
+            .await
+        });
+
+        first.await??;
+        second.await??;
+
+        let active = find_draft_model(key.0, key.1).await?;
+        assert!(active.is_some());
+        assert!(matches!(
+            take_current_draft(key).await?,
+            DraftTakeResult::Active(_)
+        ));
+        assert!(matches!(
+            take_current_draft(key).await?,
+            DraftTakeResult::None
+        ));
+        Ok(())
+    }
+
+    // 并发消费同一份草稿时，只允许一个调用拿到 Active，另一个必须看到 None。
+    #[tokio::test]
+    async fn test_take_current_draft_concurrent_reads_consume_once() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_023, 900_024);
+        put_draft(key, MenuInputDraft::job_id(MenuJobAction::Stop)).await?;
+
+        let first = tokio::spawn(async move { take_current_draft(key).await });
+        let second = tokio::spawn(async move { take_current_draft(key).await });
+
+        let first = first.await??;
+        let second = second.await??;
+        let active_count = [first, second]
+            .into_iter()
+            .filter(|result| matches!(result, DraftTakeResult::Active(_)))
+            .count();
+
+        assert_eq!(active_count, 1);
+        assert!(matches!(
+            take_current_draft(key).await?,
+            DraftTakeResult::None
+        ));
+        Ok(())
+    }
+
+    // 目标选择按钮的推进必须在状态层原子完成，避免按钮连点时短暂出现“没有草稿”。
+    #[tokio::test]
+    async fn test_advance_target_context_concurrent_writes_keep_valid_confirm() -> anyhow::Result<()>
+    {
+        let _guard = prepare_schema().await?;
+        let key = (900_025, 900_026);
+        put_draft(
+            key,
+            MenuInputDraft::target_choice(MenuInputKind::Transfer, "https://t.me/c/1/2".to_owned()),
+        )
+        .await?;
+
+        let first = tokio::spawn(async move {
+            advance_target_context(
+                key,
+                TargetDraftAdvance::Confirm {
+                    target_chat_id: -100,
+                },
+            )
+            .await
+        });
+        let second = tokio::spawn(async move {
+            advance_target_context(
+                key,
+                TargetDraftAdvance::Confirm {
+                    target_chat_id: -200,
+                },
+            )
+            .await
+        });
+
+        assert!(matches!(
+            first.await??,
+            TargetContextAdvanceResult::Active(_)
+        ));
+        assert!(matches!(
+            second.await??,
+            TargetContextAdvanceResult::Active(_)
+        ));
+
+        let confirm = take_confirm_context(key).await?;
+        assert!(matches!(
+            confirm,
+            ConfirmContextTakeResult::Active(ConfirmContext {
+                kind: MenuInputKind::Transfer,
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    // “执行”按钮连点时只有一个调用能消费确认草稿，另一个必须看到 None。
+    #[tokio::test]
+    async fn test_take_confirm_context_concurrent_reads_consume_once() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_027, 900_028);
+        put_draft(
+            key,
+            MenuInputDraft::confirm(
+                MenuInputKind::Transfer,
+                "https://t.me/c/1/2".to_owned(),
+                -100,
+            ),
+        )
+        .await?;
+
+        let first = tokio::spawn(async move { take_confirm_context(key).await });
+        let second = tokio::spawn(async move { take_confirm_context(key).await });
+
+        let first = first.await??;
+        let second = second.await??;
+        let active_count = [first, second]
+            .into_iter()
+            .filter(|result| matches!(result, ConfirmContextTakeResult::Active(_)))
+            .count();
+
+        assert_eq!(active_count, 1);
+        assert!(matches!(
+            take_confirm_context(key).await?,
+            ConfirmContextTakeResult::None
+        ));
+        Ok(())
+    }
+
+    // 条件删除必须拒绝旧快照，避免多进程下旧 worker 删除已经被新输入覆盖的草稿。
+    #[tokio::test]
+    async fn test_delete_draft_if_current_rejects_stale_snapshot() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_029, 900_030);
+        put_draft(key, MenuInputDraft::job_id(MenuJobAction::Pause)).await?;
+        let stale = find_draft_model(key.0, key.1).await?.expect("draft exists");
+
+        put_draft(key, MenuInputDraft::job_id(MenuJobAction::Resume)).await?;
+
+        assert!(!delete_draft_if_current(&stale).await?);
+        let current = take_current_draft(key).await?;
+        assert!(matches!(
+            current,
+            DraftTakeResult::Active(MenuInputDraft {
+                step: MenuInputStep::JobId {
+                    action: MenuJobAction::Resume
+                }
+            })
+        ));
+        Ok(())
+    }
+
+    // 条件更新必须拒绝旧快照，避免旧按钮覆盖较新的输入阶段。
+    #[tokio::test]
+    async fn test_update_draft_if_current_rejects_stale_snapshot() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_031, 900_032);
+        put_draft(
+            key,
+            MenuInputDraft::target_choice(MenuInputKind::Transfer, "https://t.me/c/1/2".to_owned()),
+        )
+        .await?;
+        let stale = find_draft_model(key.0, key.1).await?.expect("draft exists");
+
+        put_draft(
+            key,
+            MenuInputDraft::target_chat(MenuInputKind::Transfer, "https://t.me/c/1/2".to_owned()),
+        )
+        .await?;
+
+        assert!(
+            !update_draft_if_current(
+                &stale,
+                MenuInputDraft::confirm(
+                    MenuInputKind::Transfer,
+                    "https://t.me/c/1/2".to_owned(),
+                    -100
+                ),
+            )
+            .await?
+        );
+        let current = take_current_draft(key).await?;
+        assert!(matches!(
+            current,
+            DraftTakeResult::Active(MenuInputDraft {
+                step: MenuInputStep::TargetChat { .. }
+            })
         ));
         Ok(())
     }

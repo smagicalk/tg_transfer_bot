@@ -79,12 +79,14 @@ pub async fn cache_callback_query(
         }
     };
     let (text, keyboard) = rendered.panel.into_card_parts()?;
-    send::edit_card_message_with_inline_keyboard(
+    send::edit_interaction_card_or_error(
         text,
         update.chat_id,
         update.message_id,
         keyboard,
         client_id,
+        "缓存刷新失败",
+        "缓存页已生成，但原消息编辑失败；请复制错误或重新发送 /cache。",
     )
     .await
 }

@@ -14,7 +14,7 @@ use actions::{pause_job, resume_job, show_job_status, stop_job};
 use args::{
     JobAction, JobCallbackAction, is_job_callback_data, parse_job_args, parse_job_callback_data,
 };
-use callback::handle_job_callback;
+use callback::{JobCallbackResult, handle_job_callback};
 
 /// 判断 callback payload 是否属于 `/job`。
 pub(super) fn is_job_callback_payload(data: &str) -> bool {
@@ -102,7 +102,7 @@ pub async fn job_callback_query(
     )
     .await?;
 
-    if let Err(err) = handle_job_callback(
+    match handle_job_callback(
         args.action,
         args.job_id,
         actor,
@@ -111,11 +111,16 @@ pub async fn job_callback_query(
     )
     .await
     {
-        send_job_callback_error(update.chat_id, client_id, args.job_id, &err).await?;
-        return Err(err);
+        Ok(JobCallbackResult::Updated) => Ok(()),
+        Ok(JobCallbackResult::RefreshFailed(err)) => {
+            send_job_refresh_error(update.chat_id, client_id, args.job_id, &err).await?;
+            Err(err)
+        }
+        Err(err) => {
+            send_job_callback_error(update.chat_id, client_id, args.job_id, &err).await?;
+            Err(err)
+        }
     }
-
-    Ok(())
 }
 
 /// 任务按钮点击后的即时提示。
@@ -143,6 +148,24 @@ async fn send_job_callback_error(
         client_id,
         &title,
         "任务状态未更新，请检查日志或复制错误信息。",
+        err,
+    )
+    .await
+}
+
+/// 任务已处理但详情卡片编辑失败时的提示。
+async fn send_job_refresh_error(
+    request_chat_id: i64,
+    client_id: i32,
+    job_id: i64,
+    err: &anyhow::Error,
+) -> anyhow::Result<()> {
+    let title = format!("任务详情刷新失败 #{}", job_id);
+    send_interaction_error_card(
+        request_chat_id,
+        client_id,
+        &title,
+        "任务操作已处理，但原详情卡片未刷新；可重新打开任务详情确认状态。",
         err,
     )
     .await

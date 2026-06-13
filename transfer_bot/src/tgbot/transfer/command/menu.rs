@@ -20,7 +20,7 @@ use input::MenuInputKind;
 use keyboard::build_menu_buttons;
 use text::{
     MenuHomeSummary, build_menu_home_text, build_menu_status_text, build_menu_text,
-    build_step_prompt_text, build_user_account_menu_text,
+    build_permission_denied_menu_text, build_step_prompt_text, build_user_account_menu_text,
 };
 
 /// 判断 callback payload 是否属于 `/menu`。
@@ -80,6 +80,21 @@ pub async fn menu_callback_query(
         return Ok(());
     };
 
+    if action.requires_actor_owned_input()
+        && !menu_input_callback_allowed(update.chat_id, update.sender_user_id, actor)
+    {
+        tracing::warn!(
+            chat_id = update.chat_id,
+            actor_chat_id = actor.request_chat_id,
+            sender_user_id = update.sender_user_id,
+            actor_user_id = actor.user_id,
+            action = ?action,
+            "menu input callback rejected because actor does not own this interaction"
+        );
+        send::answer_callback_query(update.id, Some("只能由当前会话发起人操作"), client_id).await?;
+        return Ok(());
+    }
+
     match action {
         MenuRequestAction::Page(page) => {
             send::answer_callback_query(update.id, Some(page.title()), client_id).await?;
@@ -91,19 +106,16 @@ pub async fn menu_callback_query(
                 }
             };
             let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
-            if let Err(err) = send::edit_card_message_with_inline_keyboard(
+            send::edit_interaction_card_or_error(
                 text,
                 update.chat_id,
                 update.message_id,
                 keyboard,
                 client_id,
+                "菜单刷新失败",
+                "菜单页已生成，但原消息编辑失败；请复制错误或重新发送 /menu。",
             )
             .await
-            {
-                send_menu_callback_error(update.chat_id, client_id, &err).await?;
-                return Err(err);
-            }
-            Ok(())
         }
         MenuRequestAction::NewTransfer => {
             start_input_prompt(
@@ -273,6 +285,43 @@ pub async fn menu_callback_query(
             .await
         }
     }
+}
+
+impl MenuRequestAction {
+    /// 是否会创建、推进或消费菜单输入草稿。
+    ///
+    /// 这些动作必须绑定到当前 callback 的真实点击者；只读页面导航可以不拦截。
+    fn requires_actor_owned_input(self) -> bool {
+        matches!(
+            self,
+            Self::NewTransfer
+                | Self::QuickTransferDefault
+                | Self::NewLookup
+                | Self::QuickLookupDefault
+                | Self::TargetDefault
+                | Self::TargetManual
+                | Self::TargetRequestChat
+                | Self::TargetAlias(_)
+                | Self::TargetConfirm
+                | Self::TargetBack
+                | Self::JobIdInput(_)
+                | Self::PointLedgerUserInput
+                | Self::ContinueInput
+                | Self::CancelInput
+        )
+    }
+}
+
+/// 判断菜单输入类 callback 是否属于当前 actor。
+///
+/// 普通页面 callback 只读；输入类 callback 会改数据库草稿、消费确认态或执行任务，
+/// 因此必须确认 TDLib 上报的点击者就是当前请求 actor，避免群聊/转发场景误操作他人的向导。
+fn menu_input_callback_allowed(
+    chat_id: i64,
+    sender_user_id: i64,
+    actor: crate::config::RequestActor,
+) -> bool {
+    chat_id == actor.request_chat_id && sender_user_id == actor.user_id
 }
 
 /// 菜单按钮失败提示。
@@ -535,8 +584,13 @@ async fn build_menu_page(
     } else {
         (Vec::new(), None, None)
     };
-    let text = if page == MenuPage::Config {
+    let text = if page == MenuPage::Config && actor.is_admin() {
         config_cmd::format_current_transfer_config_text("当前可调配置")
+    } else if page == MenuPage::Config {
+        build_permission_denied_menu_text(
+            "运行配置",
+            "没有权限查看运行配置，配置页仅管理员可查看。",
+        )
     } else if page == MenuPage::Home {
         build_menu_home_text(&MenuHomeSummary {
             active_jobs: health.as_ref().map_or(0, |health| health.active_jobs),
@@ -559,4 +613,49 @@ async fn build_menu_page(
         text,
         build_menu_buttons(page, &recent_jobs, actor.is_admin(), draft_summary.as_ref()),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 普通用户即使手工构造 `m:cfg` callback，也不能看到运行配置正文。
+    #[tokio::test]
+    async fn test_user_config_menu_page_does_not_render_runtime_config() -> anyhow::Result<()> {
+        let actor = crate::config::RequestActor {
+            request_chat_id: 100,
+            user_id: 100,
+            role: crate::config::ActorRole::User,
+        };
+
+        let (text, rows) = build_menu_page(MenuPage::Config, actor).await?;
+
+        assert!(text.contains("没有权限"));
+        assert!(!text.contains("job_concurrency"));
+        assert!(rows.iter().flatten().any(|button| button.text == "首页"));
+        Ok(())
+    }
+
+    // 输入类 callback 会改草稿或执行任务，必须绑定当前点击者；页面导航是只读动作。
+    #[test]
+    fn test_menu_request_action_marks_input_mutations() {
+        assert!(!MenuRequestAction::Page(MenuPage::Home).requires_actor_owned_input());
+        assert!(MenuRequestAction::NewTransfer.requires_actor_owned_input());
+        assert!(MenuRequestAction::TargetConfirm.requires_actor_owned_input());
+        assert!(MenuRequestAction::CancelInput.requires_actor_owned_input());
+    }
+
+    // callback 的 chat/user 必须同时匹配当前 actor，避免多人点击同一张输入卡片时串改草稿。
+    #[test]
+    fn test_menu_input_callback_allowed_requires_actor_match() {
+        let actor = crate::config::RequestActor {
+            request_chat_id: 100,
+            user_id: 200,
+            role: crate::config::ActorRole::Admin,
+        };
+
+        assert!(menu_input_callback_allowed(100, 200, actor));
+        assert!(!menu_input_callback_allowed(101, 200, actor));
+        assert!(!menu_input_callback_allowed(100, 201, actor));
+    }
 }

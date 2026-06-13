@@ -68,15 +68,15 @@ pub(super) fn build_cache_keyboard(
         let next_page = (args.page + 1).min(total_pages.max(1));
         let last_page = total_pages.max(1);
         rows.push(vec![
-            cache_nav_button("首页", args, first_page),
-            cache_nav_button("上页", args, prev_page),
+            cache_nav_button("首页", args, first_page, last_page),
+            cache_nav_button("上页", args, prev_page, last_page),
             send::build_copy_button(
                 &format!("{}/{}", args.page, total_pages.max(1)),
                 &format!("/cache page {} {}", args.limit, args.page),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
-            cache_nav_button("下页", args, next_page),
-            cache_nav_button("末页", args, last_page),
+            cache_nav_button("下页", args, next_page, last_page),
+            cache_nav_button("末页", args, last_page, last_page),
         ]);
     }
     rows.push(vec![
@@ -104,7 +104,17 @@ fn cache_nav_button(
     text: &str,
     args: &CacheArgs,
     page: u64,
+    total_pages: u64,
 ) -> tdlib_rs::types::InlineKeyboardButton {
+    // 目标页等于当前页时退化为复制当前页命令，避免 Telegram 返回 message is not modified。
+    if page == args.page {
+        return send::build_copy_button(
+            text,
+            &format!("/cache page {} {}", args.limit, args.page.min(total_pages)),
+            tdlib_rs::enums::ButtonStyle::Default,
+        );
+    }
+
     send::build_callback_button(
         text,
         &build_cache_view_callback_data(args.view, args.limit, page),

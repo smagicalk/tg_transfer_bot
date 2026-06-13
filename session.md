@@ -136,7 +136,7 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 当前业务设计仍保持不变：
 
 - bot 是唯一交互端；用户号只做源读取/下载 fallback。
-- admin 可全局查看和控制任务，不扣积分，可使用 user fallback。
+- admin 只能私聊 bot 交互，可全局查看和控制任务，不扣积分，可使用 user fallback。
 - 普通用户只能私聊 bot，只能查看和控制自己的任务，链接源不允许借 user fallback。
 - 普通用户转存按 `billing.base_cost_points + billing.item_cost_points * item_count` 扣积分。
 - 扣费发生在 spider 成功后、创建 job 前；无效链接不会扣费。
@@ -150,6 +150,7 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - 请求级幂等固定看 `request_chat_id + request_message_id`。
 - 文件缓存保留，消息缓存不做独立表。
 - 菜单输入草稿持久化在 `menu_input_draft`，程序重启后未完成交互仍可继续。
+- 项目不支持群聊命令交互；目标群只作为转存目的地，通过私聊菜单或命令参数选择。
 
 ## 当前交互流程
 
@@ -275,7 +276,7 @@ cancel
 
 - `/help points` 现在能正常展开，不再是余额卡片里的死链接。
 - `/menu -> 帮助` 已加入积分帮助入口。
-- admin 请求 chat 判断不再复用合并后的 `admin_ids`，避免管理员在未授权群聊里被放行。
+- admin 请求 chat 判断不再复用合并后的 `admin_ids`，且所有交互入口都只接受私聊 bot。
 - `change_points` 改成数据库原子更新，避免并发扣费读到同一旧余额后覆盖。
 - `ensure_user_account` 改成显式幂等，重复创建或并发首次创建不会因为 `ON CONFLICT DO NOTHING` 行为失败。
 - 失败或取消终态已接入自动退款；并发/重复取消不会重复退款。

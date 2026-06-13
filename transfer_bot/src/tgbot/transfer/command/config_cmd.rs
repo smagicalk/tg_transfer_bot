@@ -121,12 +121,14 @@ pub async fn config_callback_query(
         send::ReplyPanel::card(format_current_transfer_config_text("当前可调配置"))
             .rows(build_config_buttons())
             .into_card_parts()?;
-    send::edit_card_message_with_inline_keyboard(
+    send::edit_interaction_card_or_error(
         text,
         update.chat_id,
         update.message_id,
         keyboard,
         client_id,
+        "配置刷新失败",
+        "配置已处理，但原消息编辑失败；请复制错误或重新发送 /config show。",
     )
     .await?;
     Ok(())

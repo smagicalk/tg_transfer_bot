@@ -2,7 +2,7 @@
 // stop 命令先把任务标记为 cancelling，本模块负责最终 cancelled 和文件引用释放。
 
 use std::collections::HashSet;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
 use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
@@ -37,9 +37,7 @@ static CANCEL_FINALIZING_JOB_IDS: LazyLock<Mutex<HashSet<i64>>> =
 async fn acquire_cancel_finalizing_guard(job_id: i64) -> CancelFinalizingGuard {
     loop {
         {
-            let mut guard = CANCEL_FINALIZING_JOB_IDS
-                .lock()
-                .expect("cancel finalizing mutex poisoned");
+            let mut guard = lock_cancel_finalizing_job_ids();
             if guard.insert(job_id) {
                 return CancelFinalizingGuard { job_id };
             }
@@ -55,10 +53,19 @@ struct CancelFinalizingGuard {
 
 impl Drop for CancelFinalizingGuard {
     fn drop(&mut self) {
-        let mut guard = CANCEL_FINALIZING_JOB_IDS
-            .lock()
-            .expect("cancel finalizing mutex poisoned");
+        let mut guard = lock_cancel_finalizing_job_ids();
         guard.remove(&self.job_id);
+    }
+}
+
+/// 获取取消收尾锁；锁中毒时恢复集合，避免单个取消 panic 后所有 stop 都无法继续。
+fn lock_cancel_finalizing_job_ids() -> MutexGuard<'static, HashSet<i64>> {
+    match CANCEL_FINALIZING_JOB_IDS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::error!("recover poisoned cancel finalizing mutex");
+            poisoned.into_inner()
+        }
     }
 }
 

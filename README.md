@@ -74,7 +74,6 @@ $env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
 - `clients.bot.token`
 - `clients.bot.tdlib.database_encryption_key`
 - `access_control.admin_user_ids`
-- `access_control.allowed_request_chat_ids`
 - `access_control.allowed_target_chat_ids`
 - `targets.default_chat_id`
 
@@ -117,7 +116,7 @@ cargo run -p transfer_bot -- -c config.json
 | `access_control.allowed_user_ids` | 允许作为普通用户私聊 bot 的用户 ID |
 | `access_control.allow_all_private_users` | 是否允许任意私聊用户作为普通用户使用 |
 | `access_control.banned_user_ids` | 禁止使用 bot 的用户 ID |
-| `access_control.allowed_request_chat_ids` | 允许管理员发命令的非私聊 chat ID |
+| `access_control.allowed_request_chat_ids` | 旧配置兼容字段；当前交互只支持私聊 bot，不再允许群聊命令入口 |
 | `access_control.allowed_target_chat_ids` | 允许转存到的目标 chat ID |
 | `billing.enabled` | 是否启用普通用户积分计费 |
 | `billing.base_cost_points` | 每次转存基础成本 |
@@ -157,13 +156,19 @@ cargo run -p transfer_bot -- -c config.json
 
 命令是否会被处理，取决于发送者身份：
 
-- admin：`sender_user_id` 必须在 `access_control.admin_user_ids` 中；可在私聊或 `access_control.allowed_request_chat_ids` 里的 chat 操作。
+- admin：`sender_user_id` 必须在 `access_control.admin_user_ids` 中；也只能私聊 bot 操作，群聊命令会被拒绝。
 - 普通用户：只能私聊 bot；必须在 `access_control.allowed_user_ids` 中，或开启 `allow_all_private_users`。
 - banned：只要命中 `access_control.banned_user_ids` 就直接拒绝。
 
+交互边界：
+
+- 本项目不支持在群聊里发命令或点击交互按钮。
+- 目标群只作为转存目的地出现，需要在私聊菜单里选择或通过命令参数指定。
+- `KeyboardButtonRequestChat` 只在私聊 bot 的选择目标流程中使用。
+
 权限边界：
 
-- admin 可查看和控制全局任务，不扣积分，可使用 `user` fallback。
+- admin 通过私聊 bot 查看和控制全局任务，不扣积分，可使用 `user` fallback。
 - 普通用户只能查看和控制自己的任务，重复转存和 lookup 也只复用自己的结果。
 - 普通用户通过链接转存时不允许借 `user` 账号 fallback 读取私有源，避免越权读取。
 - 普通用户在 spider 成功后、创建 job 前扣积分；无效链接不会扣费。

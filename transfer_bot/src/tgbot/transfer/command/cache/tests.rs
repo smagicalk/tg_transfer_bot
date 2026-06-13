@@ -1,6 +1,8 @@
 // `/cache` 文案与参数测试。
 
-use super::keyboard::{build_cache_view_callback_data, parse_cache_callback_data};
+use super::keyboard::{
+    build_cache_keyboard, build_cache_view_callback_data, parse_cache_callback_data,
+};
 use super::render::{compute_cache_page_count, format_cache_page_text, format_cache_summary_text};
 use super::types::{CacheArgs, CacheView, parse_cache_args};
 use crate::tgbot::transfer::store;
@@ -45,6 +47,32 @@ fn test_cache_callback_roundtrip() {
         })
     );
     assert_eq!(parse_cache_callback_data("d:r:run:8:1"), None);
+}
+
+#[test]
+fn test_cache_keyboard_boundary_navigation_is_copy_button() {
+    let keyboard = build_cache_keyboard(
+        &CacheArgs {
+            view: CacheView::Page,
+            limit: 10,
+            page: 1,
+        },
+        1,
+    );
+
+    assert_eq!(keyboard.rows[1][0].text, "首页");
+    assert_eq!(keyboard.rows[1][1].text, "上页");
+    assert_eq!(keyboard.rows[1][3].text, "下页");
+    assert_eq!(keyboard.rows[1][4].text, "末页");
+    for index in [0, 1, 3, 4] {
+        assert!(
+            matches!(
+                keyboard.rows[1][index].r#type,
+                tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+            ),
+            "cache boundary button should copy current command"
+        );
+    }
 }
 
 #[test]

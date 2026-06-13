@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 use crate::config::{ClientRole, TransferClientIds, TransferConfig};
@@ -76,23 +76,16 @@ impl TransferRuntimeState {
     }
 
     pub fn update_runtime_config(&self, config: TransferConfig) {
-        if let Ok(mut guard) = self.runtime_config.write() {
-            *guard = config;
-        }
+        *recover_rwlock_write(&self.runtime_config, "transfer runtime config") = config;
         self.transfer_slot_notify.notify_waiters();
     }
 
     pub fn runtime_config(&self) -> TransferConfig {
-        self.runtime_config
-            .read()
-            .expect("transfer runtime config rwlock poisoned")
-            .clone()
+        recover_rwlock_read(&self.runtime_config, "transfer runtime config").clone()
     }
 
     pub fn tdlib_files_directory_for(&self, role: ClientRole) -> Option<PathBuf> {
-        self.tdlib_files_directories
-            .read()
-            .expect("tdlib files directory rwlock poisoned")
+        recover_rwlock_read(&self.tdlib_files_directories, "tdlib files directory")
             .get(&role)
             .cloned()
     }
@@ -122,15 +115,11 @@ impl TransferRuntimeState {
     }
 
     pub fn set_transfer_client_ids(&self, client_ids: TransferClientIds) {
-        if let Ok(mut guard) = self.transfer_client_ids.write() {
-            *guard = Some(client_ids);
-        }
+        *recover_rwlock_write(&self.transfer_client_ids, "transfer client ids") = Some(client_ids);
     }
 
     pub fn transfer_client_ids(&self) -> Option<TransferClientIds> {
-        self.transfer_client_ids
-            .read()
-            .expect("transfer client ids rwlock poisoned")
+        recover_rwlock_read(&self.transfer_client_ids, "transfer client ids")
             .as_ref()
             .copied()
     }
@@ -142,12 +131,12 @@ impl TransferRuntimeState {
     }
 
     fn update_tdlib_files_directories(&self, paths: HashMap<ClientRole, PathBuf>) {
-        if let Ok(mut guard) = self.tdlib_files_directories.write() {
-            guard.clear();
-            for (role, path) in paths {
-                if !path.as_os_str().is_empty() {
-                    guard.insert(role, path);
-                }
+        let mut guard =
+            recover_rwlock_write(&self.tdlib_files_directories, "tdlib files directory");
+        guard.clear();
+        for (role, path) in paths {
+            if !path.as_os_str().is_empty() {
+                guard.insert(role, path);
             }
         }
     }
@@ -187,10 +176,7 @@ impl DownloadProgressStore {
             None
         };
 
-        let mut guard = self
-            .snapshots
-            .write()
-            .expect("download progress rwlock poisoned");
+        let mut guard = recover_rwlock_write(&self.snapshots, "download progress");
 
         let key = (client_id, file.id);
         if file.local.is_downloading_completed {
@@ -219,9 +205,7 @@ impl DownloadProgressStore {
         client_id: i32,
         file_id: i32,
     ) -> Option<DownloadProgressSnapshot> {
-        self.snapshots
-            .read()
-            .expect("download progress rwlock poisoned")
+        recover_rwlock_read(&self.snapshots, "download progress")
             .get(&(client_id, file_id))
             .cloned()
     }
@@ -247,10 +231,7 @@ impl InflightDownloadRegistry {
         Fut: Future<Output = anyhow::Result<()>>,
     {
         let role = {
-            let mut guard = self
-                .inflight
-                .lock()
-                .expect("inflight downloads mutex poisoned");
+            let mut guard = recover_mutex_lock(&self.inflight, "inflight downloads");
             if let Some(tx) = guard.get(&file_key) {
                 tracing::debug!(file_key = %file_key, "join inflight file download");
                 InflightDownloadRole::Waiter(tx.subscribe())
@@ -302,10 +283,7 @@ impl InflightDownloadRegistry {
     }
 
     fn remove_and_notify(&self, file_key: &str, result: DownloadResult) {
-        let mut guard = self
-            .inflight
-            .lock()
-            .expect("inflight downloads mutex poisoned");
+        let mut guard = recover_mutex_lock(&self.inflight, "inflight downloads");
         if let Some(tx) = guard.remove(file_key) {
             let _ = tx.send(Some(result));
         }
@@ -359,17 +337,11 @@ pub struct TransferExecutionGuards {
 
 impl TransferExecutionGuards {
     pub async fn is_job_running_in_process(&self, job_id: i64) -> bool {
-        self.running_job_ids
-            .lock()
-            .expect("running job id mutex poisoned")
-            .contains(&job_id)
+        recover_mutex_lock(&self.running_job_ids, "running job id").contains(&job_id)
     }
 
     pub async fn acquire_job_guard(self: &Arc<Self>, job_id: i64) -> Option<TransferJobGuard> {
-        let mut guard = self
-            .running_job_ids
-            .lock()
-            .expect("running job id mutex poisoned");
+        let mut guard = recover_mutex_lock(&self.running_job_ids, "running job id");
         if guard.contains(&job_id) {
             return None;
         }
@@ -388,10 +360,7 @@ impl TransferExecutionGuards {
         let key = (source_link, target_chat_id);
         loop {
             {
-                let mut guard = self
-                    .creating_source_targets
-                    .lock()
-                    .expect("source-target mutex poisoned");
+                let mut guard = recover_mutex_lock(&self.creating_source_targets, "source-target");
                 if guard.insert(key.clone()) {
                     return SourceTargetCreateGuard {
                         guards: self.clone(),
@@ -411,11 +380,7 @@ pub struct TransferJobGuard {
 
 impl Drop for TransferJobGuard {
     fn drop(&mut self) {
-        let mut guard = self
-            .guards
-            .running_job_ids
-            .lock()
-            .expect("running job id mutex poisoned");
+        let mut guard = recover_mutex_lock(&self.guards.running_job_ids, "running job id");
         guard.remove(&self.job_id);
     }
 }
@@ -427,12 +392,43 @@ pub struct SourceTargetCreateGuard {
 
 impl Drop for SourceTargetCreateGuard {
     fn drop(&mut self) {
-        let mut guard = self
-            .guards
-            .creating_source_targets
-            .lock()
-            .expect("source-target mutex poisoned");
+        let mut guard = recover_mutex_lock(&self.guards.creating_source_targets, "source-target");
         guard.remove(&self.key);
+    }
+}
+
+/// 恢复被 panic 标记为 poisoned 的互斥锁。
+///
+/// 这些锁只保护进程内缓存/guard；继续使用内部数据比让后续所有交互一起 panic 更可控。
+fn recover_mutex_lock<'a, T>(mutex: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::error!(lock = name, "recover poisoned mutex");
+            poisoned.into_inner()
+        }
+    }
+}
+
+/// 恢复被 panic 标记为 poisoned 的读锁。
+fn recover_rwlock_read<'a, T>(lock: &'a RwLock<T>, name: &str) -> RwLockReadGuard<'a, T> {
+    match lock.read() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::error!(lock = name, "recover poisoned rwlock read");
+            poisoned.into_inner()
+        }
+    }
+}
+
+/// 恢复被 panic 标记为 poisoned 的写锁。
+fn recover_rwlock_write<'a, T>(lock: &'a RwLock<T>, name: &str) -> RwLockWriteGuard<'a, T> {
+    match lock.write() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::error!(lock = name, "recover poisoned rwlock write");
+            poisoned.into_inner()
+        }
     }
 }
 

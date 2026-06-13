@@ -9,6 +9,17 @@ use super::args::JobCallbackAction;
 use super::keyboard::build_job_status_buttons;
 use super::render::format_job_status_text;
 
+/// job callback 的处理结果。
+///
+/// 状态迁移成功但消息编辑失败时，不能再把错误描述成“任务操作失败”，否则用户会误以为
+/// pause/resume/stop 没有生效。这里把刷新失败单独交给入口层发送更准确的提示。
+pub(super) enum JobCallbackResult {
+    /// 状态操作和详情刷新都完成。
+    Updated,
+    /// 状态操作已完成，但详情卡片没有刷新成功。
+    RefreshFailed(anyhow::Error),
+}
+
 /// 处理 `/job` 详情卡片上的 callback 按钮。
 ///
 /// callback 和文本命令共用同一套状态迁移语义，但 callback 会把当前消息原地编辑成最新详情，
@@ -19,8 +30,8 @@ pub(super) async fn handle_job_callback(
     actor: crate::config::RequestActor,
     message_id: i64,
     client_id: i32,
-) -> anyhow::Result<&'static str> {
-    let callback_tip = match action {
+) -> anyhow::Result<JobCallbackResult> {
+    match action {
         JobCallbackAction::Pause => {
             let job = store::pause_job_with_owner_scope(
                 job_id,
@@ -36,7 +47,6 @@ pub(super) async fn handle_job_callback(
                 status = %job.status,
                 "transfer job paused by callback"
             );
-            "已暂停"
         }
         JobCallbackAction::Resume => {
             let job = store::wake_job_with_owner_scope(
@@ -62,11 +72,6 @@ pub(super) async fn handle_job_callback(
                 is_running,
                 "transfer job resumed by callback"
             );
-            if is_running {
-                "已在执行"
-            } else {
-                "已恢复"
-            }
         }
         JobCallbackAction::Stop => {
             let requested = store::request_cancel_job_with_owner_scope(
@@ -97,11 +102,6 @@ pub(super) async fn handle_job_callback(
                 is_running,
                 "transfer job stopped by callback"
             );
-            if is_running {
-                "已请求停止"
-            } else {
-                "已停止"
-            }
         }
         JobCallbackAction::Status => {
             tracing::debug!(
@@ -111,11 +111,12 @@ pub(super) async fn handle_job_callback(
                 actor_role = actor.role.as_str(),
                 "transfer job status refreshed by callback"
             );
-            "已刷新"
         }
     };
-    edit_job_status_message(job_id, actor, message_id, client_id).await?;
-    Ok(callback_tip)
+    if let Err(err) = edit_job_status_message(job_id, actor, message_id, client_id).await {
+        return Ok(JobCallbackResult::RefreshFailed(err));
+    }
+    Ok(JobCallbackResult::Updated)
 }
 
 /// 原地刷新一条任务详情卡片。

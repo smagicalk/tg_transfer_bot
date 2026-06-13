@@ -682,8 +682,8 @@ impl BotConfig {
 
     /// 根据请求 chat 与发送者 user 判断是否允许交互。
     ///
-    /// 普通用户第一版只支持私聊 bot，避免群聊里多人共用同一个 chat_id 时产生任务归属混乱。
-    /// admin 可在配置允许的 request chat 中管理全局任务。
+    /// 项目明确只支持私聊 bot 交互，不处理群聊命令，避免多人共用一个 chat_id
+    /// 时产生任务归属、菜单草稿和积分幂等混乱。
     pub fn request_actor(&self, request_chat_id: i64, sender_user_id: i64) -> Option<RequestActor> {
         if self.banned_user_ids.contains(&sender_user_id) {
             return None;
@@ -711,10 +711,11 @@ impl BotConfig {
         None
     }
 
-    /// admin 可在私聊或显式允许的请求 chat 中操作。
+    /// admin 也只能私聊 bot 操作。
+    ///
+    /// `allowed_request_chat_ids` 作为旧配置兼容字段保留，但不再扩大命令入口范围。
     fn admin_request_chat_allowed(&self, request_chat_id: i64, sender_user_id: i64) -> bool {
         request_chat_id == sender_user_id
-            || self.allowed_request_chat_ids.contains(&request_chat_id)
     }
 
     /// 普通用户只允许私聊，且必须在白名单中或开启 allow_all_private_users。
@@ -1104,11 +1105,7 @@ mod tests {
         );
         assert_eq!(config.billing.base_cost_points, 1);
         assert_eq!(config.billing.item_cost_points, 1);
-        assert!(
-            config
-                .request_actor(123, 1)
-                .is_some_and(|actor| actor.is_admin())
-        );
+        assert!(config.request_actor(123, 1).is_none());
         assert!(
             config
                 .request_actor(1, 1)

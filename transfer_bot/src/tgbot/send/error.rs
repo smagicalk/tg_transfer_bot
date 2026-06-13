@@ -1,8 +1,30 @@
 // 统一交互错误卡片。
 // callback 已经 ACK 后不能再次弹提示，因此这里把错误说明和“复制错误”按钮统一封装。
 
-use super::{ReplyPanel, build_copy_button};
+use super::{ReplyPanel, build_copy_button, edit_card_message_with_inline_keyboard};
 use crate::tgbot::transfer::card;
+
+/// 编辑交互卡片；如果原消息编辑失败，则发送独立错误卡片。
+///
+/// callback 已经 ACK 后，Telegram 客户端不会再展示第二次 callback 提示。
+/// 因此编辑失败时必须发一条新消息，否则用户只会看到按钮转完圈但页面没有变化。
+pub async fn edit_interaction_card_or_error(
+    text: String,
+    chat_id: i64,
+    message_id: i64,
+    keyboard: tdlib_rs::types::ReplyMarkupInlineKeyboard,
+    client_id: i32,
+    title: &str,
+    detail: &str,
+) -> anyhow::Result<()> {
+    if let Err(err) =
+        edit_card_message_with_inline_keyboard(text, chat_id, message_id, keyboard, client_id).await
+    {
+        send_interaction_error_card(chat_id, client_id, title, detail, &err).await?;
+        return Err(err);
+    }
+    Ok(())
+}
 
 /// 发送统一的交互错误卡片。
 ///

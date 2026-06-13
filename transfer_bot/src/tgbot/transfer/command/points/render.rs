@@ -143,15 +143,22 @@ pub(super) fn ledger_button_rows(
     let prev_page = page.page.saturating_sub(1).max(1);
     let next_page = (page.page + 1).min(page.total_pages);
     rows.push(vec![
-        ledger_nav_button("首页", kind, user_id, page.limit, 1),
-        ledger_nav_button("上页", kind, user_id, page.limit, prev_page),
+        ledger_nav_button("首页", kind, user_id, page.limit, 1, page.page),
+        ledger_nav_button("上页", kind, user_id, page.limit, prev_page, page.page),
         send::build_copy_button(
             &format!("{}/{}", page.page, page.total_pages),
             &ledger_command(kind, user_id, page.limit, page.page, false),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
-        ledger_nav_button("下页", kind, user_id, page.limit, next_page),
-        ledger_nav_button("末页", kind, user_id, page.limit, page.total_pages),
+        ledger_nav_button("下页", kind, user_id, page.limit, next_page, page.page),
+        ledger_nav_button(
+            "末页",
+            kind,
+            user_id,
+            page.limit,
+            page.total_pages,
+            page.page,
+        ),
     ]);
     rows.push(vec![
         send::build_callback_button(
@@ -199,7 +206,17 @@ fn ledger_nav_button(
     user_id: i64,
     limit: u64,
     page: u64,
+    current_page: u64,
 ) -> tdlib_rs::types::InlineKeyboardButton {
+    // 边界页按钮不发 callback，避免点击后只是触发“消息未修改”错误。
+    if page == current_page {
+        return send::build_copy_button(
+            text,
+            &ledger_command(kind, user_id, limit, current_page, true),
+            tdlib_rs::enums::ButtonStyle::Default,
+        );
+    }
+
     send::build_callback_button(
         text,
         &super::build_ledger_callback_data(

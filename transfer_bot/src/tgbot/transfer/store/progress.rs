@@ -145,6 +145,7 @@ async fn list_recent_job_snapshots_with_scope(
         .column(db::transfer_job::Column::Status)
         .column(db::transfer_job::Column::TotalItems)
         .column(db::transfer_job::Column::TargetChatId)
+        .column(db::transfer_job::Column::LastError)
         .column(db::transfer_job::Column::CreatedAt)
         .column(db::transfer_job::Column::UpdatedAt);
     if let Some(owner_user_id) = owner_scope {
@@ -158,6 +159,7 @@ async fn list_recent_job_snapshots_with_scope(
             String,
             i32,
             i64,
+            Option<String>,
             chrono::DateTime<chrono::FixedOffset>,
             chrono::DateTime<chrono::FixedOffset>,
         )>()
@@ -165,13 +167,16 @@ async fn list_recent_job_snapshots_with_scope(
         .await?
         .into_iter()
         .map(
-            |(id, status, total_items, target_chat_id, created_at, updated_at)| JobProgressJob {
-                id,
-                status,
-                total_items,
-                target_chat_id,
-                created_at,
-                updated_at,
+            |(id, status, total_items, target_chat_id, last_error, created_at, updated_at)| {
+                JobProgressJob {
+                    id,
+                    status,
+                    total_items,
+                    target_chat_id,
+                    last_error,
+                    created_at,
+                    updated_at,
+                }
             },
         )
         .collect::<Vec<_>>();
@@ -223,6 +228,7 @@ pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_request_c
         .column(db::transfer_job::Column::Status)
         .column(db::transfer_job::Column::TotalItems)
         .column(db::transfer_job::Column::TargetChatId)
+        .column(db::transfer_job::Column::LastError)
         .column(db::transfer_job::Column::CreatedAt)
         .column(db::transfer_job::Column::UpdatedAt)
         .filter(db::transfer_job::Column::Id.eq(job_id));
@@ -234,12 +240,13 @@ pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_request_c
         query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
     }
 
-    let Some((id, status, total_items, target_chat_id, created_at, updated_at)) = query
+    let Some((id, status, total_items, target_chat_id, last_error, created_at, updated_at)) = query
         .into_tuple::<(
             i64,
             String,
             i32,
             i64,
+            Option<String>,
             chrono::DateTime<chrono::FixedOffset>,
             chrono::DateTime<chrono::FixedOffset>,
         )>()
@@ -253,6 +260,7 @@ pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_request_c
         status,
         total_items,
         target_chat_id,
+        last_error,
         created_at,
         updated_at,
     };

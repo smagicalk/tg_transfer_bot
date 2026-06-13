@@ -4,7 +4,10 @@
 use crate::tgbot::send;
 
 use super::super::super::store;
-use super::super::common::{CommandStyle, balance_history_command, lookup_command};
+use super::super::common::{
+    CommandStyle, balance_history_command, downloads_command, job_command, lookup_command,
+    transfer_command,
+};
 use super::super::downloads::build_downloads_menu_callback_data;
 use super::super::help;
 use super::super::job::{
@@ -91,6 +94,8 @@ fn home_buttons(
                 MenuPage::Help,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+        ],
+        vec![
             send::build_copy_button(
                 "复制 /balance",
                 "/balance",
@@ -127,7 +132,7 @@ fn home_buttons(
     }
     if is_admin {
         rows.insert(
-            4,
+            3,
             vec![
                 menu_nav_button(
                     "运行配置",
@@ -144,12 +149,15 @@ fn home_buttons(
                     &build_cache_button_data(),
                     tdlib_rs::enums::ButtonStyle::Default,
                 ),
-                send::build_callback_button(
-                    "用户流水",
-                    &callback::point_ledger_user_input_callback_data(),
-                    tdlib_rs::enums::ButtonStyle::Default,
-                ),
             ],
+        );
+        rows.insert(
+            4,
+            vec![send::build_callback_button(
+                "用户流水",
+                &callback::point_ledger_user_input_callback_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            )],
         );
     }
     rows.extend(recent_job_buttons(recent_jobs));
@@ -173,20 +181,16 @@ fn transfer_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
         ],
         vec![
             send::build_copy_button(
-                "复制命令",
-                "/transfer ",
+                "复制短命令",
+                &transfer_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target]"),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "复制完整命令",
-                "/transfer <link> <target_chat_id>",
+                "复制长命令",
+                &transfer_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-            send::build_copy_button(
-                "复制取消命令",
-                "/cancel",
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
+            send::build_copy_button("复制取消", "/cancel", tdlib_rs::enums::ButtonStyle::Default),
         ],
         footer_buttons(MenuPage::Transfer),
     ]
@@ -221,13 +225,18 @@ fn downloads_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
         ],
         vec![
             send::build_copy_button(
-                "复制 /downloads",
-                "/downloads",
+                "复制短命令",
+                &downloads_command(None, None, None, CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "复制 /downloads run",
-                "/downloads run",
+                "复制长命令",
+                &downloads_command(None, None, None, CommandStyle::Long),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制运行列表",
+                &downloads_command(Some("run"), None, None, CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
@@ -282,13 +291,18 @@ fn jobs_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
         ],
         vec![
             send::build_copy_button(
-                "详情模板",
-                "/job st <job_id>",
+                "复制短详情",
+                &job_command("st", 0, CommandStyle::Short).replace(" 0", " <job_id>"),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "停止模板",
-                "/job s <job_id>",
+                "复制长详情",
+                &job_command("status", 0, CommandStyle::Long).replace(" 0", " <job_id>"),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制停止",
+                &job_command("s", 0, CommandStyle::Short).replace(" 0", " <job_id>"),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
@@ -313,12 +327,12 @@ fn lookup_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
         ],
         vec![
             send::build_copy_button(
-                "复制 /lookup",
-                "/lookup ",
+                "复制短命令",
+                &lookup_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target]"),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "复制模板",
+                "复制长命令",
                 &lookup_command("<link>", 0, CommandStyle::Long).replace(" 0", " <target_chat_id>"),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
@@ -344,11 +358,9 @@ fn recent_job_buttons(
         return Vec::new();
     }
 
-    let recent_list_data =
-        build_downloads_menu_callback_data("all", 8).expect("all downloads filter must be valid");
-    let mut rows = vec![vec![send::build_callback_button(
+    let mut rows = vec![vec![downloads_button(
         "查看最近任务",
-        &recent_list_data,
+        "all",
         tdlib_rs::enums::ButtonStyle::Primary,
     )]];
     let detail_rows = recent_jobs
@@ -458,18 +470,11 @@ fn help_buttons(is_admin: bool) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
-        vec![
-            send::build_callback_button(
-                "配置帮助",
-                &help::build_help_callback_data(Some("config")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "菜单帮助",
-                &help::build_help_callback_data(Some("menu")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
+        vec![send::build_callback_button(
+            "菜单帮助",
+            &help::build_help_callback_data(Some("menu")),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )],
         vec![send::build_callback_button(
             "帮助说明",
             &help::build_help_callback_data(Some("help")),
@@ -485,8 +490,15 @@ fn help_buttons(is_admin: bool) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton
         ],
         footer_buttons(MenuPage::Help),
     ];
-    if !is_admin {
-        rows.retain(|row| !row.iter().any(|button| button.text == "配置帮助"));
+    if is_admin {
+        rows.insert(
+            3,
+            vec![send::build_callback_button(
+                "配置帮助",
+                &help::build_help_callback_data(Some("config")),
+                tdlib_rs::enums::ButtonStyle::Default,
+            )],
+        );
     }
     rows
 }
@@ -534,9 +546,19 @@ fn downloads_button(
     filter: &str,
     style: tdlib_rs::enums::ButtonStyle,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    let data =
-        build_downloads_menu_callback_data(filter, 8).expect("menu downloads filter must be valid");
-    send::build_callback_button(text, &data, style)
+    if let Some(data) = build_downloads_menu_callback_data(filter, 8) {
+        return send::build_callback_button(text, &data, style);
+    }
+
+    tracing::debug!(
+        filter,
+        "invalid downloads menu filter, fallback to copy command button"
+    );
+    send::build_copy_button(
+        text,
+        &downloads_command(Some(filter), None, None, CommandStyle::Short),
+        style,
+    )
 }
 
 /// 构建统一页脚按钮。
@@ -575,6 +597,29 @@ mod tests {
         assert_eq!(rows[0][1].text, "快速转存");
         assert_eq!(rows[0][2].text, "快速查询");
         assert_eq!(rows[1][0].text, "运行任务");
+    }
+
+    // 首页按钮按“主要动作、任务筛选、页面导航、复制命令”分组，避免移动端一行过长。
+    #[test]
+    fn test_home_buttons_separate_navigation_and_copy_actions() {
+        let rows = build_menu_buttons(MenuPage::Home, &[], false, None);
+        let navigation_row = rows
+            .iter()
+            .find(|row| row.iter().any(|button| button.text == "查询页"))
+            .expect("home should have navigation row");
+        let copy_row = rows
+            .iter()
+            .find(|row| row.iter().any(|button| button.text == "复制 /balance"))
+            .expect("home should have copy row");
+
+        assert!(navigation_row.iter().all(|button| matches!(
+            button.r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+        )));
+        assert!(copy_row.iter().all(|button| matches!(
+            button.r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+        )));
     }
 
     // 下载按钮应直接复用 downloads callback，不让菜单重复实现分页逻辑。
@@ -740,6 +785,17 @@ mod tests {
         }
     }
 
+    // 下载筛选参数未来调整时，菜单按钮不能因为旧参数 panic，应降级为复制命令按钮。
+    #[test]
+    fn test_downloads_button_invalid_filter_falls_back_to_copy() {
+        let button = downloads_button("未知筛选", "unknown", tdlib_rs::enums::ButtonStyle::Default);
+
+        assert!(matches!(
+            button.r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+        ));
+    }
+
     // 帮助菜单应覆盖所有 help topic，不让用户必须记 `/help <topic>`。
     #[test]
     fn test_help_buttons_cover_all_topics() {
@@ -763,6 +819,20 @@ mod tests {
         ] {
             assert!(labels.contains(&expected), "missing help topic: {expected}");
         }
+    }
+
+    // 普通用户隐藏 admin-only 配置帮助时，不能误删同一行的菜单帮助。
+    #[test]
+    fn test_help_buttons_for_user_keep_menu_help_without_config() {
+        let rows = build_menu_buttons(MenuPage::Help, &[], false, None);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"菜单帮助"));
+        assert!(!labels.contains(&"配置帮助"));
     }
 
     // 任务菜单应同时提供列表筛选、job_id 输入向导和复制模板。
@@ -803,6 +873,7 @@ mod tests {
                 target_chat_id: -100,
                 status: status.to_owned(),
                 total_items: 1,
+                last_error: None,
                 created_at: now,
                 updated_at: now,
             },

@@ -117,7 +117,7 @@ pub(super) fn build_user_account_menu_text() -> String {
         "下面命令可直接复制发送；修正配置后 /menu 会显示按钮菜单。".to_owned(),
         card::section("常用命令"),
         card::command_line("快速转存", "/transfer <link> <target_chat_id>"),
-        card::command_line("默认目标", "/transfer <link>"),
+        card::command_line("快速转存", "/transfer <link>"),
         card::command_line("下载列表", "/downloads"),
         card::command_line("运行列表", "/downloads run"),
         card::command_line("积分流水", "/balance history"),
@@ -171,6 +171,22 @@ pub(super) fn build_menu_status_text(title: &str, status: &str, detail: &str) ->
     .join("\n")
 }
 
+/// 构造菜单页的权限拒绝文案。
+///
+/// 按钮隐藏只能改善正常路径；callback payload 仍可能被手工构造，因此页面渲染层也必须返回
+/// 明确的权限卡片，而不是继续渲染 admin-only 内容。
+pub(super) fn build_permission_denied_menu_text(title: &str, detail: &str) -> String {
+    [
+        title.to_owned(),
+        format!("状态：{}", card::code("denied")),
+        card::DIVIDER.to_owned(),
+        card::section("权限"),
+        card::note(detail),
+        card::command_line("返回菜单", "/menu"),
+    ]
+    .join("\n")
+}
+
 /// 转存页。
 fn transfer_text() -> String {
     [
@@ -179,11 +195,11 @@ fn transfer_text() -> String {
         card::DIVIDER.to_owned(),
         card::section("最简单用法"),
         "点击“开始转存”，按提示发送源链接，然后选择目标群。".to_owned(),
-        "点击“默认目标”，只回复源链接，目标 chat 使用配置默认值。".to_owned(),
-        "也可以复制命令模板后手动补齐。".to_owned(),
+        "点击“快速转存”，只回复源链接，目标 chat 使用配置默认值。".to_owned(),
+        "也可以复制短命令或长命令模板后手动补齐。".to_owned(),
         card::section("命令"),
         card::command_line("打开向导", "/transfer"),
-        card::command_line("默认目标", "/transfer <link>"),
+        card::command_line("快速转存", "/transfer <link>"),
         card::command_line("指定目标", "/transfer <link> <target_chat_id>"),
     ]
     .join("\n")
@@ -214,7 +230,7 @@ fn jobs_text() -> String {
         card::section("操作"),
         "先进入最近任务或运行任务，再点任务详情进行暂停、恢复、停止。".to_owned(),
         "知道 job_id 时可点“输入详情/暂停/恢复/停止”，按提示回复编号。".to_owned(),
-        "命令模式仍可复制模板手动输入。".to_owned(),
+        "命令模式仍可复制短/长命令模板手动输入。".to_owned(),
         card::section("命令"),
         card::command_line("详情", "/job st <job_id>"),
         card::command_line("暂停", "/job p <job_id>"),
@@ -235,7 +251,7 @@ fn lookup_text() -> String {
         "点击“指定目标”，按提示输入源链接和目标 chat。".to_owned(),
         "命中后会返回结果链接或定位。".to_owned(),
         card::section("命令"),
-        card::command_line("默认目标", "/lookup <link>"),
+        card::command_line("快速查询", "/lookup <link>"),
         card::command_line("指定目标", "/lookup <link> <target_chat_id>"),
     ]
     .join("\n")

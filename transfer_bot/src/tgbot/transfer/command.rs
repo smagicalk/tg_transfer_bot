@@ -136,7 +136,7 @@ pub async fn transfer_callback_query(
     );
 
     match route {
-        CallbackRoute::Help => help::help_callback_query(update, client_id).await,
+        CallbackRoute::Help => help::help_callback_query(update, actor, client_id).await,
         CallbackRoute::Downloads => {
             downloads::downloads_callback_query(update, actor, client_id).await
         }

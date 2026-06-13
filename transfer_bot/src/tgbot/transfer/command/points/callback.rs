@@ -55,12 +55,14 @@ pub(in crate::tgbot::transfer::command) async fn points_callback_query(
         }
     };
     let (text, keyboard) = rendered.into_card_parts()?;
-    send::edit_card_message_with_inline_keyboard(
+    send::edit_interaction_card_or_error(
         text,
         update.chat_id,
         update.message_id,
         keyboard,
         client_id,
+        "积分流水刷新失败",
+        "流水页已生成，但原消息编辑失败；请复制错误或重新发送流水命令。",
     )
     .await
 }

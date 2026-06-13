@@ -52,9 +52,7 @@
     ],
     "allow_all_private_users": false,
     "banned_user_ids": [],
-    "allowed_request_chat_ids": [
-      123456789
-    ],
+    "allowed_request_chat_ids": [],
     "allowed_target_chat_ids": [
       -1001234567890
     ]

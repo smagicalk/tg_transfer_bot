@@ -5,7 +5,7 @@
 // 否则 editMessageText 会报 `Message not found`。
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::Duration;
 
 use tokio::sync::oneshot;
@@ -41,9 +41,7 @@ pub async fn wait_for_sent_message(
 
     let key = (client_id, message.chat_id, message.id);
     let rx = {
-        let mut state = SEND_STATE
-            .lock()
-            .expect("send message state mutex poisoned");
+        let mut state = lock_send_state();
         if let Some(final_message) = state.completed.get(&key) {
             return Ok(final_message.clone());
         }
@@ -90,9 +88,7 @@ pub async fn wait_for_sent_message_id(
 ) -> Option<i64> {
     let key = (client_id, chat_id, temporary_message_id);
     let rx = {
-        let mut state = SEND_STATE
-            .lock()
-            .expect("send message state mutex poisoned");
+        let mut state = lock_send_state();
         if let Some(final_message) = state.completed.get(&key) {
             return Some(final_message.id);
         }
@@ -122,9 +118,7 @@ pub fn observe_message_send_succeeded_for_client(
 ) {
     let key = (client_id, update.message.chat_id, update.old_message_id);
     let waiters = {
-        let mut state = SEND_STATE
-            .lock()
-            .expect("send message state mutex poisoned");
+        let mut state = lock_send_state();
         // 即使当前已有等待者，也缓存最终 ID。等待者可能已经因为超时被丢弃，
         // 后续编辑进度消息时仍需要通过临时 ID 找回最终 ID。
         state.completed.insert(key, update.message.clone());
@@ -146,9 +140,7 @@ pub fn observe_message_send_failed_for_client(
 ) {
     let key = (client_id, update.message.chat_id, update.old_message_id);
     let waiters = {
-        let mut state = SEND_STATE
-            .lock()
-            .expect("send message state mutex poisoned");
+        let mut state = lock_send_state();
         state.waiters.remove(&key)
     };
 
@@ -175,15 +167,27 @@ fn trim_completed_cache(state: &mut SendState) {
 
 /// 清理已经超时或取消的等待者，避免没有后续 TDLib update 时内存表持续增长。
 fn prune_closed_waiters(key: SendKey) {
-    let mut state = SEND_STATE
-        .lock()
-        .expect("send message state mutex poisoned");
+    let mut state = lock_send_state();
     let Some(waiters) = state.waiters.get_mut(&key) else {
         return;
     };
     waiters.retain(|waiter| !waiter.is_closed());
     if waiters.is_empty() {
         state.waiters.remove(&key);
+    }
+}
+
+/// 获取发送状态锁。
+///
+/// 发送状态只是进度卡片 message_id 对齐缓存；如果某个异步任务 panic 导致锁中毒，
+/// 继续恢复缓存比让所有后续消息发送都 panic 更安全。
+fn lock_send_state() -> MutexGuard<'static, SendState> {
+    match SEND_STATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::error!("recover poisoned send message state mutex");
+            poisoned.into_inner()
+        }
     }
 }
 
@@ -346,9 +350,7 @@ mod tests {
         .await;
         assert_eq!(timed_out, None);
 
-        let state = SEND_STATE
-            .lock()
-            .expect("send message state mutex poisoned");
+        let state = lock_send_state();
         assert!(
             !state
                 .waiters

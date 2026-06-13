@@ -100,7 +100,7 @@ pub(crate) fn downloads_command(
     page: Option<u64>,
     style: CommandStyle,
 ) -> String {
-    let mut parts = vec![command_name("downloads", style).to_owned()];
+    let mut parts = vec![command_name("downloads", style)];
     if let Some(filter) = filter {
         parts.push(filter.to_owned());
     }
@@ -120,7 +120,7 @@ pub(crate) fn job_command(action: &str, job_id: i64, style: CommandStyle) -> Str
 
 /// 构造 `/balance` 或 `/bal` 命令。
 pub(crate) fn balance_command(style: CommandStyle) -> String {
-    command_name("balance", style).to_owned()
+    command_name("balance", style)
 }
 
 /// 构造 `/balance history ...` 或 `/bal h ...` 命令。
@@ -207,13 +207,13 @@ pub(crate) fn config_set_command(key: &str, value: impl ToString, style: Command
 pub(crate) fn help_command(topic: Option<&str>, style: CommandStyle) -> String {
     match topic {
         Some(topic) => format!("{} {}", command_name("help", style), topic),
-        None => command_name("help", style).to_owned(),
+        None => command_name("help", style),
     }
 }
 
 /// 构造 `/health` 或 `/hl` 命令。
 pub(crate) fn health_command(style: CommandStyle) -> String {
-    command_name("health", style).to_owned()
+    command_name("health", style)
 }
 
 /// 构造 `/cache` 或 `/fc` 命令。
@@ -223,7 +223,7 @@ pub(crate) fn cache_command(
     page: Option<u64>,
     style: CommandStyle,
 ) -> String {
-    let mut parts = vec![command_name("cache", style).to_owned()];
+    let mut parts = vec![command_name("cache", style)];
     if let Some(view) = view {
         parts.push(view.to_owned());
     }
@@ -238,7 +238,7 @@ pub(crate) fn cache_command(
 
 /// 构造 `/menu` 或 `/m` 命令。
 pub(crate) fn menu_command(style: CommandStyle) -> String {
-    command_name("menu", style).to_owned()
+    command_name("menu", style)
 }
 
 /// 以人类可读形式展示字节数。
@@ -265,7 +265,7 @@ pub(crate) fn format_bytes(bytes: i64) -> String {
 ///
 /// 帮助页需要展示 `/config [show|set ...]` 这类不完全等同于具体命令的用法，
 /// 所以这里提供一个统一入口，避免各模块手写 `/cfg`、`/config` 字符串。
-pub(crate) fn command_root(kind: &str, style: CommandStyle) -> &'static str {
+pub(crate) fn command_root(kind: &str, style: CommandStyle) -> String {
     command_name(kind, style)
 }
 
@@ -276,7 +276,7 @@ pub(crate) fn short_and_long(short: String, long: String) -> String {
 }
 
 /// 返回命令名称。
-fn command_name(kind: &str, style: CommandStyle) -> &'static str {
+fn command_name(kind: &str, style: CommandStyle) -> String {
     match (kind, style) {
         ("help", CommandStyle::Short) => "/h",
         ("help", CommandStyle::Long) => "/help",
@@ -300,8 +300,9 @@ fn command_name(kind: &str, style: CommandStyle) -> &'static str {
         ("points", CommandStyle::Long) => "/points",
         ("menu", CommandStyle::Short) => "/m",
         ("menu", CommandStyle::Long) => "/menu",
-        _ => unreachable!("unknown command kind"),
+        _ => kind,
     }
+    .to_owned()
 }
 
 #[cfg(test)]
@@ -362,6 +363,13 @@ mod tests {
         );
         assert_eq!(menu_command(CommandStyle::Short), "/m");
         assert_eq!(menu_command(CommandStyle::Long), "/menu");
+    }
+
+    // 帮助页拼命令根时未知 kind 不应触发 panic，返回原始名称便于上层给出可读错误。
+    #[test]
+    fn test_command_root_unknown_kind_is_safe() {
+        assert_eq!(command_root("unknown", CommandStyle::Short), "unknown");
+        assert_eq!(command_root("unknown", CommandStyle::Long), "unknown");
     }
 
     // 帮助页同时展示长命令和短命令，保持这个格式方便用户直接复制。

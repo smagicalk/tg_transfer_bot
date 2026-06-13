@@ -25,6 +25,7 @@ pub(super) async fn send_target_choice_prompt(
             config,
             request_chat_id,
             sender_user_id,
+            kind,
         ))
         .send(request_chat_id, client_id)
         .await
@@ -45,14 +46,17 @@ pub(super) async fn edit_target_choice_prompt(
             config,
             request_chat_id,
             sender_user_id,
+            kind,
         ))
         .into_card_parts()?;
-    send::edit_card_message_with_inline_keyboard(
+    send::edit_interaction_card_or_error(
         text,
         request_chat_id,
         message_id,
         keyboard,
         client_id,
+        "目标选择刷新失败",
+        "目标选择页已生成，但原消息编辑失败；请复制错误或重新打开 /menu。",
     )
     .await
 }
@@ -84,12 +88,14 @@ pub(super) async fn edit_confirm_prompt(
         send::ReplyPanel::card(build_confirm_text(kind, source_link, target_chat_id))
             .rows(confirm_button_rows())
             .into_card_parts()?;
-    send::edit_card_message_with_inline_keyboard(
+    send::edit_interaction_card_or_error(
         text,
         request_chat_id,
         message_id,
         keyboard,
         client_id,
+        "确认页刷新失败",
+        "确认页已生成，但原消息编辑失败；请复制错误或重新打开 /menu。",
     )
     .await
 }
@@ -97,7 +103,7 @@ pub(super) async fn edit_confirm_prompt(
 /// 目标选择按钮。
 ///
 /// 交互优先级：
-/// 1. 上次目标、默认目标和常用别名，减少重复选择。
+/// 1. 上次目标、快速目标和常用别名，减少重复选择。
 /// 2. Telegram 原生选群，适合临时目标。
 /// 3. 手动输入，作为兜底。
 /// 4. 取消，明确退出流程。
@@ -105,6 +111,7 @@ pub(super) fn build_target_choice_buttons(
     config: &BotConfig,
     request_chat_id: i64,
     sender_user_id: i64,
+    kind: MenuInputKind,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let mut rows = Vec::new();
     let mut seen_targets = HashSet::new();
@@ -124,7 +131,7 @@ pub(super) fn build_target_choice_buttons(
         && seen_targets.insert(default_target_chat_id)
     {
         rows.push(vec![send::build_callback_button(
-            "默认目标",
+            default_target_button_label(kind),
             &callback::target_default_callback_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         )]);
@@ -150,16 +157,18 @@ pub(super) fn build_target_choice_buttons(
     alias_buttons.sort_by(|left, right| left.text.cmp(&right.text));
     rows.extend(alias_buttons.chunks(2).map(<[_]>::to_vec));
 
-    rows.push(vec![send::build_callback_button(
-        "选择群组",
-        &callback::target_request_chat_callback_data(),
-        tdlib_rs::enums::ButtonStyle::Default,
-    )]);
-    rows.push(vec![send::build_callback_button(
-        "手动输入",
-        &callback::target_manual_callback_data(),
-        tdlib_rs::enums::ButtonStyle::Default,
-    )]);
+    rows.push(vec![
+        send::build_callback_button(
+            "选择群组",
+            &callback::target_request_chat_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        send::build_callback_button(
+            "手动输入",
+            &callback::target_manual_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]);
     rows.push(vec![send::build_callback_button(
         "取消",
         &callback::cancel_input_callback_data(),
@@ -232,13 +241,7 @@ pub(super) fn resolve_default_target(config: &BotConfig, request_chat_id: i64) -
 /// 目标选择卡片正文。
 fn build_target_choice_text(kind: MenuInputKind, source_link: &str) -> String {
     [
-        match kind.command_kind() {
-            MenuInputKind::Transfer => "选择转存目标".to_owned(),
-            MenuInputKind::Lookup => "选择查询目标".to_owned(),
-            MenuInputKind::TransferDefault | MenuInputKind::LookupDefault => {
-                unreachable!("kind is normalized")
-            }
-        },
+        kind.target_choice_title().to_owned(),
         format!(
             "状态：{}  步骤：{}",
             card::code("waiting-target"),
@@ -257,13 +260,7 @@ fn build_target_choice_text(kind: MenuInputKind, source_link: &str) -> String {
 /// 确认卡片正文。
 fn build_confirm_text(kind: MenuInputKind, source_link: &str, target_chat_id: i64) -> String {
     [
-        match kind.command_kind() {
-            MenuInputKind::Transfer => "确认转存".to_owned(),
-            MenuInputKind::Lookup => "确认查询".to_owned(),
-            MenuInputKind::TransferDefault | MenuInputKind::LookupDefault => {
-                unreachable!("kind is normalized")
-            }
-        },
+        kind.confirm_title().to_owned(),
         format!(
             "{}  步骤：{}",
             card::status_target("waiting-confirm", target_chat_id),
@@ -277,6 +274,13 @@ fn build_confirm_text(kind: MenuInputKind, source_link: &str, target_chat_id: i6
         format!("取消：{}", card::code("/cancel")),
     ]
     .join("\n")
+}
+
+/// 默认目标按钮文案。
+///
+/// 同一个默认目标在转存和查询里语义不同，所以按钮文案按场景分别显示。
+fn default_target_button_label(kind: MenuInputKind) -> &'static str {
+    kind.default_target_button_label()
 }
 
 #[cfg(test)]
@@ -306,7 +310,7 @@ mod tests {
         assert_eq!(resolve_default_target(&config, 1), None);
     }
 
-    // 目标选择页应优先突出 Telegram 原生选群，再提供默认目标、常用目标和手动输入。
+    // 目标选择页应优先提供快速目标、常用目标、Telegram 原生选群和手动输入。
     #[test]
     fn test_build_target_choice_buttons_layout() {
         let mut config = BotConfig::default();
@@ -314,13 +318,39 @@ mod tests {
         config.allowed_target_chat_ids = vec![-100, -200];
         config.target_aliases.insert("archive".to_owned(), -200);
 
-        let rows = build_target_choice_buttons(&config, 1, 2);
+        let rows = build_target_choice_buttons(&config, 1, 2, MenuInputKind::Transfer);
 
-        assert_eq!(rows[0][0].text, "默认目标");
+        assert_eq!(rows[0][0].text, "快速转存");
         assert_eq!(rows[1][0].text, "archive");
         assert_eq!(rows[2][0].text, "选择群组");
-        assert_eq!(rows[3][0].text, "手动输入");
-        assert_eq!(rows[4][0].text, "取消");
+        assert_eq!(rows[2][1].text, "手动输入");
+        assert_eq!(rows[3][0].text, "取消");
+    }
+
+    // 查询流程里的默认目标按钮应显示“快速查询”，避免和转存动作混淆。
+    #[test]
+    fn test_build_target_choice_buttons_lookup_label() {
+        let mut config = BotConfig::default();
+        config.target_map.insert(0, -100);
+        config.allowed_target_chat_ids = vec![-100];
+
+        let rows = build_target_choice_buttons(&config, 1, 2, MenuInputKind::Lookup);
+
+        assert_eq!(rows[0][0].text, "快速查询");
+    }
+
+    // 快速入口仍应使用和实际命令一致的目标标题、确认标题和默认按钮文案。
+    #[test]
+    fn test_menu_input_kind_labels_do_not_panic_for_quick_entries() {
+        assert_eq!(
+            MenuInputKind::TransferDefault.target_choice_title(),
+            "选择转存目标"
+        );
+        assert_eq!(MenuInputKind::LookupDefault.confirm_title(), "确认查询");
+        assert_eq!(
+            default_target_button_label(MenuInputKind::LookupDefault),
+            "快速查询"
+        );
     }
 
     // 已确认过的目标应作为上次目标优先展示，并避免和默认目标重复出现。
@@ -331,14 +361,14 @@ mod tests {
         config.target_map.insert(0, -100);
         config.allowed_target_chat_ids = vec![-100];
 
-        let rows = build_target_choice_buttons(&config, 101, 202);
+        let rows = build_target_choice_buttons(&config, 101, 202, MenuInputKind::Transfer);
 
         assert_eq!(rows[0][0].text, "上次目标");
         assert!(
             !rows
                 .iter()
                 .flatten()
-                .any(|button| button.text == "默认目标")
+                .any(|button| button.text == "快速转存")
         );
     }
 

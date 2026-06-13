@@ -62,6 +62,12 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
         lines.push(format!("真实下载：{}", format_job_live_download(snapshot)));
     }
 
+    if let Some(last_error) = snapshot.job.last_error.as_deref() {
+        // 失败详情可能来自 TDLib 或 anyhow 链，保留原文方便复制到日志中定位。
+        lines.push(card::section("最后错误"));
+        lines.push(card::pre_code(last_error));
+    }
+
     lines.push(card::section("时间"));
     lines.push(card::field(
         "创建",
@@ -182,6 +188,18 @@ mod tests {
         assert!(text.contains("列表：‹/d run›"));
     }
 
+    // 失败任务详情应展示 transfer_job.last_error，方便事后通过 /job st 追溯失败原因。
+    #[test]
+    fn test_format_job_status_text_shows_last_error() {
+        let mut snapshot = snapshot_with_status(store::JOB_STATUS_FAILED);
+        snapshot.job.last_error = Some("code=400, message=Message not found".to_owned());
+
+        let text = format_job_status_text(&snapshot);
+
+        assert!(text.contains("■ 最后错误"));
+        assert!(text.contains("«code=400, message=Message not found»"));
+    }
+
     // 真实下载摘要应和下载列表保持同一风格。
     #[test]
     fn test_format_job_live_download() {
@@ -206,6 +224,7 @@ mod tests {
                 total_items: 3,
                 created_at: now,
                 updated_at: now,
+                last_error: None,
             },
             pending_count: 1,
             preparing_count: 0,

@@ -2,10 +2,14 @@
 // 只读查看运行状态，不修改任何任务、文件或配置。
 
 use crate::tgbot::send;
+use crate::tgbot::send::send_interaction_error_card;
 use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
 
-use super::common::{CommandStyle, help_command as help_command_text};
+use super::common::{
+    CommandStyle, downloads_command as downloads_command_text,
+    health_command as health_command_text, help_command as help_command_text,
+};
 
 /// `/health` callback 前缀。
 const HEALTH_CALLBACK_PREFIX: &str = "hl:";
@@ -56,16 +60,40 @@ pub async fn health_callback_query(
     }
 
     send::answer_callback_query(update.id, Some("已刷新"), client_id).await?;
-    let snapshot = build_health_snapshot().await?;
+    let snapshot = match build_health_snapshot().await {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            send_health_callback_error(update.chat_id, client_id, &err).await?;
+            return Err(err);
+        }
+    };
     let (text, keyboard) = send::ReplyPanel::card(format_health_text(&snapshot))
         .rows(build_health_buttons())
         .into_card_parts()?;
-    send::edit_card_message_with_inline_keyboard(
+    send::edit_interaction_card_or_error(
         text,
         update.chat_id,
         update.message_id,
         keyboard,
         client_id,
+        "健康页刷新失败",
+        "健康页已生成，但原消息编辑失败；请复制错误或重新发送 /health。",
+    )
+    .await
+}
+
+/// 健康页刷新失败提示。
+async fn send_health_callback_error(
+    request_chat_id: i64,
+    client_id: i32,
+    err: &anyhow::Error,
+) -> anyhow::Result<()> {
+    send_interaction_error_card(
+        request_chat_id,
+        client_id,
+        "健康页刷新失败",
+        "健康数据未刷新，请检查日志或复制错误信息。",
+        err,
     )
     .await
 }
@@ -74,35 +102,69 @@ pub async fn health_callback_query(
 fn build_health_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
         vec![
-            send::build_copy_button(
-                "复制 /health",
-                "/health",
+            send::build_callback_button(
+                "刷新",
+                &build_health_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
-            send::build_copy_button(
-                "复制 /cache",
-                "/cache",
+            downloads_run_button(),
+            send::build_callback_button(
+                "文件缓存",
+                &super::build_cache_button_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
         vec![
             send::build_copy_button(
-                "复制 /downloads",
-                "/downloads",
+                "复制 /hl",
+                &health_command_text(CommandStyle::Short),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+            send::build_copy_button(
+                "复制运行列表",
+                &downloads_command_text(Some("run"), None, None, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制 /h",
+                &help_command_text(None, CommandStyle::Short),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![
             send::build_copy_button(
                 "复制 /help",
                 &help_command_text(None, CommandStyle::Long),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+            send::build_callback_button(
+                "菜单",
+                &super::build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
         ],
-        vec![send::build_callback_button(
-            "菜单",
-            &super::build_menu_home_button_data(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )],
     ]
+}
+
+/// 健康页进入运行列表按钮。
+///
+/// 正常情况下使用 callback 原地跳转；如果下载筛选协议未来变更，降级为复制短命令，
+/// 避免健康页因为一个辅助按钮构造失败而整体不可用。
+fn downloads_run_button() -> tdlib_rs::types::InlineKeyboardButton {
+    if let Some(data) = super::build_downloads_filter_button_data("run", 8) {
+        return send::build_callback_button(
+            "下载列表",
+            &data,
+            tdlib_rs::enums::ButtonStyle::Default,
+        );
+    }
+
+    tracing::warn!("downloads run callback data is unavailable, fallback to copy command");
+    send::build_copy_button(
+        "下载列表",
+        &downloads_command_text(Some("run"), None, None, CommandStyle::Short),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )
 }
 
 /// 运行状态快照。
@@ -205,4 +267,54 @@ fn format_client_line(clients: Option<crate::config::TransferClientIds>) -> Stri
         card::code(clients.download),
         card::code(clients.upload)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 健康页应像控制面板一样直接跳转/刷新，复制命令只作为兜底。
+    #[test]
+    fn test_build_health_buttons_prefer_callbacks() {
+        let rows = build_health_buttons();
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        for expected in ["刷新", "下载列表", "文件缓存", "菜单"] {
+            assert!(
+                labels.contains(&expected),
+                "missing health button: {expected}"
+            );
+        }
+
+        for expected in ["刷新", "下载列表", "文件缓存"] {
+            let button = rows
+                .iter()
+                .flatten()
+                .find(|button| button.text == expected)
+                .expect("health control button should exist");
+            assert!(matches!(
+                button.r#type,
+                tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+            ));
+        }
+    }
+
+    // 健康页仍保留短命令复制，方便 reply_markup 异常时手动排查。
+    #[test]
+    fn test_build_health_buttons_keep_copy_fallbacks() {
+        let rows = build_health_buttons();
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"复制 /hl"));
+        assert!(labels.contains(&"复制运行列表"));
+        assert!(labels.contains(&"复制 /h"));
+    }
 }

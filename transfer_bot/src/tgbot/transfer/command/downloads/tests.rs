@@ -397,6 +397,7 @@ fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
             target_chat_id: 300,
             status: status.to_owned(),
             total_items: 1,
+            last_error: None,
             created_at: now,
             updated_at: now,
         },

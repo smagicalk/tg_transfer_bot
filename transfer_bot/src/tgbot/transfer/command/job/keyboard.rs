@@ -149,6 +149,7 @@ mod tests {
                 target_chat_id: -100,
                 status: status.to_owned(),
                 total_items: 3,
+                last_error: None,
                 created_at: now,
                 updated_at: now,
             },

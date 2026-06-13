@@ -1,0 +1,519 @@
+name: Build Release Packages
+
+on:
+  # 临时关闭自动触发，仅保留手动执行。
+  # push:
+  #   branches:
+  #     - dev
+  #     - main
+  #   tags:
+  #     - "v*"
+  # pull_request:
+  workflow_dispatch:
+    inputs:
+      td_ref:
+        description: "TDLib git branch/tag/commit"
+        required: false
+        default: "master"
+      run_checks:
+        description: "Run fmt/test/clippy before release build"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  TD_GIT_REF: ${{ github.event.inputs.td_ref || 'master' }}
+  RUN_CHECKS: ${{ github.event.inputs.run_checks || 'true' }}
+
+jobs:
+  package-linux:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: alpine-3.22
+            label: Alpine 3.22 musl x86_64
+            image: alpine:3.22
+            artifact: transfer_bot-linux-x86_64-alpine3.22
+          - id: debian-12
+            label: Debian 12 glibc x86_64
+            image: debian:12
+            artifact: transfer_bot-linux-x86_64-debian12
+          - id: ubuntu-24.04
+            label: Ubuntu 24.04 glibc x86_64
+            image: ubuntu:24.04
+            artifact: transfer_bot-linux-x86_64-ubuntu24.04
+          - id: rocky-9
+            label: Rocky Linux 9 glibc x86_64
+            image: rockylinux:9
+            artifact: transfer_bot-linux-x86_64-rocky9
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build TDLib and package transfer_bot
+        run: |
+          set -eux
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            -e "CI_DISTRO_ID=${{ matrix.id }}" \
+            -e "CI_IMAGE=${{ matrix.image }}" \
+            -e "CI_ARTIFACT_NAME=${{ matrix.artifact }}" \
+            -e "TD_GIT_REF=${TD_GIT_REF}" \
+            -e "RUN_CHECKS=${RUN_CHECKS}" \
+            "${{ matrix.image }}" sh -s <<'CONTAINER_SCRIPT'
+          set -eux
+
+          # 安装当前发行版编译 TDLib、SQLite 和 Rust 项目需要的系统依赖。
+          install_packages() {
+            . /etc/os-release
+            case "$ID" in
+              alpine)
+                apk add --no-cache \
+                  bash \
+                  ca-certificates \
+                  clang \
+                  cmake \
+                  curl \
+                  file \
+                  g++ \
+                  gperf \
+                  git \
+                  gzip \
+                  linux-headers \
+                  make \
+                  musl-dev \
+                  openssl-dev \
+                  pkgconf \
+                  sqlite-dev \
+                  tar \
+                  zlib-dev
+                ;;
+              debian|ubuntu)
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update
+                apt-get install -y --no-install-recommends \
+                  ca-certificates \
+                  clang \
+                  cmake \
+                  curl \
+                  file \
+                  g++ \
+                  gperf \
+                  git \
+                  gzip \
+                  libsqlite3-dev \
+                  libssl-dev \
+                  make \
+                  pkg-config \
+                  tar \
+                  zlib1g-dev
+                rm -rf /var/lib/apt/lists/*
+                ;;
+              rocky)
+                dnf install -y --setopt=install_weak_deps=False \
+                  ca-certificates \
+                  clang \
+                  cmake \
+                  coreutils \
+                  curl \
+                  file \
+                  gcc-c++ \
+                  git \
+                  gperf \
+                  gzip \
+                  make \
+                  openssl-devel \
+                  pkgconf-pkg-config \
+                  sqlite-devel \
+                  tar \
+                  zlib-devel
+                dnf clean all
+                ;;
+              *)
+                echo "Unsupported distro: $ID" >&2
+                exit 1
+                ;;
+            esac
+
+            # 基础系统镜像不预装 Rust，统一用 rustup 固定工具链版本，避免发行版包版本不一致。
+            if ! command -v cargo >/dev/null 2>&1; then
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --profile minimal --default-toolchain 1.88.0
+              . "$HOME/.cargo/env"
+            fi
+
+            if command -v rustup >/dev/null 2>&1; then
+              rustup component add rustfmt clippy
+            fi
+          }
+
+          # 复制 ldd 识别到的运行时库，但跳过 libc/动态加载器这类强系统绑定库。
+          copy_runtime_libs() {
+            awk '
+              $2 == "=>" && $3 ~ /^\// { print $3; next }
+              $1 ~ /^\// { print $1; next }
+            ' "$DIST_DIR/runtime-libs.txt" | sort -u | while IFS= read -r lib; do
+              [ -n "$lib" ] || continue
+              [ -f "$lib" ] || continue
+              base="$(basename "$lib")"
+              case "$base" in
+                ld-linux*|ld-musl*|libc.so*|libdl.so*|libm.so*|libpthread.so*|librt.so*)
+                  continue
+                  ;;
+              esac
+              if [ ! -e "$DIST_DIR/lib/$base" ]; then
+                cp -L "$lib" "$DIST_DIR/lib/$base"
+              fi
+            done
+          }
+
+          install_packages
+
+          export PATH="$HOME/.cargo/bin:$PATH"
+          export LOCAL_TDLIB_PATH="/opt/tdlib"
+          export TD_SOURCE_DIR="/tmp/td"
+          export TD_BUILD_DIR="/tmp/td-build"
+          export CARGO_TARGET_DIR="/work/target/$CI_DISTRO_ID"
+          export LD_LIBRARY_PATH="$LOCAL_TDLIB_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+          rustc --version
+          cargo --version
+          cmake --version
+          g++ --version
+
+          # 从源码编译 TDLib；TD_GIT_REF 默认 master，手动触发 workflow 时可以指定 tag 或 commit。
+          rm -rf "$LOCAL_TDLIB_PATH" "$TD_SOURCE_DIR" "$TD_BUILD_DIR"
+          git clone --depth 1 https://github.com/tdlib/td.git "$TD_SOURCE_DIR"
+          cd "$TD_SOURCE_DIR"
+          if [ "$TD_GIT_REF" != "master" ]; then
+            git fetch --depth 1 origin "$TD_GIT_REF" || true
+            git fetch --depth 1 origin "refs/tags/$TD_GIT_REF:refs/tags/$TD_GIT_REF" || true
+            git checkout "$TD_GIT_REF"
+          fi
+          TD_COMMIT="$(git rev-parse HEAD)"
+
+          cmake -S "$TD_SOURCE_DIR" -B "$TD_BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$LOCAL_TDLIB_PATH" \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DTD_ENABLE_LTO=OFF
+          cmake --build "$TD_BUILD_DIR" --target install --parallel 2
+          test -f "$LOCAL_TDLIB_PATH/lib/libtdjson.so"
+
+          cd /work
+          if [ "$RUN_CHECKS" = "true" ]; then
+            cargo fmt --all -- --check
+            cargo test -p transfer_bot
+            cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
+          fi
+
+          cargo build -p transfer_bot --release
+          test -x "$CARGO_TARGET_DIR/release/transfer_bot"
+
+          DIST_DIR="/work/dist/$CI_ARTIFACT_NAME"
+          rm -rf "$DIST_DIR" "/work/dist/$CI_ARTIFACT_NAME.tar.gz" "/work/dist/$CI_ARTIFACT_NAME.sha256"
+          mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
+
+          cp "$CARGO_TARGET_DIR/release/transfer_bot" "$DIST_DIR/bin/transfer_bot"
+          find "$LOCAL_TDLIB_PATH/lib" -maxdepth 1 -name 'libtdjson.so*' -exec cp -a {} "$DIST_DIR/lib/" \;
+
+          # 收集二进制和 libtdjson 的动态库依赖，随后把非 libc 的运行库一起放入 lib 目录。
+          {
+            ldd "$DIST_DIR/bin/transfer_bot" || true
+            for so in "$DIST_DIR"/lib/libtdjson.so*; do
+              [ -e "$so" ] || continue
+              ldd "$so" || true
+            done
+          } > "$DIST_DIR/runtime-libs.txt"
+          copy_runtime_libs
+
+          if command -v strip >/dev/null 2>&1; then
+            strip "$DIST_DIR/bin/transfer_bot" || true
+            find "$DIST_DIR/lib" -type f -name '*.so*' -exec strip --strip-unneeded {} \; || true
+          fi
+
+          cat > "$DIST_DIR/run.sh" <<'RUN_SCRIPT'
+          #!/usr/bin/env sh
+          set -eu
+          APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+          export LD_LIBRARY_PATH="$APP_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          exec "$APP_DIR/bin/transfer_bot" "$@"
+          RUN_SCRIPT
+          chmod +x "$DIST_DIR/run.sh"
+
+          cat > "$DIST_DIR/README.RUN.md" <<'README_RUN'
+          # 运行说明
+
+          1. 把 `config.example.json` 复制成自己的 `config.json` 并填写真实配置。
+          2. 使用 `./run.sh -c config.json` 启动。
+          3. `run.sh` 会自动把当前包内的 `lib/` 加入 `LD_LIBRARY_PATH`。
+          4. 该产物只保证在同名或兼容发行版上运行，例如 Alpine 包优先用于 Alpine。
+          README_RUN
+
+          cp README.md "$DIST_DIR/README.md"
+          cp config.example.json "$DIST_DIR/config.example.json"
+          cp LICENSE "$DIST_DIR/LICENSE"
+
+          {
+            echo "artifact=$CI_ARTIFACT_NAME"
+            echo "distro=$CI_DISTRO_ID"
+            echo "image=$CI_IMAGE"
+            echo "td_ref=$TD_GIT_REF"
+            echo "td_commit=$TD_COMMIT"
+            echo "rustc=$(rustc --version)"
+            echo "cargo=$(cargo --version)"
+            echo "built_at_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          } > "$DIST_DIR/BUILD_INFO.txt"
+
+          tar -czf "/work/dist/$CI_ARTIFACT_NAME.tar.gz" -C /work/dist "$CI_ARTIFACT_NAME"
+          cd /work/dist
+          sha256sum "$CI_ARTIFACT_NAME.tar.gz" > "$CI_ARTIFACT_NAME.sha256"
+          CONTAINER_SCRIPT
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}.tar.gz
+            dist/${{ matrix.artifact }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  package-windows:
+    name: Windows Server 2022 MSVC x86_64
+    runs-on: windows-2022
+    env:
+      CI_ARTIFACT_NAME: transfer_bot-windows-x86_64-msvc
+      LOCAL_TDLIB_PATH: ${{ github.workspace }}\tdlib-install
+      TD_BUILD_DIR: ${{ runner.temp }}\td-build
+      TD_SOURCE_DIR: ${{ runner.temp }}\td
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Prepare Windows dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # GitHub Windows runner 通常自带 vcpkg；没有时再拉取一份，保证本 workflow 可独立运行。
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
+            $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git $vcpkgRoot
+            & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
+          }
+          $env:VCPKG_ROOT = $vcpkgRoot
+          $vcpkg = Join-Path $vcpkgRoot "vcpkg.exe"
+
+          # TDLib 运行时依赖 OpenSSL 和 zlib；动态链接便于把 DLL 一起打入发布包。
+          & $vcpkg install openssl:x64-windows zlib:x64-windows
+          if ($LASTEXITCODE -ne 0) {
+            throw "vcpkg dependency install failed"
+          }
+
+          # gperf 是 TDLib 的构建期依赖；优先用 Chocolatey，失败后尝试 vcpkg 端口。
+          if (-not (Get-Command gperf.exe -ErrorAction SilentlyContinue)) {
+            choco install gperf -y --no-progress
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Chocolatey gperf install failed, fallback to vcpkg"
+            }
+          }
+          if (-not (Get-Command gperf.exe -ErrorAction SilentlyContinue)) {
+            & $vcpkg install gperf:x64-windows
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "vcpkg gperf install failed, will search existing tools"
+            }
+            $env:Path = (Join-Path $vcpkgRoot "installed\x64-windows\tools\gperf") + ";$env:Path"
+          }
+          $gperf = Get-Command gperf.exe -ErrorAction SilentlyContinue
+          if (-not $gperf) {
+            $searchRoots = @($vcpkgRoot, $env:ChocolateyInstall) |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) }
+            $gperf = Get-ChildItem $searchRoots -Recurse -Filter gperf.exe -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          }
+          if (-not $gperf) {
+            throw "gperf.exe was not found after dependency installation"
+          }
+
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "GPERF_EXECUTABLE=$($gperf.Source)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Show tool versions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          rustc --version
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
+          cmake --version
+          gperf --version
+
+      - name: Build and install TDLib
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # 从源码编译 TDLib；TD_GIT_REF 默认 master，手动触发 workflow 时可以指定 tag 或 commit。
+          Remove-Item -Recurse -Force $env:TD_SOURCE_DIR, $env:TD_BUILD_DIR, $env:LOCAL_TDLIB_PATH -ErrorAction SilentlyContinue
+          git clone --depth 1 https://github.com/tdlib/td.git $env:TD_SOURCE_DIR
+          Push-Location $env:TD_SOURCE_DIR
+          if ($env:TD_GIT_REF -ne "master") {
+            git fetch --depth 1 origin $env:TD_GIT_REF
+            if ($LASTEXITCODE -ne 0) {
+              git fetch --depth 1 origin "refs/tags/$env:TD_GIT_REF:refs/tags/$env:TD_GIT_REF"
+            }
+            git checkout $env:TD_GIT_REF
+          }
+          $tdCommit = git rev-parse HEAD
+          "TD_COMMIT=$tdCommit" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Pop-Location
+
+          cmake -S $env:TD_SOURCE_DIR -B $env:TD_BUILD_DIR `
+            -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:LOCAL_TDLIB_PATH" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DGPERF_EXECUTABLE="$env:GPERF_EXECUTABLE" `
+            -DTD_ENABLE_LTO=OFF
+          cmake --build $env:TD_BUILD_DIR --config Release --target install --parallel 2
+
+          if (-not (Test-Path "$env:LOCAL_TDLIB_PATH\bin\tdjson.dll")) {
+            throw "tdjson.dll was not installed to $env:LOCAL_TDLIB_PATH\bin"
+          }
+          if (-not (Test-Path "$env:LOCAL_TDLIB_PATH\lib\tdjson.lib")) {
+            throw "tdjson.lib was not installed to $env:LOCAL_TDLIB_PATH\lib"
+          }
+
+      - name: Check formatting
+        if: env.RUN_CHECKS == 'true'
+        shell: pwsh
+        run: cargo fmt --all -- --check
+
+      - name: Run tests
+        if: env.RUN_CHECKS == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:Path = "$env:LOCAL_TDLIB_PATH\bin;$env:VCPKG_ROOT\installed\x64-windows\bin;$env:Path"
+          cargo test -p transfer_bot
+
+      - name: Run clippy
+        if: env.RUN_CHECKS == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:Path = "$env:LOCAL_TDLIB_PATH\bin;$env:VCPKG_ROOT\installed\x64-windows\bin;$env:Path"
+          cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
+
+      - name: Build release binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:Path = "$env:LOCAL_TDLIB_PATH\bin;$env:VCPKG_ROOT\installed\x64-windows\bin;$env:Path"
+          cargo build -p transfer_bot --release
+          if (-not (Test-Path "target\release\transfer_bot.exe")) {
+            throw "transfer_bot.exe was not built"
+          }
+
+      - name: Package Windows artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $artifact = $env:CI_ARTIFACT_NAME
+          $distRoot = Join-Path $PWD "dist"
+          $dist = Join-Path $distRoot $artifact
+          Remove-Item -Recurse -Force $dist, "$dist.zip", "$dist.sha256" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$dist\bin" | Out-Null
+
+          Copy-Item "target\release\transfer_bot.exe" "$dist\bin\transfer_bot.exe" -Force
+          Copy-Item "$env:LOCAL_TDLIB_PATH\bin\tdjson.dll" "$dist\bin\tdjson.dll" -Force
+
+          # vcpkg 安装的 OpenSSL/zlib DLL 是 tdjson.dll 的主要外部运行时依赖，一起复制到 bin 目录。
+          $vcpkgBin = Join-Path $env:VCPKG_ROOT "installed\x64-windows\bin"
+          if (Test-Path $vcpkgBin) {
+            Copy-Item "$vcpkgBin\*.dll" "$dist\bin\" -Force -ErrorAction SilentlyContinue
+          }
+
+          @(
+            '$ErrorActionPreference = "Stop"'
+            '$AppDir = Split-Path -Parent $MyInvocation.MyCommand.Path'
+            '$env:Path = (Join-Path $AppDir "bin") + ";$env:Path"'
+            '& (Join-Path $AppDir "bin\transfer_bot.exe") @args'
+            'exit $LASTEXITCODE'
+          ) | Set-Content -Encoding utf8 "$dist\run.ps1"
+
+          @(
+            '@echo off'
+            'set "APP_DIR=%~dp0"'
+            'set "PATH=%APP_DIR%bin;%PATH%"'
+            '"%APP_DIR%bin\transfer_bot.exe" %*'
+            'exit /b %ERRORLEVEL%'
+          ) | Set-Content -Encoding ascii "$dist\run.cmd"
+
+          Get-ChildItem "$dist\bin" -Filter "*.dll" |
+            Select-Object Name, Length |
+            Format-Table -AutoSize |
+            Out-String |
+            Set-Content -Encoding utf8 "$dist\runtime-dlls.txt"
+
+          @(
+            '# 运行说明'
+            ''
+            '1. 把 `config.example.json` 复制成自己的 `config.json` 并填写真实配置。'
+            '2. PowerShell 使用 `.\run.ps1 -c .\config.json` 启动。'
+            '3. cmd 使用 `run.cmd -c config.json` 启动。'
+            '4. `run.ps1` / `run.cmd` 会自动把当前包内的 `bin\` 加入 `PATH`。'
+            '5. 如果目标机器缺少 MSVC 运行库，请安装 Microsoft Visual C++ Redistributable。'
+          ) | Set-Content -Encoding utf8 "$dist\README.RUN.md"
+
+          Copy-Item README.md "$dist\README.md" -Force
+          Copy-Item config.example.json "$dist\config.example.json" -Force
+          Copy-Item LICENSE "$dist\LICENSE" -Force
+
+          @(
+            "artifact=$artifact"
+            "distro=windows-2022"
+            "image=windows-2022"
+            "td_ref=$env:TD_GIT_REF"
+            "td_commit=$env:TD_COMMIT"
+            "rustc=$(rustc --version)"
+            "cargo=$(cargo --version)"
+            "built_at_utc=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+          ) | Set-Content -Encoding utf8 "$dist\BUILD_INFO.txt"
+
+          Compress-Archive -Path $dist -DestinationPath "$dist.zip" -Force
+          $hash = Get-FileHash -Algorithm SHA256 "$dist.zip"
+          ("{0}  {1}" -f $hash.Hash.ToLowerInvariant(), (Split-Path -Leaf $hash.Path)) |
+            Set-Content -Encoding utf8 "$dist.sha256"
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.CI_ARTIFACT_NAME }}
+          path: |
+            dist/${{ env.CI_ARTIFACT_NAME }}.zip
+            dist/${{ env.CI_ARTIFACT_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 14

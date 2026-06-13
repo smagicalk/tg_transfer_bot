@@ -10,8 +10,8 @@ use crate::tgbot::transfer::card;
 
 /// 构造帮助目录文本。
 /// 只列出命令名和一句话描述，方便后续继续细分。
-pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> String {
-    vec![
+pub(in crate::tgbot::transfer::command::help) fn build_help_index_text(is_admin: bool) -> String {
+    let mut lines = vec![
         "命令中心".to_owned(),
         format!("状态：{}", card::code("ready")),
         "说明：短命令适合日常输入，长命令适合脚本或排查。".to_owned(),
@@ -48,46 +48,58 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
             balance_command(CommandStyle::Short),
             balance_command(CommandStyle::Long),
         ),
-        "说明：查看当前用户余额和流水；管理员可用 points 调整或查询普通用户积分。".to_owned(),
+        if is_admin {
+            "说明：查看余额；管理员可用 points 调整或查询普通用户积分。".to_owned()
+        } else {
+            "说明：查看当前用户余额和流水。".to_owned()
+        },
         String::new(),
-        "运行健康".to_owned(),
-        "命令：".to_owned(),
-        short_and_long(
-            health_command_text(CommandStyle::Short),
-            health_command_text(CommandStyle::Long),
-        ),
-        "说明：查看运行配置、并发、恢复队列、任务和缓存总体状态。".to_owned(),
-        String::new(),
-        "文件缓存".to_owned(),
-        "命令：".to_owned(),
-        short_and_long(
-            cache_command(None, None, None, CommandStyle::Short),
-            cache_command(None, None, None, CommandStyle::Long),
-        ),
-        "说明：查看 file_cache 概览和最近缓存记录；只读，不执行清理。".to_owned(),
-        String::new(),
-        "交互菜单".to_owned(),
-        "命令：".to_owned(),
-        short_and_long(
-            menu_command(CommandStyle::Short),
-            menu_command(CommandStyle::Long),
-        ),
-        "说明：打开转存菜单；bot token 模式显示按钮，手机号/OCR 模式显示文本命令。".to_owned(),
-        String::new(),
-        "运行配置".to_owned(),
-        "命令：".to_owned(),
-        short_and_long(
-            format!(
-                "{} [show|set <key> <value>]",
-                command_root("config", CommandStyle::Short)
+    ];
+
+    if is_admin {
+        lines.extend([
+            "运行健康".to_owned(),
+            "命令：".to_owned(),
+            short_and_long(
+                health_command_text(CommandStyle::Short),
+                health_command_text(CommandStyle::Long),
             ),
-            format!(
-                "{} [show|set <key> <value>]",
-                command_root("config", CommandStyle::Long)
+            "说明：查看运行配置、并发、恢复队列、任务和缓存总体状态。".to_owned(),
+            String::new(),
+            "文件缓存".to_owned(),
+            "命令：".to_owned(),
+            short_and_long(
+                cache_command(None, None, None, CommandStyle::Short),
+                cache_command(None, None, None, CommandStyle::Long),
             ),
-        ),
-        "说明：查看或修改可动态生效的运行配置。".to_owned(),
-        String::new(),
+            "说明：查看 file_cache 概览和最近缓存记录；只读，不执行清理。".to_owned(),
+            String::new(),
+            "交互菜单".to_owned(),
+            "命令：".to_owned(),
+            short_and_long(
+                menu_command(CommandStyle::Short),
+                menu_command(CommandStyle::Long),
+            ),
+            "说明：打开转存菜单；bot token 模式显示按钮，手机号/OCR 模式显示文本命令。".to_owned(),
+            String::new(),
+            "运行配置".to_owned(),
+            "命令：".to_owned(),
+            short_and_long(
+                format!(
+                    "{} [show|set <key> <value>]",
+                    command_root("config", CommandStyle::Short)
+                ),
+                format!(
+                    "{} [show|set <key> <value>]",
+                    command_root("config", CommandStyle::Long)
+                ),
+            ),
+            "说明：查看或修改可动态生效的运行配置。".to_owned(),
+            String::new(),
+        ]);
+    }
+
+    lines.extend([
         "任务控制".to_owned(),
         "命令：".to_owned(),
         short_and_long(
@@ -123,10 +135,16 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
             help_command_text(Some("lookup"), CommandStyle::Short),
             help_command_text(Some("lookup"), CommandStyle::Long),
         ),
-        short_and_long(
+    ]);
+
+    if is_admin {
+        lines.extend([short_and_long(
             help_command_text(Some("config"), CommandStyle::Short),
             help_command_text(Some("config"), CommandStyle::Long),
-        ),
+        )]);
+    }
+
+    lines.extend([
         short_and_long(
             help_command_text(Some("downloads"), CommandStyle::Short),
             help_command_text(Some("downloads"), CommandStyle::Long),
@@ -135,14 +153,22 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
             help_command_text(Some("points"), CommandStyle::Short),
             help_command_text(Some("points"), CommandStyle::Long),
         ),
-        short_and_long(
-            help_command_text(Some("health"), CommandStyle::Short),
-            help_command_text(Some("health"), CommandStyle::Long),
-        ),
-        short_and_long(
-            help_command_text(Some("cache"), CommandStyle::Short),
-            help_command_text(Some("cache"), CommandStyle::Long),
-        ),
+    ]);
+
+    if is_admin {
+        lines.extend([
+            short_and_long(
+                help_command_text(Some("health"), CommandStyle::Short),
+                help_command_text(Some("health"), CommandStyle::Long),
+            ),
+            short_and_long(
+                help_command_text(Some("cache"), CommandStyle::Short),
+                help_command_text(Some("cache"), CommandStyle::Long),
+            ),
+        ]);
+    }
+
+    lines.extend([
         short_and_long(
             help_command_text(Some("job"), CommandStyle::Short),
             help_command_text(Some("job"), CommandStyle::Long),
@@ -155,12 +181,18 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
             help_command_text(Some("help"), CommandStyle::Short),
             help_command_text(Some("help"), CommandStyle::Long),
         ),
-        String::new(),
-        "管理员示例：".to_owned(),
-        short_and_long(
-            points_show_command(123456789, CommandStyle::Short),
-            points_show_command(123456789, CommandStyle::Long),
-        ),
-    ]
-    .join("\n")
+    ]);
+
+    if is_admin {
+        lines.extend([
+            String::new(),
+            "管理员示例：".to_owned(),
+            short_and_long(
+                points_show_command(123456789, CommandStyle::Short),
+                points_show_command(123456789, CommandStyle::Long),
+            ),
+        ]);
+    }
+
+    lines.join("\n")
 }
