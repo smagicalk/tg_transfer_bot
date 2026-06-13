@@ -90,6 +90,55 @@ cargo run -p transfer_bot -- -c config.json
 - `bot` client 会使用 `token` 登录。
 - 程序会自动创建业务 SQLite 库和运行目录。
 
+## GitHub Actions
+
+仓库内提供两个手动 workflow：
+
+- `release-packages.yml`：面向正式发布，手动构建全部目标系统。
+- `test-single-target.yml`：面向单系统验证，手动只构建一个目标系统。
+
+### release-packages.yml
+
+在 GitHub Actions 页面手动运行后可选：
+
+- `package_mode`
+  - `package`：编译、打包并上传 artifact。
+  - `build_only`：只验证能否编译，不上传打包文件。
+- `td_ref`
+  - TDLib 的 `branch`、`tag` 或 `commit`，默认 `master`。
+- `run_checks`
+  - 是否先执行 `cargo fmt`、`cargo test`、`cargo clippy`。
+
+当前正式发布目标：
+
+- `linux-x86_64-alpine3.22`
+- `linux-x86_64-debian12`
+- `linux-x86_64-ubuntu24.04`
+- `linux-x86_64-rocky9`
+- `windows-x86_64-msvc`
+
+### test-single-target.yml
+
+在 GitHub Actions 页面手动运行后可选：
+
+- `target`
+  - `alpine-3.22`
+  - `debian-12`
+  - `ubuntu-24.04`
+  - `rocky-9`
+  - `windows-2022`
+- `package_mode`
+  - `package`：编译、打包并上传单个测试 artifact。
+  - `build_only`：只验证单个目标能否编译。
+- `td_ref`
+- `run_checks`
+
+### 产物说明
+
+- Linux 产物为 `.tar.gz`，包含 `bin/transfer_bot`、`libtdjson.so` 和运行时依赖。
+- Windows 产物为 `.zip`，包含 `bin/transfer_bot.exe`、`tdjson.dll` 和相关 DLL。
+- 所有正式产物默认附带 `.sha256` 校验文件；测试 workflow 默认只上传主压缩包。
+
 ## 配置说明
 
 ### 配置分层

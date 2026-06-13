@@ -1,14 +1,6 @@
-name: Build Release Packages
+name: Test Single Target
 
 on:
-  # 临时关闭自动触发，仅保留手动执行。
-  # push:
-  #   branches:
-  #     - dev
-  #     - main
-  #   tags:
-  #     - "v*"
-  # pull_request:
   workflow_dispatch:
     inputs:
       package_mode:
@@ -19,6 +11,17 @@ on:
         options:
           - package
           - build_only
+      target:
+        description: "Target system to build"
+        required: true
+        default: "ubuntu-24.04"
+        type: choice
+        options:
+          - alpine-3.22
+          - debian-12
+          - ubuntu-24.04
+          - rocky-9
+          - windows-2022
       td_ref:
         description: "TDLib git branch/tag/commit"
         required: false
@@ -43,8 +46,9 @@ env:
   RUN_CHECKS: ${{ github.event.inputs.run_checks || 'true' }}
 
 jobs:
-  package-linux:
-    name: ${{ matrix.label }}
+  linux-single:
+    name: Linux ${{ matrix.label }}
+    if: github.event.inputs.target != 'windows-2022'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -53,24 +57,30 @@ jobs:
           - id: alpine-3.22
             label: Alpine 3.22 musl x86_64
             image: alpine:3.22
-            artifact_suffix: linux-x86_64-alpine3.22
+            artifact_suffix: linux-x86_64-alpine3.22-test
           - id: debian-12
             label: Debian 12 glibc x86_64
             image: debian:12
-            artifact_suffix: linux-x86_64-debian12
+            artifact_suffix: linux-x86_64-debian12-test
           - id: ubuntu-24.04
             label: Ubuntu 24.04 glibc x86_64
             image: ubuntu:24.04
-            artifact_suffix: linux-x86_64-ubuntu24.04
+            artifact_suffix: linux-x86_64-ubuntu24.04-test
           - id: rocky-9
             label: Rocky Linux 9 glibc x86_64
             image: rockylinux:9
-            artifact_suffix: linux-x86_64-rocky9
+            artifact_suffix: linux-x86_64-rocky9-test
     steps:
+      - name: Skip non-selected targets
+        if: matrix.id != github.event.inputs.target
+        run: echo "skip ${{ matrix.id }}"
+
       - name: Checkout repository
+        if: matrix.id == github.event.inputs.target
         uses: actions/checkout@v4
 
-      - name: Build TDLib and package transfer_bot
+      - name: Build selected Linux target
+        if: matrix.id == github.event.inputs.target
         run: |
           set -eux
           docker run --rm \
@@ -82,25 +92,24 @@ jobs:
             -e "PACKAGE_MODE=${PACKAGE_MODE}" \
             -e "TD_GIT_REF=${TD_GIT_REF}" \
             -e "RUN_CHECKS=${RUN_CHECKS}" \
-            -e "PACKAGE_RETENTION_KIND=full" \
+            -e "PACKAGE_RETENTION_KIND=test" \
             "${{ matrix.image }}" sh "/work/.github/scripts/build_linux_package.sh"
 
-      - name: Upload package
-        if: env.PACKAGE_MODE != 'build_only'
+      - name: Upload Linux test package
+        if: matrix.id == github.event.inputs.target && env.PACKAGE_MODE != 'build_only'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_PREFIX }}-${{ matrix.artifact_suffix }}
-          path: |
-            dist/${{ env.ARTIFACT_PREFIX }}-${{ matrix.artifact_suffix }}.tar.gz
-            dist/${{ env.ARTIFACT_PREFIX }}-${{ matrix.artifact_suffix }}.sha256
+          path: dist/${{ env.ARTIFACT_PREFIX }}-${{ matrix.artifact_suffix }}.tar.gz
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
-  package-windows:
+  windows-single:
     name: Windows Server 2022 MSVC x86_64
+    if: github.event.inputs.target == 'windows-2022'
     runs-on: windows-2022
     env:
-      CI_ARTIFACT_NAME: ${{ env.ARTIFACT_PREFIX }}-windows-x86_64-msvc
+      CI_ARTIFACT_NAME: ${{ env.ARTIFACT_PREFIX }}-windows-x86_64-msvc-test
       LOCAL_TDLIB_PATH: ${{ github.workspace }}\tdlib-install
       TD_BUILD_DIR: ${{ runner.temp }}\td-build
       TD_SOURCE_DIR: ${{ runner.temp }}\td
@@ -118,16 +127,14 @@ jobs:
         shell: pwsh
         run: |
           $env:PACKAGE_MODE = "${env:PACKAGE_MODE}"
-          $env:PACKAGE_RETENTION_KIND = "full"
+          $env:PACKAGE_RETENTION_KIND = "test"
           & ".github/scripts/build_windows_package.ps1"
 
-      - name: Upload Windows package
+      - name: Upload Windows test package
         if: env.PACKAGE_MODE != 'build_only'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.CI_ARTIFACT_NAME }}
-          path: |
-            dist/${{ env.CI_ARTIFACT_NAME }}.zip
-            dist/${{ env.CI_ARTIFACT_NAME }}.sha256
+          path: dist/${{ env.CI_ARTIFACT_NAME }}.zip
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
