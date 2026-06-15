@@ -2,6 +2,9 @@
 
 use super::types::CacheArgs;
 use crate::tgbot::transfer::card;
+use crate::tgbot::transfer::command::common::{
+    build_page_command_section, build_page_empty_note, build_ready_page_header,
+};
 use crate::tgbot::transfer::store;
 
 /// 计算缓存页数。
@@ -18,10 +21,8 @@ pub(super) fn format_cache_summary_text(
     health: &store::TransferHealthSnapshot,
     summary_rows: &[store::FileCacheStatusSummary],
 ) -> String {
-    let mut lines = vec![
-        "文件缓存概览".to_owned(),
-        format!("状态：{}", card::code("ready")),
-        card::DIVIDER.to_owned(),
+    let mut lines = build_ready_page_header("文件缓存概览");
+    lines.extend([
         card::section("总览"),
         card::field("记录数", health.file_cache_rows),
         card::field("活跃记录", health.file_cache_active_rows),
@@ -29,7 +30,7 @@ pub(super) fn format_cache_summary_text(
         card::field("删除失败", health.file_cache_failed_rows),
         card::field("总任务", health.total_jobs),
         card::field("活跃任务", health.active_jobs),
-    ];
+    ]);
     lines.push(card::section("状态分布"));
     if summary_rows.is_empty() {
         lines.push("暂无缓存记录".to_owned());
@@ -43,7 +44,7 @@ pub(super) fn format_cache_summary_text(
             ));
         }
     }
-    lines.push(card::section("命令"));
+    lines.push(build_page_command_section());
     lines.push(card::command_line("分页", "/cache page"));
     lines.push(card::command_line("健康", "/health"));
     lines.join("\n")
@@ -56,16 +57,14 @@ pub(super) fn format_cache_page_text(
     args: &CacheArgs,
     total_pages: u64,
 ) -> String {
-    let mut lines = vec![
-        "文件缓存列表".to_owned(),
-        format!("状态：{}", card::code("ready")),
-        card::DIVIDER.to_owned(),
+    let mut lines = build_ready_page_header("文件缓存列表");
+    lines.extend([
         card::section("分页"),
         card::field("页码", format!("{}/{}", args.page, total_pages)),
         card::field("每页", args.limit),
         card::field("总数", health.file_cache_rows),
-    ];
-    lines.push(card::section("命令"));
+    ]);
+    lines.push(build_page_command_section());
     lines.push(card::command_line(
         "当前页",
         format!("/cache page {} {}", args.limit, args.page),
@@ -73,7 +72,7 @@ pub(super) fn format_cache_page_text(
     lines.push(card::command_line("概览", "/cache summary"));
 
     if rows.is_empty() {
-        lines.push(card::note("当前页没有缓存记录。"));
+        lines.push(build_page_empty_note("当前页没有缓存记录。"));
         return lines.join("\n");
     }
 

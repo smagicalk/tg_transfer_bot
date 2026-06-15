@@ -1,15 +1,19 @@
 // `/menu` 输入草稿状态。
 // 草稿持久化在业务数据库中，真实转存任务仍全部落 transfer_job。
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{LazyLock, MutexGuard};
+mod db_store;
+mod memory;
 
-use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Set, Statement,
-    sea_query::OnConflict,
-};
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+use sea_orm::Set;
 
 use crate::db;
+use db_store::{
+    delete_draft, delete_draft_if_current, find_draft_model, purge_expired, put_draft_unlocked,
+    update_draft_if_current,
+};
 
 /// 输入草稿索引。
 ///
@@ -28,6 +32,8 @@ static MENU_LAST_TARGETS: LazyLock<std::sync::Mutex<HashMap<DraftKey, i64>>> =
 static MENU_DRAFT_ACTIVE_KEYS: LazyLock<std::sync::Mutex<HashSet<DraftKey>>> =
     LazyLock::new(|| std::sync::Mutex::new(HashSet::new()));
 
+pub(super) use memory::{acquire_draft_key_guard, last_target, remember_last_target};
+
 /// 菜单输入流程。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot::transfer::command::menu) enum MenuInputKind {
@@ -44,7 +50,7 @@ impl MenuInputKind {
     }
 
     /// 归一化到实际命令类型。
-    pub(super) fn command_kind(self) -> Self {
+    pub(in crate::tgbot::transfer::command::menu) fn command_kind(self) -> Self {
         match self {
             Self::Transfer | Self::TransferDefault => Self::Transfer,
             Self::Lookup | Self::LookupDefault => Self::Lookup,
@@ -150,13 +156,13 @@ pub(in crate::tgbot::transfer::command::menu) enum MenuJobAction {
 }
 
 impl MenuJobAction {
-    /// 映射到 `/job` 已支持的短动作参数。
+    /// 映射到 `/job` 的公开长动作参数。
     pub(super) fn command_action(self) -> &'static str {
         match self {
-            Self::Status => "st",
-            Self::Pause => "p",
-            Self::Resume => "r",
-            Self::Stop => "s",
+            Self::Status => "status",
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::Stop => "stop",
         }
     }
 
@@ -711,113 +717,6 @@ pub(super) async fn put_draft(key: DraftKey, draft: MenuInputDraft) -> anyhow::R
     put_draft_unlocked(key, draft).await
 }
 
-/// 写回草稿的无锁实现。
-///
-/// 仅供已经持有草稿 key guard 的状态层函数调用；外部入口必须使用 `put_draft`。
-async fn put_draft_unlocked(key: DraftKey, draft: MenuInputDraft) -> anyhow::Result<()> {
-    let db_conn = db::get_db().await?;
-    purge_expired().await?;
-    db::menu_input_draft::Entity::insert(draft.into_active_model(key))
-        .on_conflict(
-            OnConflict::columns([
-                db::menu_input_draft::Column::RequestChatId,
-                db::menu_input_draft::Column::SenderUserId,
-            ])
-            .update_columns([
-                db::menu_input_draft::Column::Step,
-                db::menu_input_draft::Column::InputKind,
-                db::menu_input_draft::Column::JobAction,
-                db::menu_input_draft::Column::SourceLink,
-                db::menu_input_draft::Column::TargetChatId,
-                db::menu_input_draft::Column::CreatedAt,
-                db::menu_input_draft::Column::UpdatedAt,
-                db::menu_input_draft::Column::ExpiresAt,
-            ])
-            .to_owned(),
-        )
-        .exec(db_conn)
-        .await?;
-    Ok(())
-}
-
-/// 仅当数据库行仍匹配刚才读到的业务字段时才删除。
-///
-/// 进程内已有 `MENU_DRAFT_ACTIVE_KEYS` 串行化，但如果以后同一数据库被多个 bot 进程使用，
-/// 另一个进程可能已经先消费或推进了草稿。SQLite 时间戳精度不适合作为稳定版本字段，
-/// 因此这里用当前步骤相关业务字段做条件匹配，避免旧阶段删除新阶段。
-async fn delete_draft_if_current(model: &db::menu_input_draft::Model) -> anyhow::Result<bool> {
-    let result = db::get_db()
-        .await?
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            r#"
-            DELETE FROM menu_input_draft
-            WHERE request_chat_id = ?
-              AND sender_user_id = ?
-              AND step = ?
-              AND input_kind IS ?
-              AND job_action IS ?
-              AND source_link IS ?
-              AND target_chat_id IS ?
-            "#,
-            current_draft_values(model),
-        ))
-        .await?;
-    Ok(result.rows_affected() == 1)
-}
-
-/// 仅当数据库行仍匹配刚才读到的业务字段时才推进到下一步。
-///
-/// 这不是为了替代进程内锁，而是补上跨进程/重复 worker 的最后一道保护：如果旧草稿已经被
-/// 其它执行者推进，当前执行者不应再覆盖更新后的状态。
-async fn update_draft_if_current(
-    model: &db::menu_input_draft::Model,
-    draft: MenuInputDraft,
-) -> anyhow::Result<bool> {
-    let now = now_utc8();
-    let expires_at = now + chrono::Duration::seconds(input_ttl_seconds() as i64);
-    let fields = DraftFields::from_step(draft.step);
-    let mut values = vec![
-        fields.step.to_owned().into(),
-        fields.input_kind.map(str::to_owned).into(),
-        fields.job_action.map(str::to_owned).into(),
-        fields.source_link.into(),
-        fields.target_chat_id.into(),
-        now.into(),
-        now.into(),
-        expires_at.into(),
-    ];
-    values.extend(current_draft_values(model));
-
-    let result = db::get_db()
-        .await?
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            r#"
-            UPDATE menu_input_draft
-            SET
-                step = ?,
-                input_kind = ?,
-                job_action = ?,
-                source_link = ?,
-                target_chat_id = ?,
-                created_at = ?,
-                updated_at = ?,
-                expires_at = ?
-            WHERE request_chat_id = ?
-              AND sender_user_id = ?
-              AND step = ?
-              AND input_kind IS ?
-              AND job_action IS ?
-              AND source_link IS ?
-              AND target_chat_id IS ?
-            "#,
-            values,
-        ))
-        .await?;
-    Ok(result.rows_affected() == 1)
-}
-
 /// 构造草稿当前业务字段绑定值。
 ///
 /// SQL 中使用 SQLite 的 `IS ?`，它既能匹配 NULL，也能匹配普通值；比 ORM 组合多列
@@ -857,73 +756,6 @@ pub(super) async fn put_confirm_draft(
     .await
 }
 
-/// 记录用户最近一次确认执行的目标 chat。
-pub(super) fn remember_last_target(chat_id: i64, user_id: i64, target_chat_id: i64) {
-    let mut targets = lock_menu_last_targets();
-    targets.insert((chat_id, user_id), target_chat_id);
-    tracing::debug!(
-        chat_id,
-        user_id,
-        target_chat_id,
-        "menu last target remembered"
-    );
-}
-
-/// 读取用户最近一次确认执行的目标 chat。
-pub(super) fn last_target(chat_id: i64, user_id: i64) -> Option<i64> {
-    let targets = lock_menu_last_targets();
-    targets.get(&(chat_id, user_id)).copied()
-}
-
-/// 获取最近目标锁；锁中毒时恢复内部 HashMap，避免交互缓存故障扩散成菜单不可用。
-fn lock_menu_last_targets() -> MutexGuard<'static, HashMap<DraftKey, i64>> {
-    match MENU_LAST_TARGETS.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            tracing::error!("recover poisoned menu last target mutex");
-            poisoned.into_inner()
-        }
-    }
-}
-
-/// 获取某个草稿键的进程内互斥。
-///
-/// 锁表只保存正在处理的 key，不在 await 期间持有 `MutexGuard`，因此不会阻塞其它用户的输入。
-async fn acquire_draft_key_guard(key: DraftKey) -> MenuDraftKeyGuard {
-    loop {
-        {
-            let mut keys = lock_menu_draft_active_keys();
-            if keys.insert(key) {
-                return MenuDraftKeyGuard { key };
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-}
-
-/// 草稿键互斥 guard。
-struct MenuDraftKeyGuard {
-    key: DraftKey,
-}
-
-impl Drop for MenuDraftKeyGuard {
-    fn drop(&mut self) {
-        let mut keys = lock_menu_draft_active_keys();
-        keys.remove(&self.key);
-    }
-}
-
-/// 获取草稿互斥锁；锁中毒时恢复集合，避免单个 panic 让所有菜单输入不可用。
-fn lock_menu_draft_active_keys() -> MutexGuard<'static, HashSet<DraftKey>> {
-    match MENU_DRAFT_ACTIVE_KEYS.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            tracing::error!("recover poisoned menu draft key mutex");
-            poisoned.into_inner()
-        }
-    }
-}
-
 /// 从输入阶段提取目标选择上下文。
 pub(super) fn target_context_from_step(step: &MenuInputStep) -> Option<(MenuInputKind, String)> {
     match step {
@@ -942,37 +774,6 @@ pub(super) fn target_context_from_step(step: &MenuInputStep) -> Option<(MenuInpu
 /// 判断当前阶段是否曾展示 reply keyboard。
 pub(super) fn step_uses_reply_keyboard(step: &MenuInputStep) -> bool {
     matches!(step, MenuInputStep::ChatPicker { .. })
-}
-
-/// 按主键读取草稿行。
-async fn find_draft_model(
-    chat_id: i64,
-    user_id: i64,
-) -> anyhow::Result<Option<db::menu_input_draft::Model>> {
-    Ok(db::menu_input_draft::Entity::find()
-        .filter(db::menu_input_draft::Column::RequestChatId.eq(chat_id))
-        .filter(db::menu_input_draft::Column::SenderUserId.eq(user_id))
-        .one(db::get_db().await?)
-        .await?)
-}
-
-/// 按主键删除草稿。
-async fn delete_draft(chat_id: i64, user_id: i64) -> anyhow::Result<()> {
-    db::menu_input_draft::Entity::delete_many()
-        .filter(db::menu_input_draft::Column::RequestChatId.eq(chat_id))
-        .filter(db::menu_input_draft::Column::SenderUserId.eq(user_id))
-        .exec(db::get_db().await?)
-        .await?;
-    Ok(())
-}
-
-/// 清理过期草稿。
-async fn purge_expired() -> anyhow::Result<()> {
-    db::menu_input_draft::Entity::delete_many()
-        .filter(db::menu_input_draft::Column::ExpiresAt.lte(now_utc8()))
-        .exec(db::get_db().await?)
-        .await?;
-    Ok(())
 }
 
 /// 统一生成 UTC+8 时间戳。
@@ -1297,6 +1098,57 @@ mod tests {
         Ok(())
     }
 
+    // 多步草稿应能按“源链接 -> 目标选择 -> 确认 -> 消费确认”完整推进，避免状态机只在局部测试里成立。
+    #[tokio::test]
+    async fn test_multi_step_draft_flow_roundtrip() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_041, 900_042);
+
+        put_draft(key, MenuInputDraft::source_link(MenuInputKind::Transfer)).await?;
+        assert!(matches!(
+            peek_current_draft(key).await?,
+            DraftTakeResult::Active(MenuInputDraft {
+                step: MenuInputStep::SourceLink {
+                    kind: MenuInputKind::Transfer
+                }
+            })
+        ));
+
+        put_target_choice_draft(
+            key,
+            MenuInputKind::Transfer,
+            "https://t.me/c/1/2".to_owned(),
+        )
+        .await?;
+        assert!(matches!(
+            advance_target_context(
+                key,
+                TargetDraftAdvance::Confirm {
+                    target_chat_id: -100
+                }
+            )
+            .await?,
+            TargetContextAdvanceResult::Active(TargetContext {
+                kind: MenuInputKind::Transfer,
+                ..
+            })
+        ));
+
+        assert!(matches!(
+            take_confirm_context(key).await?,
+            ConfirmContextTakeResult::Active(ConfirmContext {
+                kind: MenuInputKind::Transfer,
+                target_chat_id: -100,
+                ..
+            })
+        ));
+        assert!(matches!(
+            peek_current_draft(key).await?,
+            DraftTakeResult::None
+        ));
+        Ok(())
+    }
+
     // 不同输入流程应使用对应的长命令，最终复用已有命令入口。
     #[test]
     fn test_menu_input_kind_command_name() {
@@ -1324,13 +1176,13 @@ mod tests {
         }));
     }
 
-    // 菜单任务动作应稳定映射到 `/job` 的短参数，避免交互入口和命令入口语义分叉。
+    // 菜单任务动作应稳定映射到 `/job` 的公开长参数，避免交互入口和命令入口语义分叉。
     #[test]
     fn test_menu_job_action_command_action() {
-        assert_eq!(MenuJobAction::Status.command_action(), "st");
-        assert_eq!(MenuJobAction::Pause.command_action(), "p");
-        assert_eq!(MenuJobAction::Resume.command_action(), "r");
-        assert_eq!(MenuJobAction::Stop.command_action(), "s");
+        assert_eq!(MenuJobAction::Status.command_action(), "status");
+        assert_eq!(MenuJobAction::Pause.command_action(), "pause");
+        assert_eq!(MenuJobAction::Resume.command_action(), "resume");
+        assert_eq!(MenuJobAction::Stop.command_action(), "stop");
     }
 
     // 上次目标只是交互捷径，按 chat + user 隔离，避免多个管理员互相覆盖。

@@ -5,7 +5,7 @@ use crate::db;
 use sea_orm::EntityTrait;
 
 use super::super::card;
-use super::super::command::{build_downloads_short_command, build_downloads_status_button_data};
+use super::super::command::build_downloads_status_button_data;
 use super::super::types::SourceKind;
 use super::super::{spider, store};
 use super::TransferOutcome;
@@ -226,35 +226,7 @@ impl RecoveryStartupSummaries {
             }
             let panel =
                 crate::tgbot::send::ReplyPanel::card(format_recovery_startup_text(&summary))
-                    .row(vec![
-                        crate::tgbot::send::build_callback_button(
-                            "运行列表",
-                            &build_downloads_status_button_data("running", 8),
-                            tdlib_rs::enums::ButtonStyle::Primary,
-                        ),
-                        crate::tgbot::send::build_callback_button(
-                            "暂停列表",
-                            &build_downloads_status_button_data("paused", 8),
-                            tdlib_rs::enums::ButtonStyle::Default,
-                        ),
-                        crate::tgbot::send::build_callback_button(
-                            "停止列表",
-                            &build_downloads_status_button_data("cancelled", 8),
-                            tdlib_rs::enums::ButtonStyle::Default,
-                        ),
-                    ])
-                    .row(vec![
-                        crate::tgbot::send::build_callback_button(
-                            "全部任务",
-                            &build_downloads_status_button_data("all", 8),
-                            tdlib_rs::enums::ButtonStyle::Default,
-                        ),
-                        crate::tgbot::send::build_copy_button(
-                            "复制运行命令",
-                            &build_downloads_short_command(Some("run")),
-                            tdlib_rs::enums::ButtonStyle::Default,
-                        ),
-                    ]);
+                    .rows(build_recovery_startup_button_rows());
             if let Err(err) = panel.send(chat_id, client_id).await {
                 tracing::warn!(chat_id, error = %err, "send recovery startup summary failed");
             }
@@ -264,6 +236,36 @@ impl RecoveryStartupSummaries {
     fn entry(&mut self, request_chat_id: i64) -> &mut RecoveryStartupSummary {
         self.by_chat.entry(request_chat_id).or_default()
     }
+}
+
+/// 构造启动恢复摘要按钮。
+///
+/// 恢复摘要所有入口都能直接 callback 跳转列表，因此不再提供命令复制按钮。
+fn build_recovery_startup_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![
+            crate::tgbot::send::build_callback_button(
+                "运行列表",
+                &build_downloads_status_button_data("running", 8),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            crate::tgbot::send::build_callback_button(
+                "暂停列表",
+                &build_downloads_status_button_data("paused", 8),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            crate::tgbot::send::build_callback_button(
+                "停止列表",
+                &build_downloads_status_button_data("cancelled", 8),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![crate::tgbot::send::build_callback_button(
+            "全部任务",
+            &build_downloads_status_button_data("all", 8),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )],
+    ]
 }
 
 impl RecoveryStartupSummary {
@@ -308,16 +310,18 @@ fn format_recovery_startup_text(summary: &RecoveryStartupSummary) -> String {
         format!("示例 job：{}", card::code(sample_jobs)),
         card::note(note),
         card::section("命令"),
-        card::command_line("运行列表", build_downloads_short_command(Some("run"))),
-        card::command_line("暂停列表", build_downloads_short_command(Some("pause"))),
-        card::command_line("全部任务", build_downloads_short_command(Some("all"))),
+        card::command_line("运行列表", "/downloads run"),
+        card::command_line("暂停列表", "/downloads pause"),
+        card::command_line("全部任务", "/downloads all"),
     ]
     .join("\n")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{RecoveryStartupSummary, format_recovery_startup_text};
+    use super::{
+        RecoveryStartupSummary, build_recovery_startup_button_rows, format_recovery_startup_text,
+    };
 
     use crate::db;
     use crate::tgbot::transfer::store;
@@ -343,7 +347,7 @@ mod tests {
         assert!(text.contains("bot源：‹1›"));
         assert!(text.contains("user源：‹1›"));
         assert!(text.contains("示例 job：‹#11, #12›"));
-        assert!(text.contains("运行列表：‹/d run›"));
+        assert!(text.contains("运行列表：‹/downloads run›"));
     }
 
     // 只有停止任务被收敛时，摘要不应误导用户“后台已派发恢复任务”。
@@ -363,6 +367,122 @@ mod tests {
         assert!(text.contains("示例 job：‹无›"));
         assert!(text.contains("没有需要重新执行的任务"));
         assert!(!text.contains("已自动派发可恢复任务"));
+    }
+
+    // 恢复摘要按钮都应直接跳列表，不再保留复制运行命令。
+    #[test]
+    fn test_build_recovery_startup_button_rows() {
+        let rows = build_recovery_startup_button_rows();
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows[0][0].text, "运行列表");
+        assert_eq!(rows[0][1].text, "暂停列表");
+        assert_eq!(rows[0][2].text, "停止列表");
+        assert_eq!(rows[1][0].text, "全部任务");
+        assert!(!labels.contains(&"复制运行命令"));
+        assert!(labels.iter().all(|label| !label.starts_with("复制")));
+    }
+
+    // 启动恢复摘要应按 request_chat_id 聚合，并限制示例 job 数量，避免单 chat 摘要无限变长。
+    #[test]
+    fn test_recovery_startup_summaries_group_by_chat_and_limit_samples() {
+        let mut summaries = super::RecoveryStartupSummaries::default();
+        let now = store::now_utc8();
+        for job_id in 1..=7 {
+            let job = db::transfer_job::Model {
+                id: job_id,
+                request_chat_id: 100,
+                request_message_id: 1_000 + job_id,
+                owner_user_id: 2_000 + job_id,
+                source_link: format!("https://t.me/c/100/{}", job_id),
+                source_kind: "link".to_owned(),
+                source_client_role: if job_id % 2 == 0 {
+                    "bot".to_owned()
+                } else {
+                    "user".to_owned()
+                },
+                allow_user_fallback: false,
+                source_chat_id: 3_000 + job_id,
+                source_message_id: 4_000 + job_id,
+                source_album_id: 0,
+                target_chat_id: 5_000 + job_id,
+                result_message_id: None,
+                result_message_link: None,
+                status: store::JOB_STATUS_RUNNING.to_owned(),
+                total_items: 1,
+                done_items: 0,
+                failed_items: 0,
+                retry_count: 0,
+                cost_points: 0,
+                charged_points: 0,
+                billing_status: "free".to_owned(),
+                last_error: None,
+                created_at: now,
+                updated_at: now,
+                finished_at: None,
+            };
+            summaries.add_recoverable(&job);
+        }
+        let finalized = db::transfer_job::Model {
+            id: 99,
+            request_chat_id: 200,
+            request_message_id: 9_999,
+            owner_user_id: 8_888,
+            source_link: "https://t.me/c/200/99".to_owned(),
+            source_kind: "link".to_owned(),
+            source_client_role: "user".to_owned(),
+            allow_user_fallback: false,
+            source_chat_id: 7_777,
+            source_message_id: 6_666,
+            source_album_id: 0,
+            target_chat_id: 5_555,
+            result_message_id: None,
+            result_message_link: None,
+            status: store::JOB_STATUS_CANCELLED.to_owned(),
+            total_items: 1,
+            done_items: 0,
+            failed_items: 0,
+            retry_count: 0,
+            cost_points: 0,
+            charged_points: 0,
+            billing_status: "free".to_owned(),
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+            finished_at: Some(now),
+        };
+        summaries.add_finalized(&finalized);
+
+        let first = summaries.by_chat.get(&100).expect("chat 100 summary");
+        let second = summaries.by_chat.get(&200).expect("chat 200 summary");
+
+        assert_eq!(first.recoverable_count, 7);
+        assert_eq!(first.sample_job_ids.len(), 5);
+        assert_eq!(first.bot_source_count + first.user_source_count, 7);
+        assert_eq!(second.finalized_count, 1);
+        assert_eq!(second.recoverable_count, 0);
+    }
+
+    // 启动恢复摘要只反映转存任务恢复；如果一个 chat 没有 recoverable/finalized job，就不应发送摘要。
+    #[test]
+    fn test_recovery_summary_should_send_only_for_job_recovery() {
+        let empty = RecoveryStartupSummary::default();
+        let only_recoverable = RecoveryStartupSummary {
+            recoverable_count: 1,
+            ..Default::default()
+        };
+        let only_finalized = RecoveryStartupSummary {
+            finalized_count: 1,
+            ..Default::default()
+        };
+
+        assert!(!empty.should_send());
+        assert!(only_recoverable.should_send());
+        assert!(only_finalized.should_send());
     }
 
     // 恢复扫描只应捞出 pending/running，而 cancelling/cancel_finalizing 走单独收敛路径。

@@ -112,8 +112,7 @@ fn build_help_page(
     command_name: Option<&str>,
     actor: crate::config::RequestActor,
 ) -> anyhow::Result<(String, Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>)> {
-    // 先把 `/cfg`、`hl`、`fc` 这类短别名归一化，再做权限判断。
-    // 否则普通用户可以通过 `/help cfg` 绕过目录页隐藏规则看到 admin-only 帮助。
+    // 先归一化再做权限判断，避免带斜杠写法绕过目录页权限控制。
     let command_name = match command_name {
         Some(command_name) => {
             let normalized = topic::normalize_help_topic(command_name)?;
@@ -172,16 +171,18 @@ mod access_tests {
         assert!(help_topic_allowed("cache", admin));
     }
 
-    // `/help <topic>` 必须先归一化再做权限判断，短别名不能绕过 admin-only 限制。
+    // `/help <topic>` 必须先归一化再做权限判断；当前仅接受长命令 topic。
     #[test]
-    fn test_build_help_page_rejects_admin_aliases_for_user() {
+    fn test_build_help_page_rejects_short_aliases_for_user() {
         let user = actor(crate::config::ActorRole::User);
         let admin = actor(crate::config::ActorRole::Admin);
 
         assert!(build_help_page(Some("cfg"), user).is_err());
         assert!(build_help_page(Some("hl"), user).is_err());
         assert!(build_help_page(Some("fc"), user).is_err());
-        assert!(build_help_page(Some("bal"), user).is_ok());
-        assert!(build_help_page(Some("cfg"), admin).is_ok());
+        assert!(build_help_page(Some("bal"), user).is_err());
+        assert!(build_help_page(Some("cfg"), admin).is_err());
+        assert!(build_help_page(Some("balance"), user).is_ok());
+        assert!(build_help_page(Some("config"), admin).is_ok());
     }
 }

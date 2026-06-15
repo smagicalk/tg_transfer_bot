@@ -1001,7 +1001,7 @@ mod tests {
         let keyboard = build_inline_keyboard(vec![vec![
             build_copy_button(
                 "复制查询命令",
-                "/lk https://t.me/c/1/2 -100",
+                "/lookup https://t.me/c/1/2 -100",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             build_url_button(
@@ -1028,7 +1028,7 @@ mod tests {
         assert!(text.text.contains("可复制内容："));
         assert!(
             text.text
-                .contains("复制查询命令：/lk https://t.me/c/1/2 -100")
+                .contains("复制查询命令：/lookup https://t.me/c/1/2 -100")
         );
         assert!(text.text.contains("打开转存消息：https://t.me/c/3/4"));
         assert!(!text.text.contains("d:r:all:8:1"));

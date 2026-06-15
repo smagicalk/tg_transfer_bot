@@ -21,6 +21,9 @@ pub use command::{
     menu_command, points_command, transfer_bot_message_auto_command, transfer_callback_query,
     transfer_command,
 };
+pub(in crate::tgbot) use command::{
+    build_balance_button_data, build_help_button_data, build_menu_home_button_data_for_outer,
+};
 pub(in crate::tgbot) use outcome::{TransferErrorKind, classify_transfer_error_text};
 pub(in crate::tgbot::transfer) use runtime::runtime_config;
 pub use runtime::{init_runtime_config, update_runtime_config};

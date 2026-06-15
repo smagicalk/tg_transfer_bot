@@ -10,6 +10,9 @@ const MENU_CALLBACK_PREFIX: &str = "m:";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MenuPage {
     Home,
+    TasksHub,
+    AccountHub,
+    AdminHub,
     Transfer,
     Downloads,
     Jobs,
@@ -23,6 +26,9 @@ impl MenuPage {
     pub(super) fn title(self) -> &'static str {
         match self {
             Self::Home => "菜单",
+            Self::TasksHub => "任务",
+            Self::AccountHub => "账户",
+            Self::AdminHub => "管理",
             Self::Transfer => "转存",
             Self::Downloads => "下载",
             Self::Jobs => "任务",
@@ -36,6 +42,9 @@ impl MenuPage {
     fn code(self) -> &'static str {
         match self {
             Self::Home => "home",
+            Self::TasksHub => "th",
+            Self::AccountHub => "ah",
+            Self::AdminHub => "mh",
             Self::Transfer => "t",
             Self::Downloads => "d",
             Self::Jobs => "j",
@@ -49,6 +58,9 @@ impl MenuPage {
     fn parse(code: &str) -> Option<Self> {
         match code {
             "home" => Some(Self::Home),
+            "th" => Some(Self::TasksHub),
+            "ah" => Some(Self::AccountHub),
+            "mh" => Some(Self::AdminHub),
             "t" => Some(Self::Transfer),
             "d" => Some(Self::Downloads),
             "j" => Some(Self::Jobs),
@@ -209,6 +221,18 @@ mod tests {
         assert_eq!(
             parse_menu_callback_data("m:home"),
             Some(MenuRequestAction::Page(MenuPage::Home))
+        );
+        assert_eq!(
+            parse_menu_callback_data("m:th"),
+            Some(MenuRequestAction::Page(MenuPage::TasksHub))
+        );
+        assert_eq!(
+            parse_menu_callback_data("m:ah"),
+            Some(MenuRequestAction::Page(MenuPage::AccountHub))
+        );
+        assert_eq!(
+            parse_menu_callback_data("m:mh"),
+            Some(MenuRequestAction::Page(MenuPage::AdminHub))
         );
         assert_eq!(
             parse_menu_callback_data("m:new"),

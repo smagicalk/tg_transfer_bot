@@ -65,29 +65,25 @@ pub(super) fn format_transfer_progress_text(
     lines.push(card::section("命令"));
     lines.push(card::command_line(
         "详情",
-        build_job_command("st", snapshot.job.id, CommandStyle::Short),
+        build_job_command("status", snapshot.job.id, CommandStyle::Long),
     ));
     lines.push(card::command_line(
         "查询",
-        build_lookup_command(
-            source_link,
-            snapshot.job.target_chat_id,
-            CommandStyle::Short,
-        ),
+        build_lookup_command(source_link, snapshot.job.target_chat_id, CommandStyle::Long),
     ));
     match snapshot.job.status.as_str() {
         store::JOB_STATUS_PAUSED => {
             lines.push(card::command_line(
                 "恢复",
-                build_job_command("r", snapshot.job.id, CommandStyle::Short),
+                build_job_command("resume", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "停止",
-                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+                build_job_command("stop", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("pause"), None, None, CommandStyle::Long),
             ));
         }
         store::JOB_STATUS_CANCELLING
@@ -95,21 +91,21 @@ pub(super) fn format_transfer_progress_text(
         | store::JOB_STATUS_CANCELLED => {
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("cancel"), None, None, CommandStyle::Long),
             ));
         }
         _ => {
             lines.push(card::command_line(
                 "暂停",
-                build_job_command("p", snapshot.job.id, CommandStyle::Short),
+                build_job_command("pause", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "停止",
-                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+                build_job_command("stop", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("run"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("run"), None, None, CommandStyle::Long),
             ));
         }
     }
@@ -135,15 +131,15 @@ pub(super) fn format_transfer_final_text_with_results(
         card::section("命令"),
         card::command_line(
             "查询",
-            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Long),
         ),
         card::command_line(
             "重转",
-            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+            build_transfer_command(source_link, target_chat_id, CommandStyle::Long),
         ),
         card::command_line(
             "列表",
-            build_downloads_command(Some("done"), None, None, CommandStyle::Short),
+            build_downloads_command(Some("done"), None, None, CommandStyle::Long),
         ),
         String::new(),
     ];
@@ -197,10 +193,22 @@ pub(super) fn format_transfer_control_text(
         card::section("说明"),
         card::note(detail),
         card::section("命令"),
-        card::command_line("详情", build_job_command("st", job_id, CommandStyle::Short)),
-        card::command_line("暂停", build_job_command("p", job_id, CommandStyle::Short)),
-        card::command_line("恢复", build_job_command("r", job_id, CommandStyle::Short)),
-        card::command_line("停止", build_job_command("s", job_id, CommandStyle::Short)),
+        card::command_line(
+            "详情",
+            build_job_command("status", job_id, CommandStyle::Long),
+        ),
+        card::command_line(
+            "暂停",
+            build_job_command("pause", job_id, CommandStyle::Long),
+        ),
+        card::command_line(
+            "恢复",
+            build_job_command("resume", job_id, CommandStyle::Long),
+        ),
+        card::command_line(
+            "停止",
+            build_job_command("stop", job_id, CommandStyle::Long),
+        ),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
@@ -222,15 +230,15 @@ pub(super) fn format_transfer_error_text(
         card::section("命令"),
         card::command_line(
             "重试",
-            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+            build_transfer_command(source_link, target_chat_id, CommandStyle::Long),
         ),
         card::command_line(
             "查询",
-            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Long),
         ),
         card::command_line(
             "列表",
-            build_downloads_command(Some("fail"), None, None, CommandStyle::Short),
+            build_downloads_command(Some("fail"), None, None, CommandStyle::Long),
         ),
         String::new(),
     ];

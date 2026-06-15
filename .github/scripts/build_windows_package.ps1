@@ -21,6 +21,7 @@ $workspace = if ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { $PWD.Pa
 $localTdlibPath = if ($env:LOCAL_TDLIB_PATH) { $env:LOCAL_TDLIB_PATH } else { Join-Path $workspace "tdlib-install" }
 $tdBuildDir = if ($env:TD_BUILD_DIR) { $env:TD_BUILD_DIR } else { Join-Path $env:RUNNER_TEMP "td-build" }
 $tdSourceDir = if ($env:TD_SOURCE_DIR) { $env:TD_SOURCE_DIR } else { Join-Path $env:RUNNER_TEMP "td" }
+$targetRoot = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $workspace "target" }
 $packageRetentionKind = if ($env:PACKAGE_RETENTION_KIND) { $env:PACKAGE_RETENTION_KIND } else { "full" }
 $packageMode = if ($env:PACKAGE_MODE) { $env:PACKAGE_MODE } else { "package" }
 
@@ -107,12 +108,12 @@ if ($env:RUN_CHECKS -eq "true") {
 }
 
 cargo build -p transfer_bot --release
-if (-not (Test-Path (Join-Path $workspace "target\release\transfer_bot.exe"))) {
+if (-not (Test-Path (Join-Path $targetRoot "release\transfer_bot.exe"))) {
     throw "transfer_bot.exe was not built"
 }
 
 if ($packageMode -eq "build_only") {
-    Write-Host "build_only completed: $(Join-Path $workspace 'target\release\transfer_bot.exe')"
+    Write-Host "build_only completed: $(Join-Path $targetRoot 'release\transfer_bot.exe')"
     exit 0
 }
 
@@ -122,7 +123,7 @@ $dist = Join-Path $distRoot $artifact
 Remove-Item -Recurse -Force $dist, "$dist.zip", "$dist.sha256" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$dist\bin" | Out-Null
 
-Copy-Item (Join-Path $workspace "target\release\transfer_bot.exe") "$dist\bin\transfer_bot.exe" -Force
+Copy-Item (Join-Path $targetRoot "release\transfer_bot.exe") "$dist\bin\transfer_bot.exe" -Force
 Copy-Item "$localTdlibPath\bin\tdjson.dll" "$dist\bin\tdjson.dll" -Force
 
 $vcpkgBin = Join-Path $env:VCPKG_ROOT "installed\x64-windows\bin"

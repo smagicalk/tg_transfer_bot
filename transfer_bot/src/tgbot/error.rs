@@ -2,9 +2,12 @@
 // 将 `tdlib_rs::types::Error` 适配为标准 Error，便于 anyhow 统一处理。
 use std::fmt;
 
-use crate::tgbot::send::{ReplyPanel, build_copy_button};
+use crate::tgbot::send::{ReplyPanel, build_callback_button, build_copy_button};
 use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::{self as transfer_mod};
+use crate::tgbot::transfer::{
+    build_balance_button_data, build_help_button_data, build_menu_home_button_data_for_outer,
+};
 
 #[derive(Debug)]
 pub struct TdError(pub tdlib_rs::types::Error);
@@ -28,8 +31,19 @@ pub(crate) struct CommandErrorHint {
     pub(crate) advice: &'static str,
     pub(crate) primary_label: &'static str,
     pub(crate) primary_command: &'static str,
-    pub(crate) primary_button: &'static str,
+    pub(crate) primary_action: CommandErrorPrimaryAction,
     pub(crate) help_command: &'static str,
+}
+
+/// 命令错误卡片主按钮的真实行为。
+///
+/// 之前只存文案和命令字符串，容易出现“按钮写的是查看余额，实际却跳菜单”的错位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandErrorPrimaryAction {
+    OpenBalance,
+    OpenHelp,
+    OpenMenu,
+    CopyPrimaryCommand,
 }
 
 /// 命令错误分类到“下一步操作”的映射。
@@ -39,7 +53,7 @@ pub(crate) struct CommandErrorHint {
 struct CommandErrorAction {
     primary_label: &'static str,
     primary_command: &'static str,
-    primary_button: &'static str,
+    primary_action: CommandErrorPrimaryAction,
     help_command: &'static str,
 }
 
@@ -57,13 +71,13 @@ pub(crate) async fn send_unknown_command_message(
             card::section("输入"),
             card::command_line("命令", command),
             card::section("下一步"),
-            card::command_line("帮助", "/h"),
+            card::command_line("帮助", "/help"),
         ]
         .join("\n"),
     )
-    .row(vec![build_copy_button(
-        "复制 /h",
-        "/h",
+    .row(vec![build_callback_button(
+        "打开帮助",
+        &crate::tgbot::transfer::build_help_button_data(None),
         tdlib_rs::enums::ButtonStyle::Primary,
     )])
     .send(chat_id, client_id)
@@ -102,11 +116,7 @@ pub(crate) async fn send_command_error_message(
         .join("\n"),
     )
     .row(vec![
-        build_copy_button(
-            hint.primary_button,
-            hint.primary_command,
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
+        build_primary_action_button(&hint),
         build_copy_button(
             "复制帮助",
             hint.help_command,
@@ -143,7 +153,7 @@ pub(crate) fn command_error_hint(error_text: &str) -> CommandErrorHint {
         advice: hint.advice,
         primary_label: action.primary_label,
         primary_command: action.primary_command,
-        primary_button: action.primary_button,
+        primary_action: action.primary_action,
         help_command: action.help_command,
     }
 }
@@ -154,35 +164,61 @@ fn command_error_action(kind: transfer_mod::TransferErrorKind) -> CommandErrorAc
         transfer_mod::TransferErrorKind::InsufficientPoints => CommandErrorAction {
             primary_label: "查看余额",
             primary_command: "/balance",
-            primary_button: "复制 /balance",
-            help_command: "/h points",
+            primary_action: CommandErrorPrimaryAction::OpenBalance,
+            help_command: "/help points",
         },
         transfer_mod::TransferErrorKind::MissingTarget => CommandErrorAction {
             primary_label: "转存模板",
             primary_command: "/transfer <link> <target>",
-            primary_button: "复制转存模板",
-            help_command: "/h transfer",
+            primary_action: CommandErrorPrimaryAction::CopyPrimaryCommand,
+            help_command: "/help transfer",
         },
         transfer_mod::TransferErrorKind::InvalidArgs => CommandErrorAction {
             primary_label: "转存帮助",
-            primary_command: "/h transfer",
-            primary_button: "复制帮助",
-            help_command: "/h",
+            primary_command: "/help transfer",
+            primary_action: CommandErrorPrimaryAction::OpenHelp,
+            help_command: "/help",
         },
         transfer_mod::TransferErrorKind::TargetDenied
         | transfer_mod::TransferErrorKind::SourceDenied
         | transfer_mod::TransferErrorKind::PermissionDenied => CommandErrorAction {
             primary_label: "打开菜单",
             primary_command: "/menu",
-            primary_button: "复制 /menu",
-            help_command: "/h transfer",
+            primary_action: CommandErrorPrimaryAction::OpenMenu,
+            help_command: "/help transfer",
         },
         _ => CommandErrorAction {
             primary_label: "帮助",
-            primary_command: "/h",
-            primary_button: "复制 /h",
-            help_command: "/h",
+            primary_command: "/help",
+            primary_action: CommandErrorPrimaryAction::OpenHelp,
+            help_command: "/help",
         },
+    }
+}
+
+/// 根据错误提示定义构造真正的主按钮。
+fn build_primary_action_button(hint: &CommandErrorHint) -> tdlib_rs::types::InlineKeyboardButton {
+    match hint.primary_action {
+        CommandErrorPrimaryAction::OpenBalance => build_callback_button(
+            hint.primary_label,
+            &build_balance_button_data(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        CommandErrorPrimaryAction::OpenHelp => build_callback_button(
+            hint.primary_label,
+            &build_help_button_data(None),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        CommandErrorPrimaryAction::OpenMenu => build_callback_button(
+            hint.primary_label,
+            &build_menu_home_button_data_for_outer(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        CommandErrorPrimaryAction::CopyPrimaryCommand => build_copy_button(
+            hint.primary_label,
+            hint.primary_command,
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
     }
 }
 
@@ -206,12 +242,16 @@ pub(crate) async fn send_permission_denied_message(
         .join("\n"),
     )
     .row(vec![
-        build_copy_button(
-            "复制 /balance",
-            "/balance",
+        build_callback_button(
+            "查看余额",
+            &crate::tgbot::transfer::build_balance_button_data(),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
-        build_copy_button("复制 /help", "/help", tdlib_rs::enums::ButtonStyle::Default),
+        build_callback_button(
+            "打开帮助",
+            &crate::tgbot::transfer::build_help_button_data(None),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
     ])
     .send(chat_id, client_id)
     .await
@@ -219,7 +259,7 @@ pub(crate) async fn send_permission_denied_message(
 
 /// 自动转存媒体失败时给出可执行提示。
 ///
-/// 最常见原因是当前请求 chat 没配置默认 target；用户可以直接回复这条媒体发送 `/t <target>`。
+/// 最常见原因是当前请求 chat 没配置默认 target；用户可以直接回复这条媒体发送 `/transfer <target>`。
 pub(crate) async fn send_auto_transfer_hint_message(
     err: &anyhow::Error,
     chat_id: i64,
@@ -234,13 +274,13 @@ pub(crate) async fn send_auto_transfer_hint_message(
             card::pre_code(format!("{:#}", err)),
             card::section("下一步"),
             "请回复要转存的媒体消息，并发送下面命令。".to_owned(),
-            card::command_line("指定目标", "/t <target_chat_id_or_alias>"),
+            card::command_line("指定目标", "/transfer <target_chat_id_or_alias>"),
         ]
         .join("\n"),
     )
     .row(vec![build_copy_button(
-        "复制 /t",
-        "/t <target_chat_id_or_alias>",
+        "复制 /transfer",
+        "/transfer <target_chat_id_or_alias>",
         tdlib_rs::enums::ButtonStyle::Primary,
     )])
     .send(chat_id, client_id)

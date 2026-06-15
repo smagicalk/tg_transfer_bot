@@ -4,7 +4,7 @@
 
 mod callback;
 
-use super::common::{CommandStyle, config_set_command, config_show_command, short_and_long};
+use super::common::{CommandStyle, config_set_command, config_show_command};
 use crate::config;
 use crate::tgbot::send;
 use crate::tgbot::send::send_interaction_error_card;
@@ -337,34 +337,13 @@ fn format_transfer_config_text(title: &str, config: &config::TransferConfig) -> 
         ),
         "".to_owned(),
         card::section("命令"),
-        short_and_long(
-            config_show_command(CommandStyle::Short),
-            config_show_command(CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("job_concurrency", 4, CommandStyle::Short),
-            config_set_command("job_concurrency", 4, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("file_delete_delay_minutes", 3, CommandStyle::Short),
-            config_set_command("file_delete_delay_minutes", 3, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("file_gc_interval_seconds", 30, CommandStyle::Short),
-            config_set_command("file_gc_interval_seconds", 30, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Short),
-            config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("downloads_default_page_size", 10, CommandStyle::Short),
-            config_set_command("downloads_default_page_size", 10, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Short),
-            config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Long),
-        ),
+        config_show_command(CommandStyle::Long),
+        config_set_command("job_concurrency", 4, CommandStyle::Long),
+        config_set_command("file_delete_delay_minutes", 3, CommandStyle::Long),
+        config_set_command("file_gc_interval_seconds", 30, CommandStyle::Long),
+        config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Long),
+        config_set_command("downloads_default_page_size", 10, CommandStyle::Long),
+        config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Long),
     ]
     .join("\n")
 }
@@ -394,7 +373,7 @@ mod tests {
         assert!(text.contains("progress_edit_interval_seconds"));
         assert!(text.contains("downloads_default_page_size"));
         assert!(text.contains("menu_input_timeout_seconds"));
-        assert!(text.contains("‹/cfg show›"));
+        assert!(text.contains("/config show"));
     }
 
     // 按钮调整必须做边界限制，避免误触后出现 0 并发或过短 GC。

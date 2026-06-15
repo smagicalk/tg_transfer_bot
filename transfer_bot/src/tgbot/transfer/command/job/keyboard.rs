@@ -4,7 +4,7 @@
 use crate::tgbot::send;
 use crate::tgbot::transfer::store::JobProgressSnapshot;
 
-use super::super::common::{CommandStyle, downloads_command, job_command as build_job_command};
+use super::super::common::{build_copy_only_row, build_refresh_return_menu_row};
 use super::super::downloads::build_downloads_return_list_callback_data;
 use super::super::menu::build_menu_home_callback_data;
 use super::args::{JobCallbackAction, build_job_callback_data};
@@ -45,7 +45,7 @@ pub(super) fn build_job_status_buttons(
         rows.push(action_row);
     }
 
-    rows.push(vec![
+    rows.push(build_refresh_return_menu_row(
         send::build_callback_button(
             "刷新详情",
             &build_job_callback_data(JobCallbackAction::Status, job_id),
@@ -56,22 +56,17 @@ pub(super) fn build_job_status_buttons(
             &build_downloads_return_list_callback_data(status, 8),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-        send::build_copy_button(
-            "复制列表命令",
-            &downloads_command(Some(meta.list_filter), None, None, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
         send::build_callback_button(
             "菜单",
             &build_menu_home_callback_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-    ]);
-    rows.push(vec![send::build_copy_button(
-        "复制详情命令",
-        &build_job_command("st", job_id, CommandStyle::Short),
+    ));
+    rows.push(build_copy_only_row(send::build_copy_button(
+        "复制 job_id",
+        &job_id.to_string(),
         tdlib_rs::enums::ButtonStyle::Default,
-    )]);
+    )));
     rows
 }
 
@@ -88,13 +83,13 @@ mod tests {
         assert_eq!(buttons[0][0].text, "暂停");
         assert_eq!(buttons[0][1].text, "停止");
         assert_eq!(buttons[1][0].text, "刷新详情");
-        assert_eq!(buttons[1][3].text, "菜单");
+        assert_eq!(buttons[1][2].text, "菜单");
         assert!(matches!(
             buttons[0][0].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
         assert!(matches!(
-            buttons[1][3].r#type,
+            buttons[1][2].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
     }
@@ -118,6 +113,7 @@ mod tests {
             buttons[1][1].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
+        assert_eq!(buttons[2][0].text, "复制 job_id");
     }
 
     // 任务状态应映射到最接近的 downloads 筛选。

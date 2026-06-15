@@ -24,8 +24,14 @@ pub(in crate::tgbot::transfer::command) async fn points_callback_query(
         send::answer_callback_query(update.id, Some("积分流水参数无效"), client_id).await?;
         return Ok(());
     };
+    let effective_user_id =
+        if matches!(request.kind, super::LedgerCommandKind::Balance) && request.user_id == 0 {
+            actor.user_id
+        } else {
+            request.user_id
+        };
     let allowed = match request.kind {
-        super::LedgerCommandKind::Balance => actor.is_admin() || request.user_id == actor.user_id,
+        super::LedgerCommandKind::Balance => actor.is_admin() || effective_user_id == actor.user_id,
         super::LedgerCommandKind::Points => actor.is_admin(),
     };
     if !allowed {
@@ -41,7 +47,7 @@ pub(in crate::tgbot::transfer::command) async fn points_callback_query(
 
     let rendered = match render_ledger_panel(
         request.kind,
-        request.user_id,
+        effective_user_id,
         request.limit,
         request.page,
         matches!(request.kind, super::LedgerCommandKind::Points),

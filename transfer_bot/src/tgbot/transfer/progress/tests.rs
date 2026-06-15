@@ -64,11 +64,11 @@ fn test_format_transfer_progress_text_card_layout() {
     assert!(text.contains("真实下载：1 个文件 1.0 KB/2.0 KB"));
     assert!(text.contains("||||||||||---------- 50%"));
     assert!(text.contains("■ 命令"));
-    assert!(text.contains("详情：‹/j st 42›"));
-    assert!(text.contains("暂停：‹/j p 42›"));
-    assert!(text.contains("停止：‹/j s 42›"));
-    assert!(text.contains("列表：‹/d run›"));
-    assert!(text.contains("查询：‹/lk https://t.me/c/1/2 -100›"));
+    assert!(text.contains("详情：‹/job status 42›"));
+    assert!(text.contains("暂停：‹/job pause 42›"));
+    assert!(text.contains("停止：‹/job stop 42›"));
+    assert!(text.contains("列表：‹/downloads run›"));
+    assert!(text.contains("查询：‹/lookup https://t.me/c/1/2 -100›"));
 }
 
 // 控制态正文也要包含命令，避免用户号模式隐藏按钮后无法操作。
@@ -83,10 +83,10 @@ fn test_format_transfer_control_text_contains_commands() {
     );
 
     assert!(text.contains("■ 命令"));
-    assert!(text.contains("详情：‹/j st 42›"));
-    assert!(text.contains("暂停：‹/j p 42›"));
-    assert!(text.contains("恢复：‹/j r 42›"));
-    assert!(text.contains("停止：‹/j s 42›"));
+    assert!(text.contains("详情：‹/job status 42›"));
+    assert!(text.contains("暂停：‹/job pause 42›"));
+    assert!(text.contains("恢复：‹/job resume 42›"));
+    assert!(text.contains("停止：‹/job stop 42›"));
 }
 
 // 最终结果按钮应按成功/失败切换列表筛选命令。
@@ -100,18 +100,16 @@ fn test_build_transfer_result_keyboard_uses_result_state_filter() {
     );
     let fail_keyboard = build_transfer_result_keyboard("https://t.me/c/1/2", -100, None, None);
 
-    assert_eq!(success_keyboard.rows[1][2].text, "复制列表命令");
-    assert_eq!(fail_keyboard.rows[1][2].text, "复制列表命令");
-    assert_eq!(success_keyboard.rows[1][1].text, "查看完成列表");
-    assert_eq!(fail_keyboard.rows[1][1].text, "查看失败列表");
-    assert_eq!(success_keyboard.rows[1][3].text, "菜单");
-    assert_eq!(fail_keyboard.rows[1][3].text, "菜单");
+    assert_eq!(success_keyboard.rows[2][0].text, "查看完成列表");
+    assert_eq!(fail_keyboard.rows[0][0].text, "查看失败列表");
+    assert_eq!(success_keyboard.rows[2][1].text, "菜单");
+    assert_eq!(fail_keyboard.rows[0][1].text, "菜单");
     assert!(matches!(
-        success_keyboard.rows[1][1].r#type,
+        success_keyboard.rows[2][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
     assert!(matches!(
-        success_keyboard.rows[1][3].r#type,
+        success_keyboard.rows[2][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }
@@ -173,11 +171,10 @@ fn test_build_transfer_progress_keyboard_has_callback_buttons() {
     );
 
     assert_eq!(keyboard.rows[0][0].text, "查看运行列表");
-    assert_eq!(keyboard.rows[0][2].text, "菜单");
+    assert_eq!(keyboard.rows[0][1].text, "菜单");
     assert_eq!(keyboard.rows[1][0].text, "查看任务详情");
     assert_eq!(keyboard.rows[1][1].text, "暂停");
     assert_eq!(keyboard.rows[1][2].text, "停止");
-    assert_eq!(keyboard.rows[2][0].text, "复制暂停命令");
     assert!(matches!(
         keyboard.rows[0][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
@@ -191,9 +188,16 @@ fn test_build_transfer_progress_keyboard_has_callback_buttons() {
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
     assert!(matches!(
-        keyboard.rows[0][2].r#type,
+        keyboard.rows[0][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
+    let labels = keyboard
+        .rows
+        .iter()
+        .flatten()
+        .map(|button| button.text.as_str())
+        .collect::<Vec<_>>();
+    assert!(!labels.contains(&"复制查询命令"));
 }
 
 // 暂停态进度面板应展示恢复按钮，避免用户只能复制命令恢复。
@@ -208,7 +212,6 @@ fn test_build_transfer_progress_keyboard_for_paused_job() {
 
     assert_eq!(keyboard.rows[0][0].text, "查看暂停列表");
     assert_eq!(keyboard.rows[1][1].text, "恢复");
-    assert_eq!(keyboard.rows[2][0].text, "复制恢复命令");
     assert!(matches!(
         keyboard.rows[1][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)

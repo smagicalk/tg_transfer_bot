@@ -19,8 +19,9 @@ use callback::{MenuPage, MenuRequestAction, parse_menu_callback_data};
 use input::MenuInputKind;
 use keyboard::build_menu_buttons;
 use text::{
-    MenuHomeSummary, build_menu_home_text, build_menu_status_text, build_menu_text,
-    build_permission_denied_menu_text, build_step_prompt_text, build_user_account_menu_text,
+    MenuHomeSummary, build_menu_home_text, build_menu_no_pending_input_text,
+    build_menu_status_text, build_menu_text, build_permission_denied_menu_text,
+    build_step_prompt_text, build_user_account_menu_text,
 };
 
 /// 判断 callback payload 是否属于 `/menu`。
@@ -34,6 +35,14 @@ pub(super) fn is_menu_callback_data(data: &str) -> bool {
 /// 外部不直接依赖 `MenuPage`，避免把菜单内部页面枚举扩散出去。
 pub(super) fn build_menu_home_callback_data() -> String {
     callback::menu_page_callback_data(MenuPage::Home)
+}
+
+/// 生成菜单下载页 callback 数据。
+///
+/// 供 `/downloads` 这类列表页放置“返回下载页”按钮，
+/// 让用户能从命令详情页回到菜单里的下载筛选总览。
+pub(super) fn build_menu_downloads_callback_data() -> String {
+    callback::menu_page_callback_data(MenuPage::Downloads)
 }
 
 /// `/menu` 命令入口。
@@ -67,36 +76,40 @@ pub async fn menu_callback_query(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let payload = match update.payload {
-        tdlib_rs::enums::CallbackQueryPayload::Data(data) => data.data,
-        _ => {
+    let action = match resolve_menu_callback_decision(
+        &update.payload,
+        update.chat_id,
+        update.sender_user_id,
+        actor,
+    ) {
+        MenuCallbackDecision::Dispatch(action) => action,
+        MenuCallbackDecision::UnsupportedPayload => {
             send::answer_callback_query(update.id, Some("暂不支持这种按钮类型"), client_id).await?;
+            return Ok(());
+        }
+        MenuCallbackDecision::InvalidPayload => {
+            send::answer_callback_query(update.id, Some("菜单按钮参数无效"), client_id).await?;
+            return Ok(());
+        }
+        MenuCallbackDecision::ActorMismatch(action) => {
+            tracing::warn!(
+                chat_id = update.chat_id,
+                actor_chat_id = actor.request_chat_id,
+                sender_user_id = update.sender_user_id,
+                actor_user_id = actor.user_id,
+                action = ?action,
+                "menu input callback rejected because actor does not own this interaction"
+            );
+            send::answer_callback_query(update.id, Some("只能由当前会话发起人操作"), client_id)
+                .await?;
             return Ok(());
         }
     };
 
-    let Some(action) = parse_menu_callback_data(&payload) else {
-        send::answer_callback_query(update.id, Some("菜单按钮参数无效"), client_id).await?;
-        return Ok(());
-    };
+    let route = route_menu_callback_action(action);
 
-    if action.requires_actor_owned_input()
-        && !menu_input_callback_allowed(update.chat_id, update.sender_user_id, actor)
-    {
-        tracing::warn!(
-            chat_id = update.chat_id,
-            actor_chat_id = actor.request_chat_id,
-            sender_user_id = update.sender_user_id,
-            actor_user_id = actor.user_id,
-            action = ?action,
-            "menu input callback rejected because actor does not own this interaction"
-        );
-        send::answer_callback_query(update.id, Some("只能由当前会话发起人操作"), client_id).await?;
-        return Ok(());
-    }
-
-    match action {
-        MenuRequestAction::Page(page) => {
+    match route {
+        MenuCallbackRoute::Page(page) => {
             send::answer_callback_query(update.id, Some(page.title()), client_id).await?;
             let (text, rows) = match build_menu_page(page, actor).await {
                 Ok(page) => page,
@@ -117,139 +130,18 @@ pub async fn menu_callback_query(
             )
             .await
         }
-        MenuRequestAction::NewTransfer => {
+        MenuCallbackRoute::StartInput(kind) => {
             start_input_prompt(
                 update.id,
                 update.chat_id,
                 update.message_id,
                 update.sender_user_id,
                 client_id,
-                MenuInputKind::Transfer,
+                kind,
             )
             .await
         }
-        MenuRequestAction::QuickTransferDefault => {
-            start_input_prompt(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                client_id,
-                MenuInputKind::TransferDefault,
-            )
-            .await
-        }
-        MenuRequestAction::NewLookup => {
-            start_input_prompt(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                client_id,
-                MenuInputKind::Lookup,
-            )
-            .await
-        }
-        MenuRequestAction::QuickLookupDefault => {
-            start_input_prompt(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                client_id,
-                MenuInputKind::LookupDefault,
-            )
-            .await
-        }
-        MenuRequestAction::TargetDefault => {
-            input::target_default_callback_query(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                config,
-                client_id,
-            )
-            .await
-        }
-        MenuRequestAction::TargetManual => {
-            input::target_manual_callback_query(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                client_id,
-            )
-            .await
-        }
-        MenuRequestAction::TargetRequestChat => {
-            input::target_request_chat_callback_query(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                client_id,
-            )
-            .await
-        }
-        MenuRequestAction::TargetAlias(target_chat_id) => {
-            input::target_alias_callback_query(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                target_chat_id,
-                config,
-                client_id,
-            )
-            .await
-        }
-        MenuRequestAction::TargetConfirm => {
-            input::target_confirm_callback_query(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                config,
-                actor,
-                client_id,
-            )
-            .await
-        }
-        MenuRequestAction::TargetBack => {
-            input::target_back_callback_query(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                config,
-                client_id,
-            )
-            .await
-        }
-        MenuRequestAction::JobIdInput(action) => {
-            input::job_id_input_callback_query(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                action,
-                client_id,
-            )
-            .await
-        }
-        MenuRequestAction::PointLedgerUserInput => {
-            input::point_ledger_user_input_callback_query(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                actor,
-                client_id,
-            )
-            .await
-        }
-        MenuRequestAction::ContinueInput => {
+        MenuCallbackRoute::ContinueInput => {
             send::answer_callback_query(update.id, Some("继续输入"), client_id).await?;
             let continued = input::continue_current_input(
                 update.chat_id,
@@ -259,31 +151,123 @@ pub async fn menu_callback_query(
             )
             .await?;
             if !continued {
-                send::ReplyPanel::card(build_menu_status_text(
-                    "没有未完成输入",
-                    "empty",
-                    "当前没有可继续的菜单输入，可重新开始转存或查询。",
-                ))
-                .row(vec![send::build_callback_button(
-                    "首页",
-                    &build_menu_home_callback_data(),
-                    tdlib_rs::enums::ButtonStyle::Primary,
-                )])
-                .send(update.chat_id, client_id)
-                .await?;
+                send::ReplyPanel::card(build_continue_input_empty_text())
+                    .row(vec![send::build_callback_button(
+                        "首页",
+                        &build_menu_home_callback_data(),
+                        tdlib_rs::enums::ButtonStyle::Primary,
+                    )])
+                    .send(update.chat_id, client_id)
+                    .await?;
             }
             Ok(())
         }
-        MenuRequestAction::CancelInput => {
-            input::cancel_input_callback_query(
-                update.id,
-                update.chat_id,
-                update.message_id,
-                update.sender_user_id,
-                client_id,
-            )
-            .await
-        }
+        MenuCallbackRoute::Forward(action) => match action {
+            MenuRequestAction::TargetDefault => {
+                input::target_default_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    config,
+                    client_id,
+                )
+                .await
+            }
+            MenuRequestAction::TargetManual => {
+                input::target_manual_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    client_id,
+                )
+                .await
+            }
+            MenuRequestAction::TargetRequestChat => {
+                input::target_request_chat_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    client_id,
+                )
+                .await
+            }
+            MenuRequestAction::TargetAlias(target_chat_id) => {
+                input::target_alias_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    target_chat_id,
+                    config,
+                    client_id,
+                )
+                .await
+            }
+            MenuRequestAction::TargetConfirm => {
+                input::target_confirm_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    config,
+                    actor,
+                    client_id,
+                )
+                .await
+            }
+            MenuRequestAction::TargetBack => {
+                input::target_back_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    config,
+                    client_id,
+                )
+                .await
+            }
+            MenuRequestAction::JobIdInput(action) => {
+                input::job_id_input_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    action,
+                    client_id,
+                )
+                .await
+            }
+            MenuRequestAction::PointLedgerUserInput => {
+                input::point_ledger_user_input_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    actor,
+                    client_id,
+                )
+                .await
+            }
+            MenuRequestAction::CancelInput => {
+                input::cancel_input_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    client_id,
+                )
+                .await
+            }
+            MenuRequestAction::Page(_)
+            | MenuRequestAction::NewTransfer
+            | MenuRequestAction::QuickTransferDefault
+            | MenuRequestAction::NewLookup
+            | MenuRequestAction::QuickLookupDefault
+            | MenuRequestAction::ContinueInput => unreachable!("routed earlier"),
+        },
     }
 }
 
@@ -310,6 +294,74 @@ impl MenuRequestAction {
                 | Self::CancelInput
         )
     }
+}
+
+/// 菜单 callback 入口的纯决策结果。
+///
+/// 入口函数用它决定要 ACK 什么提示；真正的页面刷新和任务执行仍在后续 match 中完成。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuCallbackDecision {
+    UnsupportedPayload,
+    InvalidPayload,
+    ActorMismatch(MenuRequestAction),
+    Dispatch(MenuRequestAction),
+}
+
+/// `/menu` callback 在入口层的分发结果。
+///
+/// 入口负责 ACK 和真正的副作用调用；这层先把路由意图稳定下来，减少一个大 match 混着三种关注点。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuCallbackRoute {
+    Page(MenuPage),
+    StartInput(MenuInputKind),
+    ContinueInput,
+    Forward(MenuRequestAction),
+}
+
+/// 解析 callback payload，并在进入副作用分支前完成输入类按钮的归属校验。
+fn resolve_menu_callback_decision(
+    payload: &tdlib_rs::enums::CallbackQueryPayload,
+    chat_id: i64,
+    sender_user_id: i64,
+    actor: crate::config::RequestActor,
+) -> MenuCallbackDecision {
+    let tdlib_rs::enums::CallbackQueryPayload::Data(data) = payload else {
+        return MenuCallbackDecision::UnsupportedPayload;
+    };
+
+    let Some(action) = parse_menu_callback_data(&data.data) else {
+        return MenuCallbackDecision::InvalidPayload;
+    };
+
+    if action.requires_actor_owned_input()
+        && !menu_input_callback_allowed(chat_id, sender_user_id, actor)
+    {
+        return MenuCallbackDecision::ActorMismatch(action);
+    }
+
+    MenuCallbackDecision::Dispatch(action)
+}
+
+/// 把菜单动作映射为入口路由类别。
+fn route_menu_callback_action(action: MenuRequestAction) -> MenuCallbackRoute {
+    match action {
+        MenuRequestAction::Page(page) => MenuCallbackRoute::Page(page),
+        MenuRequestAction::NewTransfer => MenuCallbackRoute::StartInput(MenuInputKind::Transfer),
+        MenuRequestAction::QuickTransferDefault => {
+            MenuCallbackRoute::StartInput(MenuInputKind::TransferDefault)
+        }
+        MenuRequestAction::NewLookup => MenuCallbackRoute::StartInput(MenuInputKind::Lookup),
+        MenuRequestAction::QuickLookupDefault => {
+            MenuCallbackRoute::StartInput(MenuInputKind::LookupDefault)
+        }
+        MenuRequestAction::ContinueInput => MenuCallbackRoute::ContinueInput,
+        other => MenuCallbackRoute::Forward(other),
+    }
+}
+
+/// 构造“继续输入但当前没有草稿”时的短状态文案。
+fn build_continue_input_empty_text() -> String {
+    build_menu_no_pending_input_text()
 }
 
 /// 判断菜单输入类 callback 是否属于当前 actor。
@@ -532,9 +584,9 @@ pub async fn cancel_menu_input(
     }
 
     send::ReplyPanel::card(text)
-        .row(vec![send::build_copy_button(
-            "复制 /menu",
-            "/menu",
+        .row(vec![send::build_callback_button(
+            "返回菜单",
+            &build_menu_home_callback_data(),
             tdlib_rs::enums::ButtonStyle::Primary,
         )])
         .send(request_chat_id, client_id)
@@ -591,6 +643,8 @@ async fn build_menu_page(
             "运行配置",
             "没有权限查看运行配置，配置页仅管理员可查看。",
         )
+    } else if page == MenuPage::AdminHub && !actor.is_admin() {
+        build_permission_denied_menu_text("管理", "没有权限查看管理页，管理页仅管理员可查看。")
     } else if page == MenuPage::Home {
         build_menu_home_text(&MenuHomeSummary {
             active_jobs: health.as_ref().map_or(0, |health| health.active_jobs),
@@ -619,6 +673,59 @@ async fn build_menu_page(
 mod tests {
     use super::*;
 
+    /// `/menu` callback 入口的高层执行计划。
+    ///
+    /// 这是给测试和维护看的稳定接口：它描述入口最终想做什么，而不是直接暴露 TDLib 发送细节。
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum MenuCallbackPlan {
+        AckAndRenderPage(MenuPage),
+        AckAndStartInput(MenuInputKind),
+        AckAndContinueInput,
+        Delegate(MenuRequestAction),
+    }
+
+    /// 把入口路由进一步映射成更贴近真实行为的执行计划。
+    fn plan_menu_callback_route(route: MenuCallbackRoute) -> MenuCallbackPlan {
+        match route {
+            MenuCallbackRoute::Page(page) => MenuCallbackPlan::AckAndRenderPage(page),
+            MenuCallbackRoute::StartInput(kind) => MenuCallbackPlan::AckAndStartInput(kind),
+            MenuCallbackRoute::ContinueInput => MenuCallbackPlan::AckAndContinueInput,
+            MenuCallbackRoute::Forward(action) => MenuCallbackPlan::Delegate(action),
+        }
+    }
+
+    async fn prepare_schema() -> anyhow::Result<tokio::sync::MutexGuard<'static, ()>> {
+        let guard = crate::db::TEST_DB_LOCK.lock().await;
+        let db = crate::db::get_db().await?;
+        crate::db::ensure_test_schema_current(db).await?;
+        Ok(guard)
+    }
+
+    // 首页存在草稿时，应把 pending input 摘要带回菜单正文，避免用户不知道自己有未完成输入。
+    #[tokio::test]
+    async fn test_build_menu_page_home_shows_pending_input_summary() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let actor = crate::config::RequestActor {
+            request_chat_id: 991,
+            user_id: 992,
+            role: crate::config::ActorRole::Admin,
+        };
+
+        input::start_menu_input(
+            actor.request_chat_id,
+            actor.user_id,
+            MenuInputKind::Transfer,
+        )
+        .await?;
+
+        let (text, _rows) = build_menu_page(MenuPage::Home, actor).await?;
+
+        assert!(text.contains("当前有未完成输入"));
+        assert!(text.contains("‹转存源链接›"));
+        input::cancel_menu_input(actor.request_chat_id, actor.user_id).await?;
+        Ok(())
+    }
+
     // 普通用户即使手工构造 `m:cfg` callback，也不能看到运行配置正文。
     #[tokio::test]
     async fn test_user_config_menu_page_does_not_render_runtime_config() -> anyhow::Result<()> {
@@ -632,7 +739,24 @@ mod tests {
 
         assert!(text.contains("没有权限"));
         assert!(!text.contains("job_concurrency"));
-        assert!(rows.iter().flatten().any(|button| button.text == "首页"));
+        assert!(rows.iter().flatten().any(|button| button.text == "返回"));
+        Ok(())
+    }
+
+    // 普通用户即使手工构造管理页 callback，也不能看到管理页正文。
+    #[tokio::test]
+    async fn test_user_admin_hub_page_does_not_render_admin_content() -> anyhow::Result<()> {
+        let actor = crate::config::RequestActor {
+            request_chat_id: 100,
+            user_id: 100,
+            role: crate::config::ActorRole::User,
+        };
+
+        let (text, rows) = build_menu_page(MenuPage::AdminHub, actor).await?;
+
+        assert!(text.contains("没有权限"));
+        assert!(!text.contains("文件缓存"));
+        assert!(rows.iter().flatten().any(|button| button.text == "返回"));
         Ok(())
     }
 
@@ -642,6 +766,8 @@ mod tests {
         assert!(!MenuRequestAction::Page(MenuPage::Home).requires_actor_owned_input());
         assert!(MenuRequestAction::NewTransfer.requires_actor_owned_input());
         assert!(MenuRequestAction::TargetConfirm.requires_actor_owned_input());
+        assert!(MenuRequestAction::TargetBack.requires_actor_owned_input());
+        assert!(MenuRequestAction::ContinueInput.requires_actor_owned_input());
         assert!(MenuRequestAction::CancelInput.requires_actor_owned_input());
     }
 
@@ -657,5 +783,160 @@ mod tests {
         assert!(menu_input_callback_allowed(100, 200, actor));
         assert!(!menu_input_callback_allowed(101, 200, actor));
         assert!(!menu_input_callback_allowed(100, 201, actor));
+    }
+
+    // callback 入口的纯决策层应先区分 TDLib payload 类型和菜单 payload 格式。
+    #[test]
+    fn test_resolve_menu_callback_decision_rejects_invalid_payloads() {
+        let actor = crate::config::RequestActor {
+            request_chat_id: 100,
+            user_id: 200,
+            role: crate::config::ActorRole::Admin,
+        };
+
+        assert_eq!(
+            resolve_menu_callback_decision(
+                &tdlib_rs::enums::CallbackQueryPayload::Game(
+                    tdlib_rs::types::CallbackQueryPayloadGame {
+                        game_short_name: "demo".to_owned(),
+                    },
+                ),
+                100,
+                200,
+                actor,
+            ),
+            MenuCallbackDecision::UnsupportedPayload
+        );
+        assert_eq!(
+            resolve_menu_callback_decision(
+                &tdlib_rs::enums::CallbackQueryPayload::Data(
+                    tdlib_rs::types::CallbackQueryPayloadData {
+                        data: "bad".to_owned(),
+                    },
+                ),
+                100,
+                200,
+                actor,
+            ),
+            MenuCallbackDecision::InvalidPayload
+        );
+    }
+
+    // 页面按钮是只读导航，允许正常分发；输入类按钮必须先校验点击者归属。
+    #[test]
+    fn test_resolve_menu_callback_decision_checks_actor_for_input_actions() {
+        let actor = crate::config::RequestActor {
+            request_chat_id: 100,
+            user_id: 200,
+            role: crate::config::ActorRole::Admin,
+        };
+
+        assert_eq!(
+            resolve_menu_callback_decision(
+                &tdlib_rs::enums::CallbackQueryPayload::Data(
+                    tdlib_rs::types::CallbackQueryPayloadData {
+                        data: "m:home".to_owned(),
+                    },
+                ),
+                101,
+                201,
+                actor,
+            ),
+            MenuCallbackDecision::Dispatch(MenuRequestAction::Page(MenuPage::Home))
+        );
+        assert_eq!(
+            resolve_menu_callback_decision(
+                &tdlib_rs::enums::CallbackQueryPayload::Data(
+                    tdlib_rs::types::CallbackQueryPayloadData {
+                        data: "m:new".to_owned(),
+                    },
+                ),
+                101,
+                200,
+                actor,
+            ),
+            MenuCallbackDecision::ActorMismatch(MenuRequestAction::NewTransfer)
+        );
+        assert_eq!(
+            resolve_menu_callback_decision(
+                &tdlib_rs::enums::CallbackQueryPayload::Data(
+                    tdlib_rs::types::CallbackQueryPayloadData {
+                        data: "m:new".to_owned(),
+                    },
+                ),
+                100,
+                200,
+                actor,
+            ),
+            MenuCallbackDecision::Dispatch(MenuRequestAction::NewTransfer)
+        );
+    }
+
+    // 入口路由应把“页面 / 启动输入 / 继续输入 / 其余转发”四类动作稳定区分开。
+    #[test]
+    fn test_route_menu_callback_action_groups_entry_behaviors() {
+        assert_eq!(
+            route_menu_callback_action(MenuRequestAction::Page(MenuPage::Home)),
+            MenuCallbackRoute::Page(MenuPage::Home)
+        );
+        assert_eq!(
+            route_menu_callback_action(MenuRequestAction::NewTransfer),
+            MenuCallbackRoute::StartInput(MenuInputKind::Transfer)
+        );
+        assert_eq!(
+            route_menu_callback_action(MenuRequestAction::QuickLookupDefault),
+            MenuCallbackRoute::StartInput(MenuInputKind::LookupDefault)
+        );
+        assert_eq!(
+            route_menu_callback_action(MenuRequestAction::ContinueInput),
+            MenuCallbackRoute::ContinueInput
+        );
+        assert_eq!(
+            route_menu_callback_action(MenuRequestAction::TargetConfirm),
+            MenuCallbackRoute::Forward(MenuRequestAction::TargetConfirm)
+        );
+    }
+
+    // “继续输入”但没有草稿时的提示应明确收敛为终态卡片，而不是等待态文案。
+    #[test]
+    fn test_build_continue_input_empty_text_uses_empty_status() {
+        let text = build_continue_input_empty_text();
+
+        assert!(text.contains("没有未完成输入"));
+        assert!(text.contains("状态：‹empty›"));
+        assert!(text.contains("当前没有可继续的菜单输入"));
+        assert!(text.contains("菜单：‹/menu›"));
+    }
+
+    // 首页和继续输入共用的“无草稿”提示应落到同一套空态文案。
+    #[test]
+    fn test_build_no_pending_input_text_matches_continue_empty() {
+        let text = build_continue_input_empty_text();
+
+        assert!(text.contains("没有未完成输入"));
+        assert!(text.contains("当前没有可继续的菜单输入"));
+    }
+
+    // 高层入口计划应稳定表达 callback 最终意图，避免以后测试只能盯着入口大 match。
+    #[test]
+    fn test_plan_menu_callback_route_matches_entry_intent() {
+        assert_eq!(
+            plan_menu_callback_route(MenuCallbackRoute::Page(MenuPage::Downloads)),
+            MenuCallbackPlan::AckAndRenderPage(MenuPage::Downloads)
+        );
+        assert_eq!(
+            plan_menu_callback_route(MenuCallbackRoute::StartInput(
+                MenuInputKind::TransferDefault
+            )),
+            MenuCallbackPlan::AckAndStartInput(MenuInputKind::TransferDefault)
+        );
+        assert_eq!(
+            plan_menu_callback_route(MenuCallbackRoute::ContinueInput),
+            MenuCallbackPlan::AckAndContinueInput
+        );
+        assert_eq!(
+            plan_menu_callback_route(MenuCallbackRoute::Forward(MenuRequestAction::TargetBack)),
+            MenuCallbackPlan::Delegate(MenuRequestAction::TargetBack)
+        );
     }
 }

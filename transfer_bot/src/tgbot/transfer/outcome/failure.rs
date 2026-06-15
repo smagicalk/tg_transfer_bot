@@ -224,8 +224,8 @@ pub(in crate::tgbot::transfer) async fn send_failure_message(
     notify_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let retry_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Short);
-    let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
+    let retry_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Long);
+    let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Long);
     crate::tgbot::send::ReplyPanel::card(format_failure_card_text(
         title,
         source_link,
@@ -246,24 +246,14 @@ pub(in crate::tgbot::transfer) async fn send_failure_message(
 
 /// 构造失败卡片按钮。
 ///
-/// 失败详情保留等宽可复制正文；按钮额外给出失败列表 callback，方便直接跳转排查。
+/// 失败详情和重试命令保留在正文；按钮区优先放能直接跳转的 callback。
+/// 失败场景还没有安全的“重新创建任务” callback，因此只保留一个重试命令复制兜底。
 fn build_failure_buttons(
     job_id: Option<i64>,
     retry_command: &str,
-    lookup_command: &str,
+    _lookup_command: &str,
 ) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
-    let mut row = vec![
-        crate::tgbot::send::build_copy_button(
-            "复制重新转存",
-            retry_command,
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制查询命令",
-            lookup_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ];
+    let mut row = Vec::new();
     if let Some(job_id) = job_id {
         row.push(crate::tgbot::send::build_callback_button(
             "查看任务详情",
@@ -271,6 +261,11 @@ fn build_failure_buttons(
             tdlib_rs::enums::ButtonStyle::Default,
         ));
     }
+    row.push(crate::tgbot::send::build_copy_button(
+        "复制重试命令",
+        retry_command,
+        tdlib_rs::enums::ButtonStyle::Default,
+    ));
     if let Some(callback_data) = build_downloads_filter_button_data("fail", 8) {
         row.push(crate::tgbot::send::build_callback_button(
             "查看失败列表",
@@ -278,11 +273,6 @@ fn build_failure_buttons(
             tdlib_rs::enums::ButtonStyle::Primary,
         ));
     }
-    row.push(crate::tgbot::send::build_copy_button(
-        "复制列表命令",
-        &build_downloads_command(Some("fail"), None, None, CommandStyle::Short),
-        tdlib_rs::enums::ButtonStyle::Default,
-    ));
     row.push(crate::tgbot::send::build_callback_button(
         "菜单",
         &build_menu_home_button_data(),
@@ -318,7 +308,7 @@ fn format_failure_card_text(
         card::command_line("查询", lookup_command),
         card::command_line(
             "列表",
-            build_downloads_command(Some("fail"), None, None, CommandStyle::Short),
+            build_downloads_command(Some("fail"), None, None, CommandStyle::Long),
         ),
         String::new(),
     ]);
@@ -374,8 +364,8 @@ mod tests {
             "https://t.me/c/1/2",
             -100,
             Some(42),
-            "/t https://t.me/c/1/2 -100",
-            "/lk https://t.me/c/1/2 -100",
+            "/transfer https://t.me/c/1/2 -100",
+            "/lookup https://t.me/c/1/2 -100",
             &err,
         );
 
@@ -384,9 +374,9 @@ mod tests {
         assert!(text.contains("«network failed»"));
         assert!(text.contains("■ 建议"));
         assert!(text.contains("确认源链接、目标 chat、登录状态和权限后重试"));
-        assert!(text.contains("重试：‹/t https://t.me/c/1/2 -100›"));
-        assert!(text.contains("查询：‹/lk https://t.me/c/1/2 -100›"));
-        assert!(text.contains("列表：‹/d fail›"));
+        assert!(text.contains("重试：‹/transfer https://t.me/c/1/2 -100›"));
+        assert!(text.contains("查询：‹/lookup https://t.me/c/1/2 -100›"));
+        assert!(text.contains("列表：‹/downloads fail›"));
     }
 
     // 源消息不可见时，应直接告诉用户检查源消息和账号访问权限。

@@ -8,6 +8,7 @@ use crate::tgbot::transfer::store;
 mod callback;
 mod render;
 
+use super::build_menu_home_button_data;
 pub(in crate::tgbot::transfer::command) use callback::points_callback_query;
 use render::{format_balance_text, format_ledger_page_text, ledger_button_rows};
 
@@ -24,6 +25,43 @@ const MAX_LEDGER_LIMIT: u64 = 50;
 /// 判断 callback payload 是否属于积分模块。
 pub(super) fn is_points_callback_data(data: &str) -> bool {
     data.starts_with(POINTS_CALLBACK_PREFIX)
+}
+
+/// 给菜单首页生成“查看余额”回调。
+pub(super) fn build_balance_home_callback_data() -> String {
+    build_ledger_callback_data(
+        LedgerCallbackAction::Refresh,
+        LedgerCommandKind::Balance,
+        0,
+        DEFAULT_LEDGER_LIMIT,
+        1,
+    )
+}
+
+/// 给菜单首页生成“查看我的流水”回调。
+pub(super) fn build_balance_history_home_callback_data(limit: u64, page: u64) -> String {
+    build_ledger_callback_data(
+        LedgerCallbackAction::Refresh,
+        LedgerCommandKind::Balance,
+        0,
+        limit,
+        page,
+    )
+}
+
+/// 给管理员查看其他用户时生成“查看该用户流水”回调。
+pub(super) fn build_points_history_home_callback_data(
+    user_id: i64,
+    limit: u64,
+    page: u64,
+) -> String {
+    build_ledger_callback_data(
+        LedgerCallbackAction::Refresh,
+        LedgerCommandKind::Points,
+        user_id,
+        limit,
+        page,
+    )
 }
 
 /// `/balance` 命令入口。
@@ -52,20 +90,20 @@ pub async fn balance_command(
     send::ReplyPanel::card(format_balance_text(&account))
         .rows(vec![
             vec![
-                send::build_copy_button(
-                    "复制 /balance",
-                    "/balance",
+                send::build_callback_button(
+                    "查看流水",
+                    &build_balance_history_home_callback_data(DEFAULT_LEDGER_LIMIT, 1),
                     tdlib_rs::enums::ButtonStyle::Primary,
                 ),
-                send::build_copy_button(
-                    "复制流水",
-                    "/balance history",
+                send::build_callback_button(
+                    "菜单",
+                    &build_menu_home_button_data(),
                     tdlib_rs::enums::ButtonStyle::Default,
                 ),
             ],
             vec![send::build_copy_button(
-                "复制短命令流水",
-                "/bal h",
+                "复制 /balance",
+                "/balance",
                 tdlib_rs::enums::ButtonStyle::Default,
             )],
         ])
@@ -112,10 +150,10 @@ pub async fn points_command(
     }
 
     let account = match action {
-        "show" | "s" => store::get_user_account(user_id)
+        "show" => store::get_user_account(user_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("user account not found: {}", user_id))?,
-        "add" | "a" | "sub" => {
+        "add" | "sub" => {
             let amount = text
                 .get(3)
                 .ok_or_else(|| anyhow::anyhow!("usage: /points {} <user_id> <amount>", action))?
@@ -151,14 +189,14 @@ pub async fn points_command(
 
     send::ReplyPanel::card(format_balance_text(&account))
         .row(vec![
-            send::build_copy_button(
-                "复制查看",
-                &format!("/points show {}", user_id),
+            send::build_callback_button(
+                "查看流水",
+                &build_points_history_home_callback_data(user_id, DEFAULT_LEDGER_LIMIT, 1),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
-            send::build_copy_button(
-                "复制流水",
-                &format!("/points history {}", user_id),
+            send::build_callback_button(
+                "菜单",
+                &build_menu_home_button_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
@@ -211,7 +249,7 @@ struct LedgerCallbackRequest {
 
 /// 判断是否为流水查询动作。
 fn is_history_action(action: Option<&str>) -> bool {
-    matches!(action, Some("history" | "hist" | "h" | "ledger" | "l"))
+    matches!(action, Some("history" | "ledger"))
 }
 
 /// 解析 `/balance history [limit] [page]`。
@@ -326,7 +364,7 @@ mod tests {
         assert!(text.contains("‹/balance history›"));
     }
 
-    // 积分流水参数应兼容长命令和短命令，并限制单页最大数量。
+    // 积分流水参数仅支持长命令，并限制单页最大数量。
     #[test]
     fn test_parse_ledger_args() {
         assert_eq!(
@@ -337,7 +375,7 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_balance_history_args(&["/bal", "h", "99", "2"]).unwrap(),
+            parse_balance_history_args(&["/balance", "history", "99", "2"]).unwrap(),
             LedgerArgs {
                 limit: MAX_LEDGER_LIMIT,
                 page: 2
@@ -400,6 +438,9 @@ mod tests {
         assert_eq!(rows[0][2].text, "1/1");
         assert_eq!(rows[0][3].text, "下页");
         assert_eq!(rows[1][0].text, "刷新");
+        assert_eq!(rows[1][1].text, "返回");
+        assert_eq!(rows[1][2].text, "菜单");
+        assert_eq!(rows[2][0].text, "复制余额");
 
         assert!(matches!(
             rows[0][0].r#type,
@@ -436,7 +477,51 @@ mod tests {
         assert_eq!(decoded, "pt:p:b:1:10:1");
     }
 
-    // 帮助文案中短命令和长命令应同时可见，减少日常输入成本。
+    // admin 查看他人流水时，“返回”按钮需要降级成复制命令，而不是错误地回到自己余额页。
+    #[test]
+    fn test_ledger_button_rows_admin_return_is_copy_button() {
+        let page = store::PointLedgerPage {
+            telegram_user_id: 9,
+            entries: vec![],
+            total: 0,
+            limit: 10,
+            page: 1,
+            total_pages: 1,
+        };
+
+        let rows = ledger_button_rows(LedgerCommandKind::Points, 9, &page, true);
+
+        assert_eq!(rows[1][1].text, "返回");
+        assert!(matches!(
+            rows[1][1].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+        ));
+    }
+
+    // 流水页不应同时出现“当前页复制”和独立“复制当前命令”两套完全等价入口。
+    #[test]
+    fn test_ledger_button_rows_drop_duplicate_current_command_copy() {
+        let page = store::PointLedgerPage {
+            telegram_user_id: 1,
+            entries: vec![],
+            total: 0,
+            limit: 10,
+            page: 1,
+            total_pages: 1,
+        };
+
+        let rows = ledger_button_rows(LedgerCommandKind::Balance, 1, &page, false);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"1/1"));
+        assert!(!labels.contains(&"复制当前命令"));
+    }
+
+    // 帮助文案已统一成长命令。
     #[test]
     fn test_history_command_pairs() {
         assert_eq!(
@@ -444,7 +529,7 @@ mod tests {
                 balance_history_command(10, 1, true),
                 balance_history_command(10, 1, false)
             ),
-            "‹/balance history 10 1› | ‹/bal h 10 1›"
+            "‹/balance history 10 1›"
         );
     }
 

@@ -252,31 +252,20 @@ async fn register_bot_commands_once(client_id: i32) {
 
 /// 构造 bot 命令列表。
 ///
-/// Telegram 命令本身不能带 `/`，这里只写根命令；业务路由仍同时支持短命令和长命令。
+/// Telegram 命令本身不能带 `/`，这里只注册长命令，避免菜单中出现重复短别名。
 fn bot_command_definitions() -> Vec<tdlib_rs::types::BotCommand> {
     vec![
         bot_command("menu", "打开交互菜单"),
-        bot_command("m", "打开交互菜单"),
         bot_command("transfer", "转存链接或回复消息"),
-        bot_command("t", "转存链接或回复消息"),
         bot_command("lookup", "查询历史转存结果"),
-        bot_command("lk", "查询历史转存结果"),
         bot_command("downloads", "查看任务列表和下载进度"),
-        bot_command("d", "查看任务列表和下载进度"),
         bot_command("job", "查看或控制任务"),
-        bot_command("j", "查看或控制任务"),
         bot_command("balance", "查看积分余额"),
-        bot_command("bal", "查看积分余额"),
         bot_command("points", "管理员调整积分"),
-        bot_command("pts", "管理员调整积分"),
         bot_command("config", "查看或调整运行配置"),
-        bot_command("cfg", "查看或调整运行配置"),
         bot_command("health", "查看运行健康状态"),
-        bot_command("hl", "查看运行健康状态"),
         bot_command("cache", "查看文件缓存"),
-        bot_command("fc", "查看文件缓存"),
         bot_command("help", "查看命令帮助"),
-        bot_command("h", "查看命令帮助"),
     ]
 }
 
@@ -429,7 +418,7 @@ mod tests {
 
     // 注册给 Telegram 的命令不能带 `/`，且短命令和长命令都需要保留。
     #[test]
-    fn test_bot_command_definitions_cover_short_and_long_commands() {
+    fn test_bot_command_definitions_cover_long_commands() {
         let commands = bot_command_definitions();
         let names = commands
             .iter()
@@ -438,19 +427,16 @@ mod tests {
 
         for expected in [
             "menu",
-            "m",
             "transfer",
-            "t",
             "lookup",
-            "lk",
             "downloads",
-            "d",
             "job",
-            "j",
+            "balance",
+            "points",
             "config",
-            "cfg",
+            "health",
+            "cache",
             "help",
-            "h",
         ] {
             assert!(names.contains(expected), "missing command {expected}");
         }

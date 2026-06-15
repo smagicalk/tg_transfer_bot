@@ -1,5 +1,5 @@
 // 转存成功或命中历史结果时的回复卡片。
-// 成功卡片需要同时提供打开链接、复制结果和继续查询/重转的快捷按钮。
+// 成功卡片提供结果入口和任务/列表导航；查询、重转命令保留在正文里作为降级入口。
 
 use super::super::card;
 use super::super::command::build_menu_home_button_data;
@@ -31,26 +31,8 @@ pub(in crate::tgbot::transfer) async fn send_history_hit_message(
             Vec::new()
         });
     let result_messages = normalize_result_messages(result_messages, result_link, target_chat_id);
-    let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
-    let transfer_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Short);
     let mut rows = build_result_message_rows(&result_messages);
-    rows.push(vec![
-        crate::tgbot::send::build_callback_button(
-            "查看任务详情",
-            &build_job_status_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制查询命令",
-            &lookup_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "菜单",
-            &build_menu_home_button_data(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ]);
+    rows.push(build_result_job_row(job_id));
 
     let mut panel = crate::tgbot::send::ReplyPanel::card(format_result_card_text(
         title,
@@ -63,18 +45,32 @@ pub(in crate::tgbot::transfer) async fn send_history_hit_message(
         panel = panel.row(row);
     }
     panel
-        .row(build_result_list_row(&transfer_command))
+        .row(build_result_list_row())
         .send(notify_chat_id, client_id)
         .await
 }
 
-/// 构造结果卡片第二行：重转、进入完成列表、复制列表命令。
-fn build_result_list_row(transfer_command: &str) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
-    let mut row = vec![crate::tgbot::send::build_copy_button(
-        "复制重新转存",
-        transfer_command,
-        tdlib_rs::enums::ButtonStyle::Default,
-    )];
+/// 构造结果卡片任务导航行。
+///
+/// 正文已经保留查询/重转命令，按钮区只放能直接打开的 callback 动作。
+fn build_result_job_row(job_id: i64) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    vec![
+        crate::tgbot::send::build_callback_button(
+            "查看任务详情",
+            &build_job_status_button_data(job_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        crate::tgbot::send::build_callback_button(
+            "菜单",
+            &build_menu_home_button_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]
+}
+
+/// 构造结果卡片第二行：进入完成列表、菜单。
+fn build_result_list_row() -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    let mut row = Vec::new();
     if let Some(callback_data) = build_downloads_filter_button_data("done", 8) {
         row.push(crate::tgbot::send::build_callback_button(
             "查看完成列表",
@@ -82,11 +78,6 @@ fn build_result_list_row(transfer_command: &str) -> Vec<tdlib_rs::types::InlineK
             tdlib_rs::enums::ButtonStyle::Primary,
         ));
     }
-    row.push(crate::tgbot::send::build_copy_button(
-        "复制列表命令",
-        &build_downloads_command(Some("done"), None, None, CommandStyle::Short),
-        tdlib_rs::enums::ButtonStyle::Default,
-    ));
     row.push(crate::tgbot::send::build_callback_button(
         "菜单",
         &build_menu_home_button_data(),
@@ -114,15 +105,15 @@ pub(in crate::tgbot::transfer) fn format_result_card_text(
         card::section("命令"),
         card::command_line(
             "查询",
-            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Long),
         ),
         card::command_line(
             "重转",
-            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+            build_transfer_command(source_link, target_chat_id, CommandStyle::Long),
         ),
         card::command_line(
             "列表",
-            build_downloads_command(Some("done"), None, None, CommandStyle::Short),
+            build_downloads_command(Some("done"), None, None, CommandStyle::Long),
         ),
         String::new(),
     ];
@@ -219,7 +210,9 @@ fn build_result_message_rows(
 
 #[cfg(test)]
 mod tests {
-    use super::{ResultMessageRecord, build_result_list_row, format_result_card_text};
+    use super::{
+        ResultMessageRecord, build_result_job_row, build_result_list_row, format_result_card_text,
+    };
 
     // HTTP(S) 结果应在正文中渲染为 Telegram 原生文本链接，按钮之外也能点击。
     #[test]
@@ -242,9 +235,9 @@ mod tests {
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("【打开转存消息】(https://t.me/c/5106953357/734)"));
         assert!(text.contains("链接：‹https://t.me/c/5106953357/734›"));
-        assert!(text.contains("查询：‹/lk https://t.me/c/1/2 -5106953357›"));
-        assert!(text.contains("重转：‹/t https://t.me/c/1/2 -5106953357›"));
-        assert!(text.contains("列表：‹/d done›"));
+        assert!(text.contains("查询：‹/lookup https://t.me/c/1/2 -5106953357›"));
+        assert!(text.contains("重转：‹/transfer https://t.me/c/1/2 -5106953357›"));
+        assert!(text.contains("列表：‹/downloads done›"));
     }
 
     // 不可打开的定位信息只能作为代码展示，不能伪装成可点击链接。
@@ -309,7 +302,7 @@ mod tests {
     // 结果卡片的列表行应提供完成列表和主菜单入口，便于继续操作。
     #[test]
     fn test_build_result_list_row_has_menu_button() {
-        let row = build_result_list_row("/t https://t.me/c/1/2 -100");
+        let row = build_result_list_row();
 
         assert!(row.iter().any(|button| button.text == "查看完成列表"));
         let menu = row
@@ -320,5 +313,16 @@ mod tests {
             menu.r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
+    }
+
+    // 成功卡片的任务行只保留可直接点击的 callback，不再重复复制查询或重转命令。
+    #[test]
+    fn test_build_result_job_row_uses_callback_buttons_only() {
+        let row = build_result_job_row(42);
+
+        assert!(row.iter().any(|button| button.text == "查看任务详情"));
+        assert!(row.iter().any(|button| button.text == "菜单"));
+        assert!(!row.iter().any(|button| button.text == "复制查询命令"));
+        assert!(!row.iter().any(|button| button.text == "复制重新转存"));
     }
 }

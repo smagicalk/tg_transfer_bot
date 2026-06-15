@@ -6,8 +6,9 @@ use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
 
 use super::super::common::{
-    CommandStyle, balance_history_command as build_balance_history_command,
-    points_history_command as build_points_history_command,
+    CommandStyle, balance_history_command as build_balance_history_command, build_copy_only_row,
+    build_page_command_section, build_page_empty_note, build_ready_page_header,
+    build_refresh_return_menu_row, points_history_command as build_points_history_command,
 };
 
 /// 渲染 `/balance` 或 `/points` 使用的积分流水面板。
@@ -27,45 +28,46 @@ pub(super) async fn render_ledger_panel(
 
 /// 积分余额卡片正文。
 pub(super) fn format_balance_text(account: &store::UserAccountSnapshot) -> String {
-    [
-        "积分账户".to_owned(),
-        format!("状态：{}", card::code("ready")),
-        card::DIVIDER.to_owned(),
+    let mut lines = build_ready_page_header("积分账户");
+    lines.extend([
         card::section("账户"),
         card::field("用户", account.telegram_user_id),
         card::field("角色", &account.role),
         card::field("余额", account.points_balance),
         card::field("累计增加", account.total_points_added),
         card::field("累计消费", account.total_points_spent),
-        card::section("命令"),
+        build_page_command_section(),
         card::command_line("余额", "/balance"),
         card::command_line("流水", "/balance history"),
         card::command_line("帮助", "/help points"),
-    ]
-    .join("\n")
+    ]);
+    lines.join("\n")
 }
 
 /// 积分流水卡片正文。
 pub(super) fn format_ledger_page_text(page: &store::PointLedgerPage, admin_view: bool) -> String {
-    let mut lines = vec![
+    let mut lines = build_ready_page_header(if admin_view {
+        "积分流水 [admin]"
+    } else {
+        "积分流水"
+    });
+    lines.extend([
         if admin_view {
-            "积分流水 [admin]".to_owned()
+            card::field("模式", "admin")
         } else {
-            "积分流水".to_owned()
+            card::field("模式", "self")
         },
-        format!("状态：{}", card::code("ready")),
-        card::DIVIDER.to_owned(),
         card::section("账户"),
         card::field("用户", page.telegram_user_id),
         format!(
             "页码：{}/{}  每页：{}  总数：{}",
             page.page, page.total_pages, page.limit, page.total
         ),
-    ];
+    ]);
 
     if page.entries.is_empty() {
         lines.push(card::section("记录"));
-        lines.push("暂无积分流水。".to_owned());
+        lines.push(build_page_empty_note("暂无积分流水。"));
     } else {
         lines.push(card::section("记录"));
         for entry in &page.entries {
@@ -73,7 +75,7 @@ pub(super) fn format_ledger_page_text(page: &store::PointLedgerPage, admin_view:
         }
     }
 
-    lines.push(card::section("命令"));
+    lines.push(build_page_command_section());
     if admin_view {
         lines.push(card::command_line(
             "当前页",
@@ -160,7 +162,7 @@ pub(super) fn ledger_button_rows(
             page.page,
         ),
     ]);
-    rows.push(vec![
+    rows.push(build_refresh_return_menu_row(
         send::build_callback_button(
             "刷新",
             &super::build_ledger_callback_data(
@@ -172,31 +174,49 @@ pub(super) fn ledger_button_rows(
             ),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
-        send::build_copy_button(
-            "复制短命令",
-            &ledger_command(kind, user_id, page.limit, page.page, true),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
+        balance_return_button(kind, user_id),
         send::build_callback_button(
             "菜单",
             &super::super::build_menu_home_button_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-    ]);
+    ));
     if admin_view {
-        rows.push(vec![send::build_copy_button(
+        rows.push(build_copy_only_row(send::build_copy_button(
             "复制余额",
             &format!("/points show {}", user_id),
             tdlib_rs::enums::ButtonStyle::Default,
-        )]);
+        )));
     } else {
-        rows.push(vec![send::build_copy_button(
+        rows.push(build_copy_only_row(send::build_copy_button(
             "复制余额",
             "/balance",
             tdlib_rs::enums::ButtonStyle::Default,
-        )]);
+        )));
     }
     rows
+}
+
+/// 构造积分流水页的返回按钮。
+///
+/// 普通用户余额页可以直接回到 callback 余额卡片；
+/// admin 查看他人流水时没有对应 callback 余额页，因此降级成可复制命令。
+fn balance_return_button(
+    kind: super::LedgerCommandKind,
+    user_id: i64,
+) -> tdlib_rs::types::InlineKeyboardButton {
+    match kind {
+        super::LedgerCommandKind::Balance => send::build_callback_button(
+            "返回",
+            &super::super::build_balance_button_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        super::LedgerCommandKind::Points => send::build_copy_button(
+            "返回",
+            &format!("/points show {}", user_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    }
 }
 
 /// 构造积分流水翻页按钮。

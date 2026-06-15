@@ -5,9 +5,13 @@ use crate::tgbot::send;
 use crate::tgbot::transfer::store;
 use crate::tgbot::transfer::workflow;
 
-use super::super::common::{CommandStyle, downloads_command, job_command as build_job_command};
+use super::super::{build_downloads_filter_button_data, build_menu_home_button_data};
 use super::keyboard::build_job_status_buttons;
 use super::render::{format_job_action_text, format_job_status_text};
+use super::{
+    build_job_pause_callback_data, build_job_resume_callback_data, build_job_status_callback_data,
+    build_job_stop_callback_data,
+};
 
 /// 暂停任务。
 ///
@@ -33,25 +37,51 @@ pub(super) async fn pause_job(
         &job.status,
         "恢复后会从已有子项状态继续处理。",
     ))
-    .row(vec![
-        send::build_copy_button(
-            "复制恢复",
-            &build_job_command("r", job.id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        send::build_copy_button(
-            "复制停止",
-            &build_job_command("s", job.id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        send::build_copy_button(
-            "复制暂停列表",
-            &downloads_command(Some("pause"), None, None, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
+    .rows(build_pause_job_action_rows(job.id))
     .send(actor.request_chat_id, client_id)
     .await
+}
+
+/// 构造暂停结果卡片按钮。
+///
+/// 暂停后的下一步都是明确 callback；复制区只保留 `job_id` 作为排查数据。
+fn build_pause_job_action_rows(job_id: i64) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![
+            send::build_callback_button(
+                "查看详情",
+                &build_job_status_callback_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "恢复",
+                &build_job_resume_callback_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "停止",
+                &build_job_stop_callback_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![
+            send::build_callback_button(
+                "查看暂停列表",
+                &build_downloads_filter_button_data("pause", 8).expect("pause filter should exist"),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![send::build_copy_button(
+            "复制 job_id",
+            &job_id.to_string(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )],
+    ]
 }
 
 /// 唤醒未完成任务。
@@ -95,20 +125,32 @@ pub(super) async fn resume_job(
 
     send::ReplyPanel::card(format_job_action_text(title, job.id, &job.status, detail))
         .row(vec![
-            send::build_copy_button(
-                "复制暂停",
-                &build_job_command("p", job.id, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制停止",
-                &build_job_command("s", job.id, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制运行列表",
-                &downloads_command(Some("run"), None, None, CommandStyle::Short),
+            send::build_callback_button(
+                "查看详情",
+                &build_job_status_callback_data(job.id),
                 tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "暂停",
+                &build_job_pause_callback_data(job.id),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "停止",
+                &build_job_stop_callback_data(job.id),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+        ])
+        .row(vec![
+            send::build_callback_button(
+                "查看运行列表",
+                &build_downloads_filter_button_data("run", 8).expect("run filter should exist"),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
         .send(actor.request_chat_id, client_id)
@@ -167,17 +209,28 @@ pub(super) async fn stop_job(
 
     send::ReplyPanel::card(format_job_action_text(title, job.id, &job.status, detail))
         .row(vec![
-            send::build_copy_button(
-                "复制 job_id",
-                &job.id.to_string(),
+            send::build_callback_button(
+                "查看详情",
+                &build_job_status_callback_data(job.id),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
-            send::build_copy_button(
-                "复制停止列表",
-                &downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+            send::build_callback_button(
+                "查看已停列表",
+                &build_downloads_filter_button_data("cancel", 8)
+                    .expect("cancel filter should exist"),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &build_menu_home_button_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
+        .row(vec![send::build_copy_button(
+            "复制 job_id",
+            &job.id.to_string(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )])
         .send(actor.request_chat_id, client_id)
         .await
 }
@@ -206,4 +259,32 @@ pub(super) async fn show_job_status(
         .rows(build_job_status_buttons(&snapshot))
         .send(actor.request_chat_id, client_id)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_pause_job_action_rows;
+
+    // 暂停结果卡片应提供直接操作按钮，不再要求用户复制停止命令。
+    #[test]
+    fn test_build_pause_job_action_rows() {
+        let rows = build_pause_job_action_rows(42);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows[0][0].text, "查看详情");
+        assert_eq!(rows[0][1].text, "恢复");
+        assert_eq!(rows[0][2].text, "停止");
+        assert_eq!(rows[1][0].text, "查看暂停列表");
+        assert_eq!(rows[1][1].text, "菜单");
+        assert_eq!(rows[2][0].text, "复制 job_id");
+        assert!(!labels.contains(&"复制停止命令"));
+        assert!(matches!(
+            rows[0][1].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+        ));
+    }
 }

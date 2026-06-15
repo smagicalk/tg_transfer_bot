@@ -8,6 +8,7 @@ use crate::tgbot::send;
 use crate::tgbot::transfer::card;
 
 use super::build_downloads_status_button_data;
+use super::build_menu_home_button_data;
 use super::common::{CommandStyle, downloads_command, lookup_command, resolve_target_chat_id};
 use super::menu;
 use crate::tgbot::transfer::types::{SourceKind, TransferPlan};
@@ -171,28 +172,10 @@ async fn dispatch_transfer_plan(
     );
 
     // 先给用户一个即时反馈，避免长时间下载/上传期间命令看起来像“卡住了”。
-    let lookup_command =
-        lookup_command(&plan.source_link, plan.target_chat_id, CommandStyle::Short);
     let progress_message = send::send_card_message_with_buttons_returning(
         format_transfer_accepted_text(&plan),
         request_chat_id,
-        vec![vec![
-            send::build_callback_button(
-                "查看运行列表",
-                &build_downloads_status_button_data("running", 8),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_copy_button(
-                "复制源标识",
-                &plan.source_link,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制查询命令",
-                &lookup_command,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ]],
+        build_transfer_accepted_button_rows(&plan.source_link),
         client_id,
     )
     .await?;
@@ -205,6 +188,34 @@ async fn dispatch_transfer_plan(
         config.transfer_client_ids()?,
     );
     Ok(())
+}
+
+/// 构造 `/transfer` 首次回执按钮。
+///
+/// 查询命令已经在正文里保留；按钮区优先放可直接点击的运行列表和菜单，
+/// 只保留源标识复制，方便用户排查 bot-message 伪链接或原始源链接。
+fn build_transfer_accepted_button_rows(
+    source_link: &str,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![
+            send::build_callback_button(
+                "查看运行列表",
+                &build_downloads_status_button_data("running", 8),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![send::build_copy_button(
+            "复制源标识",
+            source_link,
+            tdlib_rs::enums::ButtonStyle::Default,
+        )],
+    ]
 }
 
 /// 解析 `/transfer` 的源输入。
@@ -323,11 +334,11 @@ fn format_transfer_accepted_text(plan: &TransferPlan) -> String {
         card::section("命令"),
         card::command_line(
             "查询",
-            lookup_command(&plan.source_link, plan.target_chat_id, CommandStyle::Short),
+            lookup_command(&plan.source_link, plan.target_chat_id, CommandStyle::Long),
         ),
         card::command_line(
             "列表",
-            downloads_command(Some("run"), None, None, CommandStyle::Short),
+            downloads_command(Some("run"), None, None, CommandStyle::Long),
         ),
         String::new(),
     ]
@@ -340,8 +351,8 @@ fn format_transfer_accepted_text(plan: &TransferPlan) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ResolvedTransferSource, bot_message_source_link, format_transfer_accepted_text,
-        resolve_transfer_target_chat_id,
+        ResolvedTransferSource, bot_message_source_link, build_transfer_accepted_button_rows,
+        format_transfer_accepted_text, resolve_transfer_target_chat_id,
     };
     use crate::ClientRole;
     use crate::config::{ActorRole, BillingConfig, BotConfig, RequestActor};
@@ -371,6 +382,26 @@ mod tests {
         assert!(text.contains("状态：‹queued›"));
         assert!(text.contains("目标：‹-100›"));
         assert!(text.contains("‹https://t.me/c/1/2›"));
+    }
+
+    // 首次回执按钮应直接跳运行列表和菜单，查询命令留在正文，避免按钮区重复复制命令。
+    #[test]
+    fn test_build_transfer_accepted_button_rows() {
+        let rows = build_transfer_accepted_button_rows("https://t.me/c/1/2");
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows[0][0].text, "查看运行列表");
+        assert_eq!(rows[0][1].text, "菜单");
+        assert_eq!(rows[1][0].text, "复制源标识");
+        assert!(!labels.contains(&"复制查询命令"));
+        assert!(matches!(
+            rows[0][0].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+        ));
     }
 
     // bot 可见消息源使用稳定伪链接参与查重，避免自动转存和回复命令生成两种 key。

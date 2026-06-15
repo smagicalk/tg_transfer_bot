@@ -44,22 +44,20 @@ fn test_build_help_index_text_for_user_hides_admin_commands() {
 fn test_build_help_detail_text() {
     let transfer = build_help_detail_text("transfer").unwrap();
     assert!(transfer.contains("/transfer <link> [target]"));
-    let transfer_short = build_help_detail_text("t").unwrap();
-    assert!(transfer_short.contains("/transfer <link> [target]"));
-    let transfer_slash = build_help_detail_text("/t").unwrap();
+    let transfer_slash = build_help_detail_text("/transfer").unwrap();
     assert!(transfer_slash.contains("/transfer <link> [target]"));
 
     let downloads = build_help_detail_text("downloads").unwrap();
     assert!(downloads.contains(
         "all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | cancel"
     ));
-    let downloads_short = build_help_detail_text("d").unwrap();
-    assert!(downloads_short.contains("/downloads [filter] [limit] [page]"));
+    let downloads_full = build_help_detail_text("downloads").unwrap();
+    assert!(downloads_full.contains("/downloads [filter] [limit] [page]"));
 
-    let health = build_help_detail_text("hl").unwrap();
+    let health = build_help_detail_text("health").unwrap();
     assert!(health.contains("/health"));
 
-    let cache = build_help_detail_text("fc").unwrap();
+    let cache = build_help_detail_text("cache").unwrap();
     assert!(cache.contains("/cache"));
     assert!(cache.contains("/cache page"));
 
@@ -67,10 +65,10 @@ fn test_build_help_detail_text() {
     assert!(points.contains("/balance"));
     assert!(points.contains("/points show 123456789"));
     assert!(points.contains("/points add 123456789 10 admin_adjust"));
-    let balance = build_help_detail_text("bal").unwrap();
+    let balance = build_help_detail_text("balance").unwrap();
     assert!(balance.contains("/balance"));
 
-    let job = build_help_detail_text("j").unwrap();
+    let job = build_help_detail_text("job").unwrap();
     assert!(job.contains("/job pause 123"));
     assert!(job.contains("/job status 123"));
 
@@ -80,7 +78,7 @@ fn test_build_help_detail_text() {
     assert!(config.contains("downloads_default_page_size"));
     assert!(config.contains("menu_input_timeout_seconds"));
 
-    let menu = build_help_detail_text("m").unwrap();
+    let menu = build_help_detail_text("menu").unwrap();
     assert!(menu.contains("/menu"));
     assert!(menu.contains("/cancel"));
 
@@ -148,7 +146,7 @@ fn test_help_index_buttons_have_navigation_callbacks() {
     ));
 }
 
-// help 目录页只放短命令快捷复制，长命令模板留在详情页，避免首页按钮过密。
+// help 目录页保留少量长命令复制入口，主要依赖 callback 导航切页。
 #[test]
 fn test_help_index_buttons_keep_shortcuts_compact() {
     let buttons = build_help_index_buttons(true);
@@ -158,15 +156,61 @@ fn test_help_index_buttons_keep_shortcuts_compact() {
         .map(|button| button.text.as_str())
         .collect::<Vec<_>>();
 
-    assert!(labels.contains(&"复制 /t"));
-    assert!(labels.contains(&"复制 /d"));
-    assert!(labels.contains(&"复制 /cfg"));
-    assert!(labels.contains(&"复制 /fc"));
-    assert!(!labels.contains(&"复制 /transfer"));
-    assert!(!labels.contains(&"复制 /downloads"));
-    assert!(!labels.contains(&"复制 /config"));
+    assert!(labels.contains(&"复制流水"));
+    assert!(labels.contains(&"复制 /config show"));
+    assert!(labels.contains(&"复制 /cache"));
+    assert!(!labels.contains(&"复制 /t"));
+    assert!(!labels.contains(&"复制 /d"));
+    assert!(!labels.contains(&"复制 /cfg"));
     assert!(labels.contains(&"转存"));
     assert!(labels.contains(&"下载列表"));
+}
+
+// help 目录页应遵循统一层级：主导航 -> 管理导航 -> 刷新/返回/菜单 -> 复制类。
+#[test]
+fn test_help_index_buttons_follow_row_hierarchy() {
+    let admin = build_help_index_buttons(true);
+    let user = build_help_index_buttons(false);
+
+    assert_eq!(admin[0][0].text, "转存");
+    assert_eq!(admin[1][0].text, "积分账户");
+    assert_eq!(admin[3][0].text, "运行健康");
+    let admin_labels = admin
+        .iter()
+        .flatten()
+        .map(|button| button.text.as_str())
+        .collect::<Vec<_>>();
+    let admin_refresh_row = admin
+        .iter()
+        .find(|row| row.iter().any(|button| button.text == "刷新"))
+        .expect("admin help should have refresh row");
+    assert_eq!(admin_refresh_row[0].text, "刷新");
+    assert_eq!(admin_refresh_row[1].text, "帮助说明");
+    assert_eq!(admin_refresh_row[2].text, "菜单");
+    assert!(admin_labels.contains(&"复制流水"));
+    assert!(admin_labels.contains(&"复制 /health"));
+    assert!(admin_labels.contains(&"复制 /cache"));
+
+    assert_eq!(user[0][0].text, "转存");
+    assert_eq!(user[1][0].text, "积分账户");
+    let user_refresh_row = user
+        .iter()
+        .find(|row| row.iter().any(|button| button.text == "刷新"))
+        .expect("user help should have refresh row");
+    assert_eq!(user_refresh_row[0].text, "刷新");
+    assert_eq!(user_refresh_row[1].text, "帮助说明");
+    assert_eq!(user_refresh_row[2].text, "菜单");
+    assert!(
+        user.iter()
+            .flatten()
+            .any(|button| button.text == "复制流水")
+    );
+    assert!(
+        !user
+            .iter()
+            .flatten()
+            .any(|button| button.text == "复制帮助命令")
+    );
 }
 
 // 普通用户帮助目录不展示 admin-only 命令入口，避免按钮提示和实际权限不一致。
@@ -179,14 +223,27 @@ fn test_help_index_buttons_for_user_hide_admin_entries() {
         .map(|button| button.text.as_str())
         .collect::<Vec<_>>();
 
-    assert!(labels.contains(&"复制 /bal"));
+    assert!(labels.contains(&"复制流水"));
     assert!(labels.contains(&"积分账户"));
-    assert!(!labels.contains(&"复制 /cfg"));
-    assert!(!labels.contains(&"复制 /hl"));
-    assert!(!labels.contains(&"复制 /fc"));
+    assert!(!labels.contains(&"复制 /config show"));
+    assert!(!labels.contains(&"复制 /health"));
+    assert!(!labels.contains(&"复制 /cache"));
     assert!(!labels.contains(&"运行配置"));
     assert!(!labels.contains(&"运行健康"));
     assert!(!labels.contains(&"文件缓存"));
+}
+
+// help 目录页的“帮助说明”只应保留一个入口，避免同页重复表达。
+#[test]
+fn test_help_index_buttons_only_one_help_entry() {
+    let buttons = build_help_index_buttons(true);
+    let help_count = buttons
+        .iter()
+        .flatten()
+        .filter(|button| button.text == "帮助说明")
+        .count();
+
+    assert_eq!(help_count, 1);
 }
 
 // help 详情页应保留返回目录 callback。

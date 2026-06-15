@@ -28,52 +28,7 @@ pub(in crate::tgbot::transfer) async fn send_paused_message(
         job_id,
         "可手动恢复或停止该任务。",
     ))
-    .row(vec![
-        crate::tgbot::send::build_callback_button(
-            "查看任务详情",
-            &build_job_status_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "恢复",
-            &build_job_resume_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "停止",
-            &build_job_stop_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .row(vec![
-        crate::tgbot::send::build_copy_button(
-            "复制恢复",
-            &build_job_command("r", job_id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制停止",
-            &build_job_command("s", job_id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .row(vec![
-        crate::tgbot::send::build_callback_button(
-            "查看暂停列表",
-            &build_downloads_status_button_data("paused", 8),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制列表命令",
-            &build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "菜单",
-            &build_menu_home_button_data(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
+    .rows(build_status_button_rows("paused", job_id))
     .send(notify_chat_id, client_id)
     .await
 }
@@ -95,35 +50,7 @@ pub(in crate::tgbot::transfer) async fn send_cancelling_message(
         job_id,
         "当前调用会在安全点收尾。",
     ))
-    .row(vec![
-        crate::tgbot::send::build_callback_button(
-            "查看任务详情",
-            &build_job_status_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "查看停止列表",
-            &build_downloads_status_button_data("cancelling", 8),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制 job_id",
-            &job_id.to_string(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .row(vec![
-        crate::tgbot::send::build_copy_button(
-            "复制列表命令",
-            &build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "菜单",
-            &build_menu_home_button_data(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
+    .rows(build_status_button_rows("cancelling", job_id))
     .send(notify_chat_id, client_id)
     .await
 }
@@ -145,35 +72,7 @@ pub(in crate::tgbot::transfer) async fn send_cancelled_message(
         job_id,
         "文件引用已释放，后续由删除队列清理。",
     ))
-    .row(vec![
-        crate::tgbot::send::build_callback_button(
-            "查看任务详情",
-            &build_job_status_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "查看停止列表",
-            &build_downloads_status_button_data("cancelled", 8),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制 job_id",
-            &job_id.to_string(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .row(vec![
-        crate::tgbot::send::build_copy_button(
-            "复制列表命令",
-            &build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "菜单",
-            &build_menu_home_button_data(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
+    .rows(build_status_button_rows("cancelled", job_id))
     .send(notify_chat_id, client_id)
     .await
 }
@@ -187,76 +86,91 @@ pub(in crate::tgbot::transfer) async fn send_running_message(
     notify_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Short);
-    let transfer_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Short);
     crate::tgbot::send::ReplyPanel::card(format_status_card_text(
         title,
         "running",
         source_link,
         target_chat_id,
         job_id,
-        &format!("建议：使用 {} 查看后台进度。", card::code("/d run")),
+        &format!("建议：使用 {} 查看后台进度。", card::code("/downloads run")),
     ))
-    .row(vec![
-        crate::tgbot::send::build_callback_button(
-            "查看任务详情",
-            &build_job_status_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "暂停",
-            &build_job_pause_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "停止",
-            &build_job_stop_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .row(vec![
-        crate::tgbot::send::build_callback_button(
-            "查看运行列表",
-            &build_downloads_status_button_data("running", 8),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_copy_button(
+    .rows(build_status_button_rows("running", job_id))
+    .send(notify_chat_id, client_id)
+    .await
+}
+
+/// 构造中间状态卡片按钮。
+///
+/// 所有状态统一为：第一行任务主操作，第二行列表/菜单导航，第三行复制 `job_id`。
+fn build_status_button_rows(
+    status: &str,
+    job_id: i64,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut action_row = vec![crate::tgbot::send::build_callback_button(
+        "查看任务详情",
+        &build_job_status_button_data(job_id),
+        tdlib_rs::enums::ButtonStyle::Primary,
+    )];
+
+    match status {
+        "paused" => {
+            action_row.push(crate::tgbot::send::build_callback_button(
+                "恢复",
+                &build_job_resume_button_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ));
+            action_row.push(crate::tgbot::send::build_callback_button(
+                "停止",
+                &build_job_stop_button_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ));
+        }
+        "running" => {
+            action_row.push(crate::tgbot::send::build_callback_button(
+                "暂停",
+                &build_job_pause_button_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ));
+            action_row.push(crate::tgbot::send::build_callback_button(
+                "停止",
+                &build_job_stop_button_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ));
+        }
+        _ => {}
+    }
+
+    vec![
+        action_row,
+        vec![
+            crate::tgbot::send::build_callback_button(
+                status_list_label(status),
+                &build_downloads_status_button_data(status, 8),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            crate::tgbot::send::build_callback_button(
+                "菜单",
+                &build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![crate::tgbot::send::build_copy_button(
             "复制 job_id",
             &job_id.to_string(),
             tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .row(vec![
-        crate::tgbot::send::build_copy_button(
-            "复制暂停",
-            &build_job_command("p", job_id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制运行列表命令",
-            &build_downloads_command(Some("run"), None, None, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_copy_button(
-            "复制查询命令",
-            &lookup_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .row(vec![
-        crate::tgbot::send::build_copy_button(
-            "复制重新转存",
-            &transfer_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        crate::tgbot::send::build_callback_button(
-            "菜单",
-            &build_menu_home_button_data(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .send(notify_chat_id, client_id)
-    .await
+        )],
+    ]
+}
+
+/// 中间状态卡片的列表入口文案。
+fn status_list_label(status: &str) -> &'static str {
+    match status {
+        "paused" => "查看暂停列表",
+        "cancelling" | "cancel_finalizing" => "查看停止列表",
+        "cancelled" => "查看已停列表",
+        "running" => "查看运行列表",
+        _ => "查看列表",
+    }
 }
 
 /// 构造任务中间状态卡片。
@@ -297,10 +211,13 @@ fn status_command_lines(
     job_id: i64,
 ) -> Vec<String> {
     let mut lines = vec![
-        card::command_line("详情", build_job_command("st", job_id, CommandStyle::Short)),
+        card::command_line(
+            "详情",
+            build_job_command("status", job_id, CommandStyle::Long),
+        ),
         card::command_line(
             "查询",
-            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Long),
         ),
     ];
 
@@ -308,49 +225,49 @@ fn status_command_lines(
         "paused" => {
             lines.push(card::command_line(
                 "恢复",
-                build_job_command("r", job_id, CommandStyle::Short),
+                build_job_command("resume", job_id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "停止",
-                build_job_command("s", job_id, CommandStyle::Short),
+                build_job_command("stop", job_id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("pause"), None, None, CommandStyle::Long),
             ));
         }
         "cancelling" | "cancel_finalizing" | "cancelled" => {
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("cancel"), None, None, CommandStyle::Long),
             ));
         }
         _ => {
             lines.push(card::command_line(
                 "暂停",
-                build_job_command("p", job_id, CommandStyle::Short),
+                build_job_command("pause", job_id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "停止",
-                build_job_command("s", job_id, CommandStyle::Short),
+                build_job_command("stop", job_id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("run"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("run"), None, None, CommandStyle::Long),
             ));
         }
     }
 
     lines.push(card::command_line(
         "重转",
-        build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+        build_transfer_command(source_link, target_chat_id, CommandStyle::Long),
     ));
     lines
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{format_status_card_text, status_command_lines};
+    use super::{build_status_button_rows, format_status_card_text, status_command_lines};
 
     // 后台状态卡片应使用 card 标记展示状态、job 和来源。
     #[test]
@@ -367,8 +284,8 @@ mod tests {
         assert!(text.contains("状态：‹running›"));
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("‹https://t.me/c/1/2›"));
-        assert!(text.contains("详情：‹/j st 42›"));
-        assert!(text.contains("列表：‹/d run›"));
+        assert!(text.contains("详情：‹/job status 42›"));
+        assert!(text.contains("列表：‹/downloads run›"));
     }
 
     // paused/cancelled 状态应生成对应列表和控制命令，不能继续展示无效暂停命令。
@@ -378,9 +295,29 @@ mod tests {
         let cancelled =
             status_command_lines("cancelled", "https://t.me/c/1/2", -100, 42).join("\n");
 
-        assert!(paused.contains("恢复：‹/j r 42›"));
-        assert!(paused.contains("列表：‹/d pause›"));
-        assert!(cancelled.contains("列表：‹/d cancel›"));
-        assert!(!cancelled.contains("暂停：‹/j p 42›"));
+        assert!(paused.contains("恢复：‹/job resume 42›"));
+        assert!(paused.contains("列表：‹/downloads pause›"));
+        assert!(cancelled.contains("列表：‹/downloads cancel›"));
+        assert!(!cancelled.contains("暂停：‹/job pause 42›"));
+    }
+
+    // 中间状态卡片按钮应统一为主操作、导航、复制三层，不再混排命令复制按钮。
+    #[test]
+    fn test_build_status_button_rows_layout() {
+        let rows = build_status_button_rows("running", 42);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows[0][0].text, "查看任务详情");
+        assert_eq!(rows[0][1].text, "暂停");
+        assert_eq!(rows[0][2].text, "停止");
+        assert_eq!(rows[1][0].text, "查看运行列表");
+        assert_eq!(rows[1][1].text, "菜单");
+        assert_eq!(rows[2][0].text, "复制 job_id");
+        assert!(!labels.contains(&"复制查询命令"));
+        assert!(!labels.contains(&"复制重新转存"));
     }
 }

@@ -13,8 +13,9 @@ use super::common::{
     resolve_target_chat_id, transfer_command as build_transfer_command,
 };
 use super::{
-    build_downloads_status_button_data, build_job_pause_button_data, build_job_resume_button_data,
-    build_job_status_button_data, build_job_stop_button_data, build_menu_home_button_data,
+    build_downloads_filter_button_data, build_downloads_status_button_data,
+    build_job_pause_button_data, build_job_resume_button_data, build_job_status_button_data,
+    build_job_stop_button_data, build_menu_home_button_data,
 };
 
 /// `/lookup` 命令入口。
@@ -40,9 +41,7 @@ pub async fn lookup_command(
         target_chat_id,
         "lookup command started"
     );
-    let lookup_command = build_lookup_command(&source_link, target_chat_id, CommandStyle::Short);
-    let transfer_command =
-        build_transfer_command(&source_link, target_chat_id, CommandStyle::Short);
+    let transfer_command = build_transfer_command(&source_link, target_chat_id, CommandStyle::Long);
 
     if let Some(job) =
         store::find_success_job_by_source_target(&source_link, target_chat_id, actor.owner_scope())
@@ -109,28 +108,7 @@ pub async fn lookup_command(
             panel = panel.row(row);
         }
         return panel
-            .row(vec![
-                send::build_callback_button(
-                    "查看任务详情",
-                    &build_job_status_button_data(job.id),
-                    tdlib_rs::enums::ButtonStyle::Default,
-                ),
-                send::build_copy_button(
-                    "复制查询命令",
-                    &lookup_command,
-                    tdlib_rs::enums::ButtonStyle::Default,
-                ),
-                send::build_copy_button(
-                    "复制重新转存",
-                    &transfer_command,
-                    tdlib_rs::enums::ButtonStyle::Default,
-                ),
-                send::build_callback_button(
-                    "菜单",
-                    &build_menu_home_button_data(),
-                    tdlib_rs::enums::ButtonStyle::Default,
-                ),
-            ])
+            .row(build_lookup_success_navigation_buttons(job.id))
             .send(actor.request_chat_id, client_id)
             .await;
     }
@@ -170,23 +148,6 @@ pub async fn lookup_command(
             ),
         ])
         .row(build_lookup_active_control_buttons(job.id, &job.status))
-        .row(vec![
-            send::build_copy_button(
-                "复制运行列表",
-                "/d run",
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制查询命令",
-                &lookup_command,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制重新转存",
-                &transfer_command,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ])
         .send(actor.request_chat_id, client_id)
         .await;
     }
@@ -199,35 +160,71 @@ pub async fn lookup_command(
         "lookup command missed"
     );
     send::ReplyPanel::card(format_lookup_miss_text(&source_link, target_chat_id))
-        .row(vec![
+        .rows(build_lookup_miss_button_rows(
+            &transfer_command,
+            &source_link,
+        ))
+        .send(actor.request_chat_id, client_id)
+        .await
+}
+
+/// 构建 lookup 命中成功结果时的导航按钮。
+///
+/// 查询命令和重转命令已经在正文里保留；按钮区只放可以直接点击执行的动作和结果数据入口。
+fn build_lookup_success_navigation_buttons(
+    job_id: i64,
+) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    let mut row = vec![send::build_callback_button(
+        "查看任务详情",
+        &build_job_status_button_data(job_id),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )];
+    if let Some(callback_data) = build_downloads_filter_button_data("done", 8) {
+        row.push(send::build_callback_button(
+            "查看完成列表",
+            &callback_data,
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ));
+    }
+    row.push(send::build_callback_button(
+        "菜单",
+        &build_menu_home_button_data(),
+        tdlib_rs::enums::ButtonStyle::Default,
+    ));
+    row
+}
+
+/// 构建 lookup 未命中时的按钮。
+///
+/// 这里没有已存在的任务可 callback 执行，因此只保留真正需要用户复制的数据和重发命令。
+fn build_lookup_miss_button_rows(
+    transfer_command: &str,
+    source_link: &str,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![
             send::build_copy_button(
                 "复制转存命令",
-                &transfer_command,
+                transfer_command,
                 tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_copy_button(
-                "复制查询命令",
-                &lookup_command,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制源链接",
-                &source_link,
-                tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_callback_button(
                 "菜单",
                 &build_menu_home_button_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-        ])
-        .send(actor.request_chat_id, client_id)
-        .await
+        ],
+        vec![send::build_copy_button(
+            "复制源链接",
+            source_link,
+            tdlib_rs::enums::ButtonStyle::Default,
+        )],
+    ]
 }
 
 /// 构建 lookup 命中进行中任务时的直接控制按钮。
 ///
-/// 控制按钮复用 `/job` callback；复制按钮保留为用户号模式或客户端不支持按钮时的兜底。
+/// 控制按钮复用 `/job` callback；正文里已经保留完整命令，因此按钮区只保留真正的交互操作和 `job_id`。
 fn build_lookup_active_control_buttons(
     job_id: i64,
     status: &str,
@@ -239,11 +236,6 @@ fn build_lookup_active_control_buttons(
             &build_job_resume_button_data(job_id),
             tdlib_rs::enums::ButtonStyle::Primary,
         ));
-        row.push(send::build_copy_button(
-            "复制恢复",
-            &build_job_command("r", job_id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ));
     } else if matches!(
         status,
         store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING
@@ -252,11 +244,6 @@ fn build_lookup_active_control_buttons(
             "暂停",
             &build_job_pause_button_data(job_id),
             tdlib_rs::enums::ButtonStyle::Primary,
-        ));
-        row.push(send::build_copy_button(
-            "复制暂停",
-            &build_job_command("p", job_id, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Default,
         ));
     }
 
@@ -293,14 +280,23 @@ fn format_lookup_active_text(
         card::DIVIDER.to_owned(),
         card::section("下一步"),
         format!(
-            "可直接复制暂停/停止命令，或使用 {} 查看运行列表。",
-            card::code("/d run")
+            "可直接用按钮控制任务，或使用 {} 查看运行列表。",
+            card::code("/downloads run")
         ),
         card::section("命令"),
-        card::command_line("详情", build_job_command("st", job_id, CommandStyle::Short)),
-        card::command_line("暂停", build_job_command("p", job_id, CommandStyle::Short)),
-        card::command_line("停止", build_job_command("s", job_id, CommandStyle::Short)),
-        card::command_line("列表", "/d run"),
+        card::command_line(
+            "详情",
+            build_job_command("status", job_id, CommandStyle::Long),
+        ),
+        card::command_line(
+            "暂停",
+            build_job_command("pause", job_id, CommandStyle::Long),
+        ),
+        card::command_line(
+            "停止",
+            build_job_command("stop", job_id, CommandStyle::Long),
+        ),
+        card::command_line("列表", "/downloads run"),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
@@ -318,11 +314,11 @@ fn format_lookup_miss_text(source_link: &str, target_chat_id: i64) -> String {
         card::section("命令"),
         card::command_line(
             "转存",
-            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
+            build_transfer_command(source_link, target_chat_id, CommandStyle::Long),
         ),
         card::command_line(
             "查询",
-            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
+            build_lookup_command(source_link, target_chat_id, CommandStyle::Long),
         ),
         String::new(),
     ];
@@ -333,7 +329,9 @@ fn format_lookup_miss_text(source_link: &str, target_chat_id: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_lookup_active_control_buttons, format_lookup_active_text, format_lookup_miss_text,
+        build_lookup_active_control_buttons, build_lookup_miss_button_rows,
+        build_lookup_success_navigation_buttons, format_lookup_active_text,
+        format_lookup_miss_text,
     };
 
     // lookup 命中运行中任务时应使用 card 标记，避免 Markdown 原文泄露到消息里。
@@ -343,8 +341,8 @@ mod tests {
 
         assert!(text.contains("状态：‹running›"));
         assert!(text.contains("job：‹#42›"));
-        assert!(text.contains("‹/d run›"));
-        assert!(text.contains("暂停/停止命令"));
+        assert!(text.contains("‹/downloads run›"));
+        assert!(text.contains("可直接用按钮控制任务"));
     }
 
     // lookup 未命中时应保留源链接并给出 miss 状态。
@@ -362,13 +360,13 @@ mod tests {
         let buttons = build_lookup_active_control_buttons(42, "running");
 
         assert_eq!(buttons[0].text, "暂停");
-        assert_eq!(buttons[2].text, "停止");
+        assert_eq!(buttons[1].text, "停止");
         assert!(matches!(
             buttons[0].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
         assert!(matches!(
-            buttons[2].r#type,
+            buttons[1].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
     }
@@ -383,5 +381,36 @@ mod tests {
         assert!(paused.iter().any(|button| button.text == "停止"));
         assert!(!cancelling.iter().any(|button| button.text == "停止"));
         assert!(cancelling.iter().any(|button| button.text == "复制 job_id"));
+    }
+
+    // lookup 成功命中已有结果时，按钮区应使用真实 callback 导航，不再重复复制查询/重转命令。
+    #[test]
+    fn test_build_lookup_success_navigation_buttons_drop_command_copy_buttons() {
+        let buttons = build_lookup_success_navigation_buttons(42);
+
+        assert!(buttons.iter().any(|button| button.text == "查看任务详情"));
+        assert!(buttons.iter().any(|button| button.text == "查看完成列表"));
+        assert!(buttons.iter().any(|button| button.text == "菜单"));
+        assert!(!buttons.iter().any(|button| button.text == "复制查询命令"));
+        assert!(!buttons.iter().any(|button| button.text == "复制重新转存"));
+    }
+
+    // lookup 未命中时没有可执行 callback，只保留发起转存和源链接这两个必要复制入口。
+    #[test]
+    fn test_build_lookup_miss_button_rows_keep_only_needed_copy_buttons() {
+        let rows = build_lookup_miss_button_rows(
+            "/transfer https://t.me/c/1/2 -100",
+            "https://t.me/c/1/2",
+        );
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"复制转存命令"));
+        assert!(labels.contains(&"复制源链接"));
+        assert!(labels.contains(&"菜单"));
+        assert!(!labels.contains(&"复制查询命令"));
     }
 }

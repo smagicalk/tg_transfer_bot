@@ -318,20 +318,20 @@ pub async fn handle_update(
                 let command_result = match command {
                     // /help 命令入口。
                     // 返回机器人当前支持的命令说明。
-                    "/help" | "/h" => {
+                    "/help" => {
                         tgbot::transfer::help_command(text, actor, interaction_client_id).await
                     }
-                    "/balance" | "/bal" => {
+                    "/balance" => {
                         tgbot::transfer::balance_command(text, actor, interaction_client_id).await
                     }
-                    "/points" | "/pts" if actor.is_admin() => {
+                    "/points" if actor.is_admin() => {
                         tgbot::transfer::points_command(text, actor, interaction_client_id).await
                     }
-                    "/points" | "/pts" => {
+                    "/points" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
                     }
                     // /transfer 命令入口。
-                    "/transfer" | "/t" => {
+                    "/transfer" => {
                         // request_message_id 用于请求级幂等（防止同一条指令重复建任务）。
                         tgbot::transfer::transfer_command(
                             text,
@@ -344,7 +344,7 @@ pub async fn handle_update(
                     }
                     // /lookup 命令入口。
                     // 按源链接查找历史转存结果。
-                    "/lookup" | "/lk" => {
+                    "/lookup" => {
                         tgbot::transfer::lookup_command(
                             text,
                             config.clone(),
@@ -355,41 +355,41 @@ pub async fn handle_update(
                     }
                     // /config 命令入口。
                     // 仅开放运行时安全可调的配置项。
-                    "/config" | "/cfg" if actor.is_admin() => {
+                    "/config" if actor.is_admin() => {
                         tgbot::transfer::config_command(text, chat_id, interaction_client_id).await
                     }
-                    "/config" | "/cfg" => {
+                    "/config" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
                     }
                     // /health 命令入口。
                     // 只读展示运行状态、任务规模和缓存状态，方便排障。
-                    "/health" | "/hl" if actor.is_admin() => {
+                    "/health" if actor.is_admin() => {
                         tgbot::transfer::health_command(text, chat_id, interaction_client_id).await
                     }
-                    "/health" | "/hl" => {
+                    "/health" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
                     }
                     // /cache 命令入口。
                     // 只读展示 file_cache 汇总和最近记录，不执行清理。
-                    "/cache" | "/fc" if actor.is_admin() => {
+                    "/cache" if actor.is_admin() => {
                         tgbot::transfer::cache_command(text, chat_id, interaction_client_id).await
                     }
-                    "/cache" | "/fc" => {
+                    "/cache" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
                     }
                     // /downloads 命令入口。
                     // 展示当前聊天最近的转存任务进度列表。
-                    "/downloads" | "/d" => {
+                    "/downloads" => {
                         tgbot::transfer::downloads_command(text, actor, interaction_client_id).await
                     }
                     // /job 命令入口。
                     // 手动暂停、恢复、停止指定转存任务。
-                    "/job" | "/j" => {
+                    "/job" => {
                         tgbot::transfer::job_command(text, actor, interaction_client_id).await
                     }
                     // /menu 命令入口。
                     // 正常配置下交互端固定为 bot；supports_reply_markup 只作为异常配置/测试场景的兜底开关。
-                    "/menu" | "/m" => {
+                    "/menu" => {
                         let supports_reply_markup = config.supports_reply_markup();
                         tgbot::transfer::menu_command(
                             text,
@@ -866,6 +866,10 @@ mod tests {
 
         assert_eq!(hint.title, "积分不足");
         assert_eq!(hint.primary_command, "/balance");
+        assert_eq!(
+            hint.primary_action,
+            crate::tgbot::error::CommandErrorPrimaryAction::OpenBalance
+        );
         assert!(hint.advice.contains("联系管理员加分"));
     }
 
@@ -876,7 +880,11 @@ mod tests {
 
         assert_eq!(hint.title, "目标不可用");
         assert!(hint.advice.contains("allowed_target_chat_ids"));
-        assert_eq!(hint.help_command, "/h transfer");
+        assert_eq!(
+            hint.primary_action,
+            crate::tgbot::error::CommandErrorPrimaryAction::OpenMenu
+        );
+        assert_eq!(hint.help_command, "/help transfer");
     }
 
     // 私有源不可读时，应明确区分普通用户处理方式和管理员 user fallback 前提。
@@ -895,6 +903,10 @@ mod tests {
         let hint = command_error_hint("network timeout");
 
         assert_eq!(hint.title, "命令执行失败");
-        assert_eq!(hint.primary_command, "/h");
+        assert_eq!(hint.primary_command, "/help");
+        assert_eq!(
+            hint.primary_action,
+            crate::tgbot::error::CommandErrorPrimaryAction::OpenHelp
+        );
     }
 }

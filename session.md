@@ -10,7 +10,7 @@
 
 ## 当前状态
 
-记录日期：2026-06-11
+记录日期：2026-06-14
 
 当前分支：
 
@@ -30,6 +30,64 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 
 最近一轮结构收口：
 
+- `/menu` callback 入口已抽出纯决策层，先统一处理 TDLib payload 类型、菜单 payload 解析和输入类按钮归属校验，再进入实际副作用分支。
+- `menu/input/callbacks_target.rs` 已继续收口目标选择流程：目标 callback 公共参数集中到 `TargetCallbackContext`，默认目标和常用目标复用同一套“推进草稿到确认页”逻辑。
+- 确认按钮消费结果已映射为 `ConfirmCallbackDecision`，过期、空草稿、错误阶段和正常执行的 UI 行为更容易单测和维护。
+- `menu/input.rs` 已补 `ContinueInputDecision`，把“无草稿 / 过期 / 活跃草稿”的继续输入分支统一成纯决策。
+- `callbacks_target.rs` 已补 `TargetAdvanceCallbackDecision`，把目标推进按钮的过期、空草稿和错误阶段提示集中到一处。
+- `workflow/recovery.rs` 已补启动恢复摘要聚合测试，确认会按 `request_chat_id` 聚合并限制示例 job 数量。
+- `menu.rs` 已补 `MenuCallbackRoute`，把 `/menu` callback 入口拆成“页面路由 / 启动输入 / 继续输入 / 转发到具体 handler”四类分发。
+- `menu.rs` 测试里已补入口高层计划层 `MenuCallbackPlan`，用于稳定描述 `/menu` callback 的最终意图，而不直接绑定 TDLib 发送细节。
+- “继续输入为空”和“继续输入过期”现在都有独立文案构造函数，交互闭环的终态提示已统一成恢复态/空态，而不是继续复用等待态。
+- `workflow/recovery.rs` 已补“何时应该发送恢复摘要”测试，明确它只服务于转存任务恢复，不包含菜单草稿这种懒恢复状态。
+- `flow_callbacks.rs` 已补共享选群和目标文本输入的纯决策锚点：`SharedChatOutcome`、`TargetInputOutcome`，并把共享选群主流程接回这些高层分支。
+- 交互文案继续统一：共享选群失败的“目标不可用”提示已抽成单点，首页/继续输入的空态提示也继续向统一卡片语言收敛。
+- `flow_callbacks.rs` 已继续补 `SourceLinkOutcome`，把“源链接非法 / 默认目标缺失 / 进入目标选择 / 直接走默认目标执行”统一成高层动作。
+- `target.rs` 已支持带附加说明的目标选择卡片，默认目标缺失与共享选群失败回退现在会保留来源上下文并回到同一种目标选择视图。
+- `menu/text.rs` 已补统一的 `build_menu_target_unavailable_text` 与 `build_menu_no_pending_input_text`，目标不可用和无未完成输入都收口到统一终态卡片语言。
+- `flow_callbacks.rs` 已补共享选群 ignored/wrong-step 边界测试，以及默认目标缺失回退路径的高层动作测试；目标选择链路的交互回退语义现在更稳。
+- `flow_callbacks.rs` 已继续收口成更统一的“阶段动作 -> UI 动作”模型：`SourceLinkOutcome`、`TargetInputOutcome`、`SharedChatOutcome` 现在都会进一步映射到统一的 `FlowUiAction`。
+- 当前 `flow_callbacks.rs` 的角色已经更接近纯编排层：先决定动作，再执行 UI；后续如果还要继续优化交互，这里已经是稳定的继续演进点。
+- 跨交互页的页头/命令分区/空态说明 helper 已下沉到 `command/common.rs`，`downloads`、`cache`、`points` 三页已开始统一到同一套“ready + 命令 + 空态”风格。
+- `job`、`health`、`help` 三页也已接入同一套公共 helper，菜单外的主要交互页现在基本共享统一的页头、命令区和说明块风格。
+- 按钮层级也开始统一：`job`、`health`、`points`、`cache`、`help` 等页正收口到“主操作 / 刷新返回菜单 / 复制动作”更稳定的按钮层次。
+- 本轮继续把按钮最密的三页再收一轮：
+  - `downloads` 现已统一为“任务/筛选主操作 -> 刷新/返回/菜单 -> 复制当前命令 -> 分页单独一行”。
+  - `config` 现已统一为“配置增减主操作 -> 刷新/返回/菜单 -> 复制命令”，并补了层级测试。
+  - `menu` 的 `Home / Transfer / Downloads / Jobs / Lookup / Help / Config fallback` 已继续拉平按钮密度和导航层级。
+- 本轮继续完成第二批交互页统一：
+  - `cache` 现已统一为“视图主操作 -> 刷新/返回/菜单 -> 复制当前命令 -> 分页单独一行”。
+  - `points` 流水页现已统一为“分页主操作 -> 刷新/返回/菜单 -> 复制当前命令 -> 复制余额”，admin 返回按钮会安全降级为复制 `/points show <user_id>`。
+  - `health` 现已统一为“主操作 -> 刷新/帮助/菜单 -> 复制 /health”。
+  - `help detail` 现已把复制类按钮尽量收成单独一行，并统一“返回目录 / 菜单”导航行。
+- 本轮继续把 `help index` 目录页彻底按同一套层级重排：
+  - 主导航先放公开 help topic。
+  - admin 专属 topic 独立成自己的主操作行，不再和复制按钮混排。
+  - `刷新 / 帮助说明 / 菜单` 固定成单独导航行。
+  - 复制类命令统一沉到底部。
+- 本轮继续收缩“非必要复制按钮”：
+  - `tgbot/error.rs` 里的命令错误卡片已修正为“按钮文案和真实行为一致”，不再统一错误地跳菜单。
+  - `menu` 中 `transfer / downloads / jobs / lookup` 这几页的模板复制按钮已删掉一批，改为优先使用现有交互入口。
+  - `lookup`、转存进度卡片、成功结果卡片、失败卡片和中间状态卡片已继续收缩按钮区：能走 callback 的统一改成“查看任务详情 / 查看列表 / 菜单”，不再把“复制查询命令 / 复制重新转存”放在按钮区重复表达。
+  - `transfer` 首次回执、`job pause` 结果卡片和启动恢复摘要也已收掉残留动作型复制按钮，改为直接 callback 导航；按钮区只保留源标识、`job_id` 这类排查数据复制。
+  - `menu/input.rs`、`menu/input/flow_callbacks.rs`、`menu/text.rs` 本轮继续把几处 `unreachable!` 风险改成可恢复分支：即使未来状态机分支意外漂移，也会回到“重问源链接 / 重问目标 / 返回菜单”这类恢复路径，而不是直接 panic。
+  - 本轮继续清理“同页重复功能”按钮：
+    - `menu/transfer` 页移除了与首行完全等价的 `指定目标 / 默认目标`。
+    - `help index` 页移除了重复的 `帮助说明` 入口，只保留 footer 那一个。
+    - `points ledger` 页移除了与页码中间按钮重复的 `复制当前命令` 行。
+    - `menu/home` footer 移除了首页自指的 `首页` 按钮，只保留 `刷新 / 帮助`。
+    - `menu/help` 页移除了不够统一的 `复制帮助命令`，帮助页只保留 topic callback 与页尾导航。
+    - `user config fallback` 的 footer 不再自指首页，改成 `刷新 / 帮助 / 返回`。
+  - 本轮再次复核后，`user config fallback` 与 `help index` 的重复导航也已进一步收口，按钮页尾现在更偏向单一返回路径而不是多处同义入口。
+  - 本轮开始把菜单重排为多级结构：
+    - `MenuPage` 新增 `TasksHub / AccountHub / AdminHub` 三个二级 hub。
+    - 首页现在只保留高频动作和 hub 入口，不再直接承载所有细页导航。
+    - 原首页关于状态快捷、账户入口、管理入口的测试也已迁移到各自 hub，菜单测试已和新结构对齐。
+    - 本轮继续把首页彻底“去任务化”：`recent_job_buttons` 与最近任务快捷控制已下沉到 `TasksHub`，首页不再同时承担任务面板职责。
+  - 当前仍保留的复制按钮主要集中在：错误详情、结果链接/定位、`job_id`、`/cancel`、未命中 lookup 的转存命令、失败后的重试命令等必须由用户主动发送或复制的数据。
+- 本轮只新增了一个最小公共 helper：`build_return_menu_row`，用于那些没有合理刷新语义的页面，不继续机械抽象更多 helper。
+- 当前判断：下一处若还要继续优化交互，应优先看 `flow_callbacks.rs` 的高层状态表达，不建议先硬拆 `input/state.rs`。
+- 新增菜单 callback 决策测试、目标 callback 上下文测试和确认按钮决策测试，避免后续交互文案调整破坏流程语义。
 - 命令错误提示和权限/自动转存引导已下沉到 `transfer_bot/src/tgbot/error.rs`。
 - 交互回调错误卡片发送已下沉到 `transfer_bot/src/tgbot/send/error.rs`。
 - `transfer_bot/src/tgbot/transfer/command/common.rs` 只保留命令公共拼装逻辑。
@@ -38,9 +96,9 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - `transfer_bot/src/tgbot/send.rs` 现在只保留发送层入口转发，错误卡片排版细节已拆出。
 - `/balance` 与 `/points` 已拆成命令入口、流水渲染和 callback 子模块。
 - 新增恢复/查重专项测试：成功结果复用、重复活跃任务、同请求取消幂等、启动恢复扫描。
-- 最新验证：`cargo fmt --all`、`cargo check -p transfer_bot`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 全部通过，`cargo test -p transfer_bot` 当前 `263 passed`。
+- 最新验证：`cargo fmt --all -- --check`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 全部通过，`cargo test -p transfer_bot` 当前 `358 passed`。
 
-当前未提交改动主要集中在：
+当前未提交改动较多，具体以 `git status --short` 为准；主要集中在：
 
 - `README.md`
 - `session.md`
@@ -82,7 +140,7 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 
 工作区注意：
 
-- `tdlib_rs` 仍有大量生成代码改动，不要手动清理或重排，除非明确要重新生成绑定。
+- `tdlib_rs` 是生成代码目录，不要手动清理或重排，除非明确要重新生成绑定。
 - `config.json` 是本地敏感配置，已忽略，不要提交。
 - 当前同时在推进两条线：`AppContext` 架构重构，以及 bot 菜单/交互一致性优化。
 - 当前已经加入 admin/普通用户权限隔离和普通用户积分计费。
@@ -300,9 +358,9 @@ cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
 
 结果：
 
-- `cargo check` 通过
-- `cargo test` 通过，`256 passed`
-- `cargo clippy` 通过
+- `cargo fmt --all -- --check` 通过
+- `cargo test -p transfer_bot` 通过，`340 passed`
+- `cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 通过
 
 注意：
 

@@ -2,6 +2,10 @@
 
 use crate::tgbot::send;
 
+use super::super::common::{
+    CommandStyle, build_copy_only_row, build_refresh_return_menu_row,
+    cache_command as build_cache_command,
+};
 use super::types::{CacheArgs, CacheView};
 
 /// `/cache` callback 前缀。
@@ -49,6 +53,8 @@ pub(super) fn build_cache_keyboard(
     args: &CacheArgs,
     total_pages: u64,
 ) -> tdlib_rs::types::ReplyMarkupInlineKeyboard {
+    let current_callback = build_cache_view_callback_data(args.view, args.limit, args.page);
+    let mut pagination_row = None;
     let mut rows = Vec::new();
     rows.push(vec![
         send::build_callback_button(
@@ -67,27 +73,27 @@ pub(super) fn build_cache_keyboard(
         let prev_page = args.page.saturating_sub(1).max(1);
         let next_page = (args.page + 1).min(total_pages.max(1));
         let last_page = total_pages.max(1);
-        rows.push(vec![
+        pagination_row = Some(vec![
             cache_nav_button("首页", args, first_page, last_page),
             cache_nav_button("上页", args, prev_page, last_page),
-            send::build_copy_button(
+            send::build_callback_button(
                 &format!("{}/{}", args.page, total_pages.max(1)),
-                &format!("/cache page {} {}", args.limit, args.page),
+                &current_callback,
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             cache_nav_button("下页", args, next_page, last_page),
             cache_nav_button("末页", args, last_page, last_page),
         ]);
     }
-    rows.push(vec![
-        send::build_copy_button(
-            "复制 /cache",
-            "/cache",
-            tdlib_rs::enums::ButtonStyle::Default,
+    rows.push(build_refresh_return_menu_row(
+        send::build_callback_button(
+            "刷新",
+            &current_callback,
+            tdlib_rs::enums::ButtonStyle::Primary,
         ),
-        send::build_copy_button(
-            "复制 /cache page",
-            "/cache page",
+        send::build_callback_button(
+            "返回",
+            &super::super::build_health_button_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         send::build_callback_button(
@@ -95,8 +101,29 @@ pub(super) fn build_cache_keyboard(
             &super::super::build_menu_home_button_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-    ]);
+    ));
+    rows.push(build_copy_only_row(send::build_copy_button(
+        "复制当前命令",
+        &build_cache_page_command(args),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )));
+    if let Some(row) = pagination_row {
+        rows.push(row);
+    }
     tdlib_rs::types::ReplyMarkupInlineKeyboard { rows }
+}
+
+/// 生成当前缓存页对应的可复制命令。
+fn build_cache_page_command(args: &CacheArgs) -> String {
+    match args.view {
+        CacheView::Summary => build_cache_command(Some("summary"), None, None, CommandStyle::Long),
+        CacheView::Page => build_cache_command(
+            Some("page"),
+            Some(args.limit),
+            Some(args.page),
+            CommandStyle::Long,
+        ),
+    }
 }
 
 /// 构建分页导航按钮。
@@ -106,18 +133,17 @@ fn cache_nav_button(
     page: u64,
     total_pages: u64,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    // 目标页等于当前页时退化为复制当前页命令，避免 Telegram 返回 message is not modified。
-    if page == args.page {
-        return send::build_copy_button(
-            text,
-            &format!("/cache page {} {}", args.limit, args.page.min(total_pages)),
-            tdlib_rs::enums::ButtonStyle::Default,
-        );
-    }
-
     send::build_callback_button(
         text,
-        &build_cache_view_callback_data(args.view, args.limit, page),
+        &build_cache_view_callback_data(
+            args.view,
+            args.limit,
+            if page == args.page {
+                args.page.min(total_pages)
+            } else {
+                page
+            },
+        ),
         tdlib_rs::enums::ButtonStyle::Default,
     )
 }

@@ -7,8 +7,8 @@ use crate::config::BotConfig;
 use crate::tgbot::transfer::card;
 
 /// 命令输出风格：
-/// - Short: 适合按钮复制、快速输入
-/// - Long: 适合帮助文档、显式展示
+/// - Short: 旧版兼容枚举，当前用户可见输出已统一收口到长命令
+/// - Long: 帮助文档、按钮复制和显式展示使用的标准形式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandStyle {
     Short,
@@ -115,7 +115,12 @@ pub(crate) fn downloads_command(
 
 /// 构造 `/job ...` 或 `/j ...` 命令。
 pub(crate) fn job_command(action: &str, job_id: i64, style: CommandStyle) -> String {
-    format!("{} {} {}", command_name("job", style), action, job_id)
+    format!(
+        "{} {} {}",
+        command_name("job", style),
+        normalize_job_action(action),
+        job_id
+    )
 }
 
 /// 构造 `/balance` 或 `/bal` 命令。
@@ -125,10 +130,8 @@ pub(crate) fn balance_command(style: CommandStyle) -> String {
 
 /// 构造 `/balance history ...` 或 `/bal h ...` 命令。
 pub(crate) fn balance_history_command(limit: u64, page: u64, style: CommandStyle) -> String {
-    let action = match style {
-        CommandStyle::Short => "h",
-        CommandStyle::Long => "history",
-    };
+    let _ = style;
+    let action = "history";
     format!(
         "{} {} {} {}",
         command_name("balance", style),
@@ -140,10 +143,8 @@ pub(crate) fn balance_history_command(limit: u64, page: u64, style: CommandStyle
 
 /// 构造 `/points show ...` 或 `/pts s ...` 命令。
 pub(crate) fn points_show_command(user_id: i64, style: CommandStyle) -> String {
-    let action = match style {
-        CommandStyle::Short => "s",
-        CommandStyle::Long => "show",
-    };
+    let _ = style;
+    let action = "show";
     format!("{} {} {}", command_name("points", style), action, user_id)
 }
 
@@ -154,10 +155,8 @@ pub(crate) fn points_history_command(
     page: u64,
     style: CommandStyle,
 ) -> String {
-    let action = match style {
-        CommandStyle::Short => "h",
-        CommandStyle::Long => "history",
-    };
+    let _ = style;
+    let action = "history";
     format!(
         "{} {} {} {} {}",
         command_name("points", style),
@@ -178,6 +177,13 @@ pub(crate) fn points_change_command(
     reason: &str,
     style: CommandStyle,
 ) -> String {
+    let action = match action {
+        "a" => "add",
+        "s" | "sub" => "sub",
+        "show" => "show",
+        "history" | "h" => "history",
+        other => other,
+    };
     format!(
         "{} {} {} {} {}",
         command_name("points", style),
@@ -272,37 +278,89 @@ pub(crate) fn command_root(kind: &str, style: CommandStyle) -> String {
 /// 同时展示短命令和长命令。
 pub(crate) fn short_and_long(short: String, long: String) -> String {
     // 帮助和列表回复统一使用 card 格式；发送层会把 `‹...›` 转成 TDLib code 实体。
-    format!("{} | {}", card::code(long), card::code(short))
+    if short == long {
+        card::code(long)
+    } else {
+        format!("{} | {}", card::code(long), card::code(short))
+    }
+}
+
+/// 构造交互页统一页头。
+pub(crate) fn build_ready_page_header(title: &str) -> Vec<String> {
+    vec![
+        title.to_owned(),
+        format!("状态：{}", card::code("ready")),
+        card::DIVIDER.to_owned(),
+    ]
+}
+
+/// 构造交互页统一命令分区标题。
+pub(crate) fn build_page_command_section() -> String {
+    card::section("命令")
+}
+
+/// 构造交互页统一空态说明。
+pub(crate) fn build_page_empty_note(detail: &str) -> String {
+    card::note(detail)
+}
+
+/// 交互页常用的“刷新 / 返回 / 菜单”操作行。
+pub(crate) fn build_refresh_return_menu_row(
+    refresh: tdlib_rs::types::InlineKeyboardButton,
+    back: tdlib_rs::types::InlineKeyboardButton,
+    menu: tdlib_rs::types::InlineKeyboardButton,
+) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    vec![refresh, back, menu]
+}
+
+/// 交互页常用的单独复制按钮行。
+pub(crate) fn build_copy_only_row(
+    button: tdlib_rs::types::InlineKeyboardButton,
+) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    vec![button]
+}
+
+/// 交互页常用的“返回 / 菜单”导航行。
+///
+/// 某些页面没有合适的刷新语义，单独提供二按钮导航行，避免为了套统一格式硬塞无意义按钮。
+pub(crate) fn build_return_menu_row(
+    back: tdlib_rs::types::InlineKeyboardButton,
+    menu: tdlib_rs::types::InlineKeyboardButton,
+) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    vec![back, menu]
 }
 
 /// 返回命令名称。
 fn command_name(kind: &str, style: CommandStyle) -> String {
-    match (kind, style) {
-        ("help", CommandStyle::Short) => "/h",
-        ("help", CommandStyle::Long) => "/help",
-        ("health", CommandStyle::Short) => "/hl",
-        ("health", CommandStyle::Long) => "/health",
-        ("transfer", CommandStyle::Short) => "/t",
-        ("transfer", CommandStyle::Long) => "/transfer",
-        ("lookup", CommandStyle::Short) => "/lk",
-        ("lookup", CommandStyle::Long) => "/lookup",
-        ("cache", CommandStyle::Short) => "/fc",
-        ("cache", CommandStyle::Long) => "/cache",
-        ("config", CommandStyle::Short) => "/cfg",
-        ("config", CommandStyle::Long) => "/config",
-        ("downloads", CommandStyle::Short) => "/d",
-        ("downloads", CommandStyle::Long) => "/downloads",
-        ("job", CommandStyle::Short) => "/j",
-        ("job", CommandStyle::Long) => "/job",
-        ("balance", CommandStyle::Short) => "/bal",
-        ("balance", CommandStyle::Long) => "/balance",
-        ("points", CommandStyle::Short) => "/pts",
-        ("points", CommandStyle::Long) => "/points",
-        ("menu", CommandStyle::Short) => "/m",
-        ("menu", CommandStyle::Long) => "/menu",
+    let _ = style;
+    match kind {
+        "help" => "/help",
+        "health" => "/health",
+        "transfer" => "/transfer",
+        "lookup" => "/lookup",
+        "cache" => "/cache",
+        "config" => "/config",
+        "downloads" => "/downloads",
+        "job" => "/job",
+        "balance" => "/balance",
+        "points" => "/points",
+        "menu" => "/menu",
         _ => kind,
     }
     .to_owned()
+}
+
+/// 统一 `/job` 的公开动作名称。
+///
+/// 代码里仍有少量旧调用会传入短动作别名；这里统一折叠成长动作，避免这些旧调用继续泄露到用户可见回复里。
+fn normalize_job_action(action: &str) -> &str {
+    match action {
+        "p" => "pause",
+        "r" => "resume",
+        "s" | "cancel" => "stop",
+        "st" => "status",
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -310,34 +368,37 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    // 短命令用于按钮复制，长命令用于帮助文档；这里固定两套格式避免后续误改。
+    // 用户可见输出统一使用长命令；Short 枚举目前只保留兼容调用形状。
     #[test]
-    fn test_command_builders_keep_short_and_long_forms() {
+    fn test_command_builders_use_long_commands() {
         assert_eq!(
             transfer_command("https://t.me/c/1/2", -100, CommandStyle::Long),
             "/transfer https://t.me/c/1/2 -100"
         );
         assert_eq!(
             transfer_command("https://t.me/c/1/2", -100, CommandStyle::Short),
-            "/t https://t.me/c/1/2 -100"
+            "/transfer https://t.me/c/1/2 -100"
         );
         assert_eq!(
             lookup_command("https://t.me/c/1/2", -100, CommandStyle::Short),
-            "/lk https://t.me/c/1/2 -100"
+            "/lookup https://t.me/c/1/2 -100"
         );
         assert_eq!(
             downloads_command(Some("run"), Some(8), Some(2), CommandStyle::Short),
-            "/d run 8 2"
+            "/downloads run 8 2"
         );
-        assert_eq!(job_command("p", 42, CommandStyle::Short), "/j p 42");
-        assert_eq!(job_command("st", 42, CommandStyle::Short), "/j st 42");
-        assert_eq!(balance_command(CommandStyle::Short), "/bal");
+        assert_eq!(job_command("p", 42, CommandStyle::Short), "/job pause 42");
+        assert_eq!(job_command("st", 42, CommandStyle::Short), "/job status 42");
+        assert_eq!(balance_command(CommandStyle::Short), "/balance");
         assert_eq!(balance_command(CommandStyle::Long), "/balance");
         assert_eq!(
             balance_history_command(10, 2, CommandStyle::Short),
-            "/bal h 10 2"
+            "/balance history 10 2"
         );
-        assert_eq!(points_show_command(7, CommandStyle::Short), "/pts s 7");
+        assert_eq!(
+            points_show_command(7, CommandStyle::Short),
+            "/points show 7"
+        );
         assert_eq!(
             points_history_command(7, 10, 2, CommandStyle::Long),
             "/points history 7 10 2"
@@ -350,18 +411,18 @@ mod tests {
             config_set_command("job_concurrency", 2, CommandStyle::Long),
             "/config set job_concurrency 2"
         );
-        assert_eq!(help_command(Some("job"), CommandStyle::Short), "/h job");
-        assert_eq!(health_command(CommandStyle::Short), "/hl");
+        assert_eq!(help_command(Some("job"), CommandStyle::Short), "/help job");
+        assert_eq!(health_command(CommandStyle::Short), "/health");
         assert_eq!(health_command(CommandStyle::Long), "/health");
         assert_eq!(
             cache_command(Some("page"), Some(10), Some(2), CommandStyle::Short),
-            "/fc page 10 2"
+            "/cache page 10 2"
         );
         assert_eq!(
             cache_command(None, None, None, CommandStyle::Long),
             "/cache"
         );
-        assert_eq!(menu_command(CommandStyle::Short), "/m");
+        assert_eq!(menu_command(CommandStyle::Short), "/menu");
         assert_eq!(menu_command(CommandStyle::Long), "/menu");
     }
 

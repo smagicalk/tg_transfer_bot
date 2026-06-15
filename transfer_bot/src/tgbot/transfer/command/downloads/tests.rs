@@ -131,9 +131,9 @@ fn test_build_downloads_keyboard_has_job_detail_buttons() {
     };
     let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("running")]);
 
-    assert_eq!(keyboard.rows[1][0].text, "详情 #1");
+    assert_eq!(keyboard.rows[0][0].text, "详情 #1");
     assert!(matches!(
-        keyboard.rows[1][0].r#type,
+        keyboard.rows[0][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }
@@ -148,15 +148,15 @@ fn test_build_downloads_keyboard_has_running_job_controls() {
     };
     let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("running")]);
 
-    assert_eq!(keyboard.rows[1][0].text, "详情 #1");
-    assert_eq!(keyboard.rows[1][1].text, "暂停");
-    assert_eq!(keyboard.rows[1][2].text, "停止");
+    assert_eq!(keyboard.rows[0][0].text, "详情 #1");
+    assert_eq!(keyboard.rows[0][1].text, "暂停");
+    assert_eq!(keyboard.rows[0][2].text, "停止");
     assert!(matches!(
-        keyboard.rows[1][1].r#type,
+        keyboard.rows[0][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
     assert!(matches!(
-        keyboard.rows[1][2].r#type,
+        keyboard.rows[0][2].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }
@@ -171,11 +171,11 @@ fn test_build_downloads_keyboard_has_paused_job_controls() {
     };
     let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("paused")]);
 
-    assert_eq!(keyboard.rows[1][0].text, "详情 #1");
-    assert_eq!(keyboard.rows[1][1].text, "恢复");
-    assert_eq!(keyboard.rows[1][2].text, "停止");
+    assert_eq!(keyboard.rows[0][0].text, "详情 #1");
+    assert_eq!(keyboard.rows[0][1].text, "恢复");
+    assert_eq!(keyboard.rows[0][2].text, "停止");
     assert!(matches!(
-        keyboard.rows[1][1].r#type,
+        keyboard.rows[0][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }
@@ -190,8 +190,8 @@ fn test_build_downloads_keyboard_hides_controls_for_finished_job() {
     };
     let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("success")]);
 
-    assert_eq!(keyboard.rows[1][0].text, "详情 #1");
-    assert_eq!(keyboard.rows[1].len(), 1);
+    assert_eq!(keyboard.rows[0][0].text, "详情 #1");
+    assert_eq!(keyboard.rows[0].len(), 1);
 }
 
 // 任务详情按钮应使用短 callback payload，方便和 `/job` 统一路由。
@@ -206,7 +206,7 @@ fn test_build_downloads_keyboard_job_detail_callback_data() {
     };
     let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("running")]);
 
-    let button = &keyboard.rows[1][0];
+    let button = &keyboard.rows[0][0];
     let data = match &button.r#type {
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
         other => panic!("unexpected button type: {:?}", other),
@@ -225,7 +225,8 @@ fn test_build_downloads_keyboard_empty_page_has_no_job_detail_row() {
     };
     let keyboard = build_downloads_keyboard(&args, 1, &[]);
 
-    assert_eq!(keyboard.rows[1][0].text, "刷新");
+    assert_eq!(keyboard.rows[0][0].text, "全部");
+    assert_eq!(keyboard.rows[4][0].text, "刷新");
 }
 
 // 字节格式化应能覆盖整数和小数展示。
@@ -295,20 +296,20 @@ fn test_downloads_callback_data_roundtrip() {
     );
 }
 
-// 当前页按钮应复制当前命令，避免点了之后无变化。
+// 当前页按钮应直接刷新当前页，避免列表面板出现“只有这一格不能点”的割裂感。
 #[test]
-fn test_build_downloads_keyboard_current_page_is_copy_button() {
+fn test_build_downloads_keyboard_current_page_is_refresh_callback() {
     let args = DownloadsArgs {
         filter: DownloadsFilter::Downloading,
         limit: 5,
         page: 2,
     };
     let keyboard = build_downloads_keyboard(&args, 4, &[]);
-    let current = &keyboard.rows[0][2];
+    let current = &keyboard.rows[6][2];
     assert_eq!(current.text, "2/4");
     assert!(matches!(
         current.r#type,
-        tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }
 
@@ -323,7 +324,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
         page: 1,
     };
     let keyboard = build_downloads_keyboard(&args, 3, &[]);
-    let next = &keyboard.rows[0][3];
+    let next = &keyboard.rows[6][3];
 
     let data = match &next.r#type {
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
@@ -333,7 +334,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
     assert_eq!(decoded, "d:p:run:8:2");
 }
 
-// 第二行提供刷新和复制当前命令，刷新使用 callback 原地重新查询。
+// 列表页把“刷新 / 返回 / 菜单”单独放一行，复制命令再单独一行。
 #[test]
 fn test_build_downloads_keyboard_has_refresh_row() {
     let args = DownloadsArgs {
@@ -343,21 +344,22 @@ fn test_build_downloads_keyboard_has_refresh_row() {
     };
     let keyboard = build_downloads_keyboard(&args, 2, &[]);
 
-    assert_eq!(keyboard.rows.len(), 6);
-    assert_eq!(keyboard.rows[1][0].text, "刷新");
+    assert_eq!(keyboard.rows.len(), 7);
+    assert_eq!(keyboard.rows[4][0].text, "刷新");
     assert!(matches!(
-        keyboard.rows[1][0].r#type,
+        keyboard.rows[4][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[1][1].text, "复制当前命令");
-    assert_eq!(keyboard.rows[1][2].text, "菜单");
+    assert_eq!(keyboard.rows[4][1].text, "返回");
+    assert_eq!(keyboard.rows[4][2].text, "菜单");
     assert!(matches!(
-        keyboard.rows[1][2].r#type,
+        keyboard.rows[4][2].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
+    assert_eq!(keyboard.rows[5][0].text, "复制当前命令");
 }
 
-// 后续行提供常用筛选按钮；每行最多三个按钮，当前筛选退化为复制命令。
+// 主操作区中的筛选按钮仍保留多行，分页单独放在最后一行。
 #[test]
 fn test_build_downloads_keyboard_has_filter_row() {
     let args = DownloadsArgs {
@@ -367,25 +369,27 @@ fn test_build_downloads_keyboard_has_filter_row() {
     };
     let keyboard = build_downloads_keyboard(&args, 4, &[]);
 
-    assert_eq!(keyboard.rows[2][0].text, "全部");
+    assert_eq!(keyboard.rows[0][0].text, "全部");
     assert!(matches!(
-        keyboard.rows[2][0].r#type,
+        keyboard.rows[0][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[2][1].text, "运行");
+    assert_eq!(keyboard.rows[0][1].text, "运行");
     assert!(matches!(
-        keyboard.rows[2][1].r#type,
-        tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+        keyboard.rows[0][1].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[2][2].text, "等待");
-    assert_eq!(keyboard.rows[3][0].text, "下载");
-    assert_eq!(keyboard.rows[3][1].text, "上传");
-    assert_eq!(keyboard.rows[3][2].text, "就绪");
-    assert_eq!(keyboard.rows[4][0].text, "完成");
-    assert_eq!(keyboard.rows[4][1].text, "成功");
-    assert_eq!(keyboard.rows[5][0].text, "暂停");
-    assert_eq!(keyboard.rows[5][1].text, "停止中");
-    assert_eq!(keyboard.rows[5][2].text, "已停止");
+    assert_eq!(keyboard.rows[0][2].text, "等待");
+    assert_eq!(keyboard.rows[1][0].text, "下载");
+    assert_eq!(keyboard.rows[1][1].text, "上传");
+    assert_eq!(keyboard.rows[1][2].text, "就绪");
+    assert_eq!(keyboard.rows[2][0].text, "完成");
+    assert_eq!(keyboard.rows[2][1].text, "成功");
+    assert_eq!(keyboard.rows[3][0].text, "暂停");
+    assert_eq!(keyboard.rows[3][1].text, "停止中");
+    assert_eq!(keyboard.rows[3][2].text, "已停止");
+    assert_eq!(keyboard.rows[6][0].text, "首页");
+    assert_eq!(keyboard.rows[6][4].text, "末页");
 }
 
 // 构造最小任务快照，专门用于筛选器测试。

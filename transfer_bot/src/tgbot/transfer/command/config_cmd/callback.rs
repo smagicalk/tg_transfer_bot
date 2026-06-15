@@ -1,7 +1,11 @@
 // `/config` callback payload 与按钮布局。
 // 这里只承载按钮协议和按钮生成，配置读写仍留在上层命令实现里。
 
-use super::super::common::{CommandStyle, config_set_command, config_show_command};
+use super::super::common::{
+    CommandStyle, build_copy_only_row, build_refresh_return_menu_row, config_set_command,
+    config_show_command,
+};
+use super::super::help::build_help_callback_data;
 use super::super::menu::build_menu_home_callback_data;
 use crate::tgbot::send;
 
@@ -112,23 +116,6 @@ pub(in crate::tgbot::transfer::command) fn build_config_buttons()
     vec![
         vec![
             send::build_callback_button(
-                "刷新",
-                &build_config_callback_data(ConfigCallbackAction::Refresh),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_copy_button(
-                "复制 /config show",
-                &config_show_command(CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "菜单",
-                &build_menu_home_callback_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            send::build_callback_button(
                 "并发 -1",
                 &build_config_callback_data(ConfigCallbackAction::Adjust {
                     field: ConfigField::JobConcurrency,
@@ -142,7 +129,7 @@ pub(in crate::tgbot::transfer::command) fn build_config_buttons()
                     field: ConfigField::JobConcurrency,
                     delta: 1,
                 }),
-                tdlib_rs::enums::ButtonStyle::Default,
+                tdlib_rs::enums::ButtonStyle::Primary,
             ),
         ],
         vec![
@@ -235,6 +222,28 @@ pub(in crate::tgbot::transfer::command) fn build_config_buttons()
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
+        build_refresh_return_menu_row(
+            send::build_callback_button(
+                "刷新",
+                &build_config_callback_data(ConfigCallbackAction::Refresh),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "返回",
+                &build_help_callback_data(Some("config")),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &build_menu_home_callback_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ),
+        build_copy_only_row(send::build_copy_button(
+            "复制 /config show",
+            &config_show_command(CommandStyle::Long),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )),
         vec![
             send::build_copy_button(
                 "复制并发=4",
@@ -246,18 +255,20 @@ pub(in crate::tgbot::transfer::command) fn build_config_buttons()
                 &config_set_command("file_delete_delay_minutes", 3, CommandStyle::Long),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+        ],
+        vec![
             send::build_copy_button(
                 "复制GC=30s",
                 &config_set_command("file_gc_interval_seconds", 30, CommandStyle::Long),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-        ],
-        vec![
             send::build_copy_button(
                 "复制进度=3s",
                 &config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Long),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+        ],
+        vec![
             send::build_copy_button(
                 "复制分页=10",
                 &config_set_command("downloads_default_page_size", 10, CommandStyle::Long),
@@ -380,5 +391,18 @@ mod tests {
             menu.r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
+    }
+
+    // 配置页按钮按“主操作 / 刷新返回菜单 / 复制”分层，避免高密度按钮混在一行。
+    #[test]
+    fn test_build_config_buttons_follow_row_hierarchy() {
+        let rows = build_config_buttons();
+
+        assert_eq!(rows[0][0].text, "并发 -1");
+        assert_eq!(rows[0][1].text, "并发 +1");
+        assert_eq!(rows[6][0].text, "刷新");
+        assert_eq!(rows[6][1].text, "返回");
+        assert_eq!(rows[6][2].text, "菜单");
+        assert_eq!(rows[7][0].text, "复制 /config show");
     }
 }

@@ -3,7 +3,9 @@
 
 use crate::tgbot::transfer::card;
 
+use super::super::common::{lookup_command, transfer_command};
 use super::callback::MenuPage;
+use super::input::MenuInputKind;
 
 /// 菜单首页摘要。
 ///
@@ -32,6 +34,9 @@ pub(super) struct MenuHomeSummary {
 pub(super) fn build_menu_text(page: MenuPage) -> String {
     match page {
         MenuPage::Home => build_menu_home_text(&MenuHomeSummary::default()),
+        MenuPage::TasksHub => tasks_hub_text(),
+        MenuPage::AccountHub => account_hub_text(),
+        MenuPage::AdminHub => admin_hub_text(),
         MenuPage::Transfer => transfer_text(),
         MenuPage::Downloads => downloads_text(),
         MenuPage::Jobs => jobs_text(),
@@ -41,11 +46,61 @@ pub(super) fn build_menu_text(page: MenuPage) -> String {
     }
 }
 
+/// 任务 hub。
+fn tasks_hub_text() -> String {
+    [
+        "任务".to_owned(),
+        build_menu_state_line("ready"),
+        card::DIVIDER.to_owned(),
+        card::section("操作"),
+        "查看最近任务、运行任务、失败任务，或直接进入任务控制。".to_owned(),
+        card::section("命令"),
+        card::command_line("最近任务", "/downloads"),
+        card::command_line("运行任务", "/downloads run"),
+        card::command_line("任务控制", "/job status <job_id>"),
+        card::command_line("查询结果", "/lookup <link> <target_chat_id>"),
+    ]
+    .join("\n")
+}
+
+/// 账户 hub。
+fn account_hub_text() -> String {
+    [
+        "账户".to_owned(),
+        build_menu_state_line("ready"),
+        card::DIVIDER.to_owned(),
+        card::section("操作"),
+        "查看余额、积分流水和帮助。".to_owned(),
+        card::section("命令"),
+        card::command_line("余额", "/balance"),
+        card::command_line("积分流水", "/balance history"),
+        card::command_line("帮助", "/help"),
+    ]
+    .join("\n")
+}
+
+/// 管理 hub。
+fn admin_hub_text() -> String {
+    [
+        "管理".to_owned(),
+        build_menu_state_line("ready"),
+        card::DIVIDER.to_owned(),
+        card::section("操作"),
+        "运行配置、健康、缓存和用户流水统一放在这里。".to_owned(),
+        card::section("命令"),
+        card::command_line("运行配置", "/config show"),
+        card::command_line("运行健康", "/health"),
+        card::command_line("文件缓存", "/cache"),
+        card::command_line("用户流水", "/points history <user_id>"),
+    ]
+    .join("\n")
+}
+
 /// 构造带运行摘要的菜单首页。
 pub(super) fn build_menu_home_text(summary: &MenuHomeSummary) -> String {
     [
         "转存菜单".to_owned(),
-        format!("状态：{}", card::code("ready")),
+        build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("运行摘要"),
         card::field_pair(
@@ -78,9 +133,9 @@ pub(super) fn build_menu_home_text(summary: &MenuHomeSummary) -> String {
         if summary.is_admin {
             "首页已经放了常用直达动作：开始转存、快速转存、快速查询和管理入口。".to_owned()
         } else {
-            "首页已经放了常用直达动作：开始转存、快速转存、快速查询和我的任务。".to_owned()
+            "首页已经放了常用直达动作：开始转存、快速转存、快速查询和账户入口。".to_owned()
         },
-        "运行任务、失败任务、已暂停也能直接点，不需要先进入下载页。".to_owned(),
+        "任务状态、最近任务和任务控制已下沉到“任务”页，首页只保留高频入口。".to_owned(),
         card::section("命令"),
         card::command_line("转存", "/transfer"),
         card::command_line("下载列表", "/downloads run"),
@@ -123,37 +178,88 @@ pub(super) fn build_user_account_menu_text() -> String {
         card::command_line("积分流水", "/balance history"),
         card::command_line("运行健康", "/health"),
         card::command_line("文件缓存", "/cache"),
-        card::command_line("任务详情", "/job st <job_id>"),
-        card::command_line("暂停任务", "/job p <job_id>"),
-        card::command_line("恢复任务", "/job r <job_id>"),
-        card::command_line("停止任务", "/job s <job_id>"),
+        card::command_line("任务详情", "/job status <job_id>"),
+        card::command_line("暂停任务", "/job pause <job_id>"),
+        card::command_line("恢复任务", "/job resume <job_id>"),
+        card::command_line("停止任务", "/job stop <job_id>"),
         card::command_line("查询结果", "/lookup <link> <target_chat_id>"),
         card::command_line("帮助目录", "/help"),
     ]
     .join("\n")
 }
 
-/// 构造 ForceReply 输入提示文本。
-pub(super) fn build_transfer_prompt_text(title: &str, detail: &str) -> String {
-    build_step_prompt_text("输入", title, detail)
-}
-
 /// 构造带步骤编号的输入提示文本。
 ///
 /// ForceReply 本身不能再挂 inline keyboard，所以正文必须明确告诉用户当前步骤和取消方式。
 pub(super) fn build_step_prompt_text(step: &str, title: &str, detail: &str) -> String {
-    [
+    build_step_prompt_with_context("waiting-input", step, title, detail, None, None)
+}
+
+/// 构造带上下文摘要的步骤提示文本。
+///
+/// 在 `2/3` 和 `3/3` 这类多步流程中，用户容易忘记当前草稿对应的源链接或目标 chat。
+/// 这里把关键上下文回显出来，减少“输到一半不知道自己在确认什么”的情况。
+pub(super) fn build_step_prompt_with_context(
+    status: &str,
+    step: &str,
+    title: &str,
+    detail: &str,
+    source_link: Option<&str>,
+    target_chat_id: Option<i64>,
+) -> String {
+    let mut lines = vec![
         title.to_owned(),
-        format!(
-            "状态：{}  步骤：{}",
-            card::code("waiting-input"),
-            card::code(step)
-        ),
+        build_menu_step_state_line(status, step),
         card::DIVIDER.to_owned(),
-        card::note(detail),
-        format!("取消：{}", card::code("/cancel")),
-    ]
-    .join("\n")
+    ];
+    lines.extend(build_menu_context_lines(source_link, target_chat_id));
+    lines.push(card::note(detail));
+    lines.push(format!("取消：{}", card::code("/cancel")));
+    lines.join("\n")
+}
+
+/// 构造菜单通用状态行。
+pub(super) fn build_menu_state_line(status: &str) -> String {
+    format!("状态：{}", card::code(status))
+}
+
+/// 构造菜单步骤状态行。
+pub(super) fn build_menu_step_state_line(status: &str, step: &str) -> String {
+    format!("状态：{}  步骤：{}", card::code(status), card::code(step))
+}
+
+/// 构造菜单“状态 + 目标 + 步骤”状态行。
+pub(super) fn build_menu_target_step_state_line(
+    status: &str,
+    target_chat_id: i64,
+    step: &str,
+) -> String {
+    format!(
+        "{}  步骤：{}",
+        card::status_target(status, target_chat_id),
+        card::code(step)
+    )
+}
+
+/// 构造菜单输入流程的上下文摘要。
+///
+/// 这里统一用“当前上下文”分区回显来源和目标，避免各阶段各写一套来源/目标展示。
+pub(super) fn build_menu_context_lines(
+    source_link: Option<&str>,
+    target_chat_id: Option<i64>,
+) -> Vec<String> {
+    if source_link.is_none() && target_chat_id.is_none() {
+        return Vec::new();
+    }
+
+    let mut lines = vec![card::section("当前上下文")];
+    if let Some(source_link) = source_link {
+        lines.push(card::field("来源", source_link));
+    }
+    if let Some(target_chat_id) = target_chat_id {
+        lines.push(card::field("目标", target_chat_id));
+    }
+    lines
 }
 
 /// 构造菜单输入流程的状态提示文本。
@@ -163,12 +269,40 @@ pub(super) fn build_step_prompt_text(step: &str, title: &str, detail: &str) -> S
 pub(super) fn build_menu_status_text(title: &str, status: &str, detail: &str) -> String {
     [
         title.to_owned(),
-        format!("状态：{}", card::code(status)),
+        build_menu_state_line(status),
         card::DIVIDER.to_owned(),
         card::note(detail),
         card::command_line("菜单", "/menu"),
     ]
     .join("\n")
+}
+
+/// 构造“输入已过期”这类终态恢复卡片。
+///
+/// 这类提示不应继续沿用 `waiting-input` 的步骤式文本，否则用户会误以为流程仍在等待输入。
+pub(super) fn build_menu_recovery_text(title: &str, status: &str, detail: &str) -> String {
+    [
+        title.to_owned(),
+        build_menu_state_line(status),
+        card::DIVIDER.to_owned(),
+        card::note(detail),
+        card::command_line("返回菜单", "/menu"),
+    ]
+    .join("\n")
+}
+
+/// 构造统一的“目标不可用”终态卡片。
+pub(super) fn build_menu_target_unavailable_text(detail: &str) -> String {
+    build_menu_recovery_text("目标不可用", "target-unavailable", detail)
+}
+
+/// 构造统一的“没有未完成输入”空态卡片。
+pub(super) fn build_menu_no_pending_input_text() -> String {
+    build_menu_status_text(
+        "没有未完成输入",
+        "empty",
+        "当前没有可继续的菜单输入，可重新开始转存或查询。",
+    )
 }
 
 /// 构造菜单页的权限拒绝文案。
@@ -178,7 +312,7 @@ pub(super) fn build_menu_status_text(title: &str, status: &str, detail: &str) ->
 pub(super) fn build_permission_denied_menu_text(title: &str, detail: &str) -> String {
     [
         title.to_owned(),
-        format!("状态：{}", card::code("denied")),
+        build_menu_state_line("denied"),
         card::DIVIDER.to_owned(),
         card::section("权限"),
         card::note(detail),
@@ -187,11 +321,34 @@ pub(super) fn build_permission_denied_menu_text(title: &str, detail: &str) -> St
     .join("\n")
 }
 
+/// 构造确认页命令预览。
+///
+/// 按钮是主入口，但在执行前把最终命令展示出来，可以帮助用户快速复核“源链接 + 目标 chat”是否正确。
+pub(super) fn build_confirm_command_preview(
+    kind: MenuInputKind,
+    source_link: &str,
+    target_chat_id: i64,
+) -> String {
+    if kind.command_kind() == MenuInputKind::Transfer {
+        transfer_command(
+            source_link,
+            target_chat_id,
+            super::super::common::CommandStyle::Long,
+        )
+    } else {
+        lookup_command(
+            source_link,
+            target_chat_id,
+            super::super::common::CommandStyle::Long,
+        )
+    }
+}
+
 /// 转存页。
 fn transfer_text() -> String {
     [
         "转存".to_owned(),
-        format!("状态：{}", card::code("ready")),
+        build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("最简单用法"),
         "点击“开始转存”，按提示发送源链接，然后选择目标群。".to_owned(),
@@ -209,7 +366,7 @@ fn transfer_text() -> String {
 fn downloads_text() -> String {
     [
         "下载列表".to_owned(),
-        format!("状态：{}", card::code("ready")),
+        build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("筛选"),
         "直接点筛选按钮查看列表；列表页内可继续翻页、刷新和进入任务详情。".to_owned(),
@@ -225,17 +382,17 @@ fn downloads_text() -> String {
 fn jobs_text() -> String {
     [
         "任务控制".to_owned(),
-        format!("状态：{}", card::code("ready")),
+        build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("操作"),
         "先进入最近任务或运行任务，再点任务详情进行暂停、恢复、停止。".to_owned(),
         "知道 job_id 时可点“输入详情/暂停/恢复/停止”，按提示回复编号。".to_owned(),
-        "命令模式仍可复制短/长命令模板手动输入。".to_owned(),
+        "命令模式仍可复制长命令模板手动输入。".to_owned(),
         card::section("命令"),
-        card::command_line("详情", "/job st <job_id>"),
-        card::command_line("暂停", "/job p <job_id>"),
-        card::command_line("恢复", "/job r <job_id>"),
-        card::command_line("停止", "/job s <job_id>"),
+        card::command_line("详情", "/job status <job_id>"),
+        card::command_line("暂停", "/job pause <job_id>"),
+        card::command_line("恢复", "/job resume <job_id>"),
+        card::command_line("停止", "/job stop <job_id>"),
     ]
     .join("\n")
 }
@@ -244,7 +401,7 @@ fn jobs_text() -> String {
 fn lookup_text() -> String {
     [
         "查询".to_owned(),
-        format!("状态：{}", card::code("ready")),
+        build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("用途"),
         "点击“快速查询”，只回复源链接，目标 chat 使用配置默认值。".to_owned(),
@@ -261,7 +418,7 @@ fn lookup_text() -> String {
 fn config_text() -> String {
     [
         "运行配置".to_owned(),
-        format!("状态：{}", card::code("ready")),
+        build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("可调项"),
         card::code("job_concurrency"),
@@ -284,14 +441,14 @@ fn config_text() -> String {
 fn help_text() -> String {
     [
         "帮助".to_owned(),
-        format!("状态：{}", card::code("ready")),
+        build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("说明"),
-        "点按钮可直接切换帮助页，也可以复制帮助命令。".to_owned(),
+        "点按钮可直接切换帮助页，命令仍可在下方查看。".to_owned(),
         card::section("命令"),
-        card::command_line("帮助目录", "/h"),
-        card::command_line("转存帮助", "/h transfer"),
-        card::command_line("任务帮助", "/h job"),
+        card::command_line("帮助目录", "/help"),
+        card::command_line("转存帮助", "/help transfer"),
+        card::command_line("任务帮助", "/help job"),
     ]
     .join("\n")
 }
@@ -299,6 +456,9 @@ fn help_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tgbot::transfer::command::common::{
+        build_page_command_section, build_page_empty_note, build_ready_page_header,
+    };
 
     // 首页应突出“按钮操作”，避免继续让用户记复杂命令。
     #[test]
@@ -309,6 +469,35 @@ mod tests {
         assert!(text.contains("开始转存"));
         assert!(text.contains("快速查询"));
         assert!(text.contains("活跃任务"));
+    }
+
+    #[test]
+    fn test_build_hub_texts() {
+        let tasks = build_menu_text(MenuPage::TasksHub);
+        let account = build_menu_text(MenuPage::AccountHub);
+        let admin = build_menu_text(MenuPage::AdminHub);
+
+        assert!(tasks.contains("最近任务"));
+        assert!(tasks.contains("/downloads run"));
+        assert!(account.contains("积分流水"));
+        assert!(account.contains("/balance"));
+        assert!(admin.contains("运行配置"));
+        assert!(admin.contains("/config show"));
+    }
+
+    #[test]
+    fn test_build_ready_page_header() {
+        let lines = build_ready_page_header("示例页");
+
+        assert_eq!(lines[0], "示例页");
+        assert!(lines[1].contains("状态：‹ready›"));
+        assert_eq!(lines[2], card::DIVIDER);
+    }
+
+    #[test]
+    fn test_build_page_helpers() {
+        assert_eq!(build_page_command_section(), "■ 命令");
+        assert!(build_page_empty_note("暂无数据").contains("说明：暂无数据"));
     }
 
     // 首页应能展示实时摘要，避免用户进入列表前不知道当前是否有异常。
@@ -340,7 +529,7 @@ mod tests {
         assert!(!text.contains("点按钮"));
         assert!(text.contains("‹/transfer <link> <target_chat_id>›"));
         assert!(text.contains("‹/downloads›"));
-        assert!(text.contains("‹/job st <job_id>›"));
+        assert!(text.contains("‹/job status <job_id>›"));
         assert!(text.contains("‹/help›"));
     }
 
@@ -357,16 +546,6 @@ mod tests {
         assert!(text.contains("menu_input_timeout_seconds"));
     }
 
-    // ForceReply 提示必须包含取消方式，避免输入流程卡住。
-    #[test]
-    fn test_build_transfer_prompt_text() {
-        let text = build_transfer_prompt_text("源链接", "请回复链接。");
-
-        assert!(text.contains("源链接"));
-        assert!(text.contains("步骤：‹输入›"));
-        assert!(text.contains("‹/cancel›"));
-    }
-
     // 分步提示应明确告诉用户当前是第几步，减少多消息流程里的迷路感。
     #[test]
     fn test_build_step_prompt_text() {
@@ -374,6 +553,24 @@ mod tests {
 
         assert!(text.contains("步骤：‹1/3›"));
         assert!(text.contains("‹/cancel›"));
+    }
+
+    // 带上下文的步骤提示应把来源/目标回显出来，减少多步流程里的迷路感。
+    #[test]
+    fn test_build_step_prompt_with_context() {
+        let text = build_step_prompt_with_context(
+            "waiting-target",
+            "2/3",
+            "输入目标",
+            "请回复目标 chat。",
+            Some("https://t.me/c/1/2"),
+            Some(-100),
+        );
+
+        assert!(text.contains("状态：‹waiting-target›  步骤：‹2/3›"));
+        assert!(text.contains("■ 当前上下文"));
+        assert!(text.contains("来源：‹https://t.me/c/1/2›"));
+        assert!(text.contains("目标：‹-100›"));
     }
 
     // 取消/过期这类终态提示应显示真实状态，而不是复用等待输入状态。
@@ -385,5 +582,49 @@ mod tests {
         assert!(text.contains("‹cancelled›"));
         assert!(text.contains("‹/menu›"));
         assert!(!text.contains("waiting-input"));
+    }
+
+    // 过期/恢复提示应是终态卡片，而不是继续显示等待输入状态。
+    #[test]
+    fn test_build_menu_recovery_text() {
+        let text = build_menu_recovery_text("输入已过期", "expired", "请重新打开 /menu。");
+
+        assert!(text.contains("输入已过期"));
+        assert!(text.contains("‹expired›"));
+        assert!(text.contains("‹/menu›"));
+        assert!(!text.contains("waiting-input"));
+    }
+
+    // 目标不可用也应走统一终态卡片，不复用等待态提示。
+    #[test]
+    fn test_build_menu_target_unavailable_text() {
+        let text = build_menu_target_unavailable_text("请选择其他目标。");
+
+        assert!(text.contains("目标不可用"));
+        assert!(text.contains("‹target-unavailable›"));
+        assert!(text.contains("请选择其他目标。"));
+    }
+
+    // “没有未完成输入”应是空态卡片，不应临时在入口里手写。
+    #[test]
+    fn test_build_menu_no_pending_input_text() {
+        let text = build_menu_no_pending_input_text();
+
+        assert!(text.contains("没有未完成输入"));
+        assert!(text.contains("‹empty›"));
+        assert!(text.contains("当前没有可继续的菜单输入"));
+    }
+
+    // 确认页应展示最终命令预览，方便执行前快速复核。
+    #[test]
+    fn test_build_confirm_command_preview() {
+        assert_eq!(
+            build_confirm_command_preview(MenuInputKind::Transfer, "https://t.me/c/1/2", -100),
+            "/transfer https://t.me/c/1/2 -100"
+        );
+        assert_eq!(
+            build_confirm_command_preview(MenuInputKind::Lookup, "https://t.me/c/1/2", -100),
+            "/lookup https://t.me/c/1/2 -100"
+        );
     }
 }

@@ -5,10 +5,13 @@ use std::collections::HashSet;
 
 use crate::config::BotConfig;
 use crate::tgbot::send;
-use crate::tgbot::transfer::card;
 
 use super::super::super::common::resolve_target_chat_id;
 use super::super::callback;
+use super::super::text::{
+    build_confirm_command_preview, build_menu_context_lines, build_menu_step_state_line,
+    build_menu_target_step_state_line,
+};
 use super::state::{MenuInputKind, last_target};
 
 /// 发送目标选择卡片。
@@ -29,6 +32,31 @@ pub(super) async fn send_target_choice_prompt(
         ))
         .send(request_chat_id, client_id)
         .await
+}
+
+/// 发送带提示说明的目标选择卡片。
+pub(super) async fn send_target_choice_prompt_with_detail(
+    config: &BotConfig,
+    request_chat_id: i64,
+    sender_user_id: i64,
+    client_id: i32,
+    kind: MenuInputKind,
+    source_link: &str,
+    detail: &str,
+) -> anyhow::Result<()> {
+    send::ReplyPanel::card(build_target_choice_text_with_detail(
+        kind,
+        source_link,
+        detail,
+    ))
+    .rows(build_target_choice_buttons(
+        config,
+        request_chat_id,
+        sender_user_id,
+        kind,
+    ))
+    .send(request_chat_id, client_id)
+    .await
 }
 
 /// 编辑当前消息为目标选择卡片。
@@ -240,40 +268,64 @@ pub(super) fn resolve_default_target(config: &BotConfig, request_chat_id: i64) -
 
 /// 目标选择卡片正文。
 fn build_target_choice_text(kind: MenuInputKind, source_link: &str) -> String {
-    [
+    build_target_choice_text_lines(kind, source_link, None).join("\n")
+}
+
+/// 目标选择卡片正文，附带一条额外说明。
+fn build_target_choice_text_with_detail(
+    kind: MenuInputKind,
+    source_link: &str,
+    detail: &str,
+) -> String {
+    build_target_choice_text_lines(kind, source_link, Some(detail)).join("\n")
+}
+
+/// 构造目标选择卡片的正文行。
+fn build_target_choice_text_lines(
+    kind: MenuInputKind,
+    source_link: &str,
+    detail: Option<&str>,
+) -> Vec<String> {
+    let mut lines = vec![
         kind.target_choice_title().to_owned(),
-        format!(
-            "状态：{}  步骤：{}",
-            card::code("waiting-target"),
-            card::code("2/3")
-        ),
-        card::DIVIDER.to_owned(),
-        card::section("源链接"),
-        card::code(source_link),
-        card::section("目标方式"),
+        build_menu_step_state_line("waiting-target", "2/3"),
+        crate::tgbot::transfer::card::DIVIDER.to_owned(),
+    ];
+    lines.extend(build_menu_context_lines(Some(source_link), None));
+    if let Some(detail) = detail {
+        lines.push(crate::tgbot::transfer::card::note(detail));
+    }
+    lines.extend([
+        crate::tgbot::transfer::card::section("目标方式"),
         "可以点常用目标、使用 Telegram 原生选群，或手动输入 chat_id/alias。".to_owned(),
-        format!("取消：{}", card::code("/cancel")),
-    ]
-    .join("\n")
+        format!("取消：{}", crate::tgbot::transfer::card::code("/cancel")),
+    ]);
+    lines
 }
 
 /// 确认卡片正文。
 fn build_confirm_text(kind: MenuInputKind, source_link: &str, target_chat_id: i64) -> String {
-    [
+    let mut lines = vec![
         kind.confirm_title().to_owned(),
-        format!(
-            "{}  步骤：{}",
-            card::status_target("waiting-confirm", target_chat_id),
-            card::code("3/3")
-        ),
-        card::DIVIDER.to_owned(),
-        card::section("源链接"),
-        card::code(source_link),
-        card::section("下一步"),
+        build_menu_target_step_state_line("waiting-confirm", target_chat_id, "3/3"),
+        crate::tgbot::transfer::card::DIVIDER.to_owned(),
+    ];
+    lines.extend(build_menu_context_lines(
+        Some(source_link),
+        Some(target_chat_id),
+    ));
+    lines.extend([
+        crate::tgbot::transfer::card::section("命令预览"),
+        crate::tgbot::transfer::card::code(build_confirm_command_preview(
+            kind,
+            source_link,
+            target_chat_id,
+        )),
+        crate::tgbot::transfer::card::section("下一步"),
         "确认无误后点击“执行”；如果目标不对，返回重新选择。".to_owned(),
-        format!("取消：{}", card::code("/cancel")),
-    ]
-    .join("\n")
+        format!("取消：{}", crate::tgbot::transfer::card::code("/cancel")),
+    ]);
+    lines.join("\n")
 }
 
 /// 默认目标按钮文案。
@@ -382,5 +434,33 @@ mod tests {
         assert_eq!(rows[0][0].text, "执行");
         assert_eq!(rows[1][0].text, "重选目标");
         assert_eq!(rows[1][1].text, "取消");
+    }
+
+    // 目标选择卡片在回退或提示时应保留来源上下文，并额外显示说明。
+    #[test]
+    fn test_build_target_choice_text_with_detail_keeps_context() {
+        let text = build_target_choice_text_with_detail(
+            MenuInputKind::Transfer,
+            "https://t.me/c/1/2",
+            "当前没有默认目标，请选择其他目标。",
+        );
+
+        assert!(text.contains("选择转存目标"));
+        assert!(text.contains("来源：‹https://t.me/c/1/2›"));
+        assert!(text.contains("当前没有默认目标，请选择其他目标。"));
+    }
+
+    // 带提示的目标选择卡片也应保留“目标方式”与取消提示，避免回退时信息缩水。
+    #[test]
+    fn test_build_target_choice_text_with_detail_keeps_action_hints() {
+        let text = build_target_choice_text_with_detail(
+            MenuInputKind::Lookup,
+            "https://t.me/c/1/2",
+            "目标不可用，请重新选择。",
+        );
+
+        assert!(text.contains("■ 目标方式"));
+        assert!(text.contains("手动输入"));
+        assert!(text.contains("‹/cancel›"));
     }
 }

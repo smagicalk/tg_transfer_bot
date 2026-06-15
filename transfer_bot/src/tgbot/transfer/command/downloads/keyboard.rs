@@ -1,12 +1,15 @@
 // `/downloads` 的 inline keyboard 和 callback 数据。
 // 回调数据保持短格式，避免 Telegram callback payload 过长。
 
-use super::super::common::{CommandStyle, downloads_command as build_command};
+use super::super::common::{
+    CommandStyle, build_copy_only_row, build_refresh_return_menu_row,
+    downloads_command as build_command,
+};
 use super::super::job::{
     build_job_pause_callback_data, build_job_resume_callback_data, build_job_status_callback_data,
     build_job_stop_callback_data,
 };
-use super::super::menu::build_menu_home_callback_data;
+use super::super::menu::{build_menu_downloads_callback_data, build_menu_home_callback_data};
 use super::types::{DownloadsArgs, DownloadsFilter};
 use crate::tgbot::send;
 use crate::tgbot::transfer::store;
@@ -114,10 +117,11 @@ pub(super) fn parse_downloads_callback_data(
 /// 构建下载列表分页键盘。
 ///
 /// 规则：
-/// - 可翻页按钮使用 callback，点击后原地刷新
-/// - 当前页任务使用 callback，点击后直接进入单任务详情
-/// - 当前页按钮使用 copy-text，方便直接复制当前页命令
-/// - 不能继续翻页时退化为 copy-text，避免触发“消息未修改”
+/// - 主操作区优先放任务详情、控制和筛选
+/// - “刷新 / 返回 / 菜单”固定为单独一行
+/// - 复制类按钮固定单独一行
+/// - 分页固定单独一行，放在最末尾
+/// - 当前页/当前筛选/边界页同样允许点击刷新；发送层会把“消息未修改”当成幂等成功处理
 pub(super) fn build_downloads_keyboard(
     args: &DownloadsArgs,
     total_pages: u64,
@@ -130,12 +134,39 @@ pub(super) fn build_downloads_keyboard(
     let next_page = (args.page + 1).min(total_pages);
     let last_page = total_pages.max(1);
 
-    let mut rows = vec![vec![
+    let mut rows = Vec::new();
+
+    rows.extend(build_job_detail_buttons(page_items));
+    rows.extend(build_filter_button_rows(args));
+
+    rows.push(build_refresh_return_menu_row(
+        build_callback_button(
+            "刷新",
+            &build_downloads_refresh_callback_data(args),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        build_callback_button(
+            "返回",
+            &build_menu_downloads_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        build_callback_button(
+            "菜单",
+            &build_menu_home_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ));
+    rows.push(build_copy_only_row(send::build_copy_button(
+        "复制当前命令",
+        &current_command,
+        tdlib_rs::enums::ButtonStyle::Default,
+    )));
+    rows.push(vec![
         build_navigation_button("首页", args, first_page, current_command.clone()),
         build_navigation_button("上页", args, prev_page, current_command.clone()),
-        build_copy_button(
+        build_callback_button(
             &format!("{}/{}", args.page, total_pages),
-            &build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
+            &build_downloads_refresh_callback_data(args),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         build_navigation_button(
@@ -150,28 +181,7 @@ pub(super) fn build_downloads_keyboard(
             last_page,
             build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
         ),
-    ]];
-
-    rows.extend(build_job_detail_buttons(page_items));
-
-    rows.push(vec![
-        build_callback_button(
-            "刷新",
-            &build_downloads_refresh_callback_data(args),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        send::build_copy_button(
-            "复制当前命令",
-            &current_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        build_callback_button(
-            "菜单",
-            &build_menu_home_callback_data(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
     ]);
-    rows.extend(build_filter_button_rows(args));
 
     tdlib_rs::types::ReplyMarkupInlineKeyboard { rows }
 }
@@ -300,45 +310,39 @@ fn build_filter_button(
     filter: DownloadsFilter,
     args: &DownloadsArgs,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    if filter == args.filter {
-        return send::build_copy_button(
-            label,
-            &build_downloads_page_command(filter, args.limit, 1, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        );
-    }
-
+    let callback_data = if filter == args.filter {
+        build_downloads_refresh_callback_data(args)
+    } else {
+        build_downloads_filter_callback_data(filter, args.limit)
+    };
     build_callback_button(
         label,
-        &build_downloads_filter_callback_data(filter, args.limit),
-        tdlib_rs::enums::ButtonStyle::Default,
+        &callback_data,
+        if filter == args.filter {
+            tdlib_rs::enums::ButtonStyle::Primary
+        } else {
+            tdlib_rs::enums::ButtonStyle::Default
+        },
     )
 }
 
 /// 构建一个导航按钮。
 ///
-/// 若目标页与当前页相同，则退化为复制当前命令按钮，避免无效编辑。
+/// 若目标页与当前页相同，则点击后会触发同页刷新；发送层会把无变化编辑视为幂等成功。
 fn build_navigation_button(
     text: &str,
     args: &DownloadsArgs,
     target_page: u64,
-    fallback_command: String,
+    _fallback_command: String,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    if target_page == args.page {
-        return send::build_copy_button(
-            text,
-            &fallback_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        );
-    }
-
+    let callback_data = if target_page == args.page {
+        build_downloads_refresh_callback_data(args)
+    } else {
+        build_downloads_page_callback_data(args.filter, args.limit, target_page)
+    };
     // TDLib JSON 协议里的 callback data 是 bytes，必须走统一入口做 base64 编码。
     // 手动塞入业务 payload 会触发 `Wrong padding length`。
-    send::build_callback_button(
-        text,
-        &build_downloads_page_callback_data(args.filter, args.limit, target_page),
-        tdlib_rs::enums::ButtonStyle::Default,
-    )
+    send::build_callback_button(text, &callback_data, tdlib_rs::enums::ButtonStyle::Default)
 }
 
 /// 构建一个 callback 按钮。
@@ -348,13 +352,4 @@ fn build_callback_button(
     style: tdlib_rs::enums::ButtonStyle,
 ) -> tdlib_rs::types::InlineKeyboardButton {
     send::build_callback_button(text, data, style)
-}
-
-/// 构建一个复制文本按钮。
-fn build_copy_button(
-    text: &str,
-    value: &str,
-    style: tdlib_rs::enums::ButtonStyle,
-) -> tdlib_rs::types::InlineKeyboardButton {
-    send::build_copy_button(text, value, style)
 }

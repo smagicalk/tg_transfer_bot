@@ -6,7 +6,7 @@ use super::super::super::common::{
     config_set_command, config_show_command, downloads_command,
     health_command as health_command_text, help_command as help_command_text, job_command,
     lookup_command, menu_command, points_change_command, points_history_command,
-    points_show_command, short_and_long, transfer_command,
+    points_show_command, transfer_command,
 };
 use super::super::topic::normalize_help_topic;
 use crate::tgbot::transfer::card;
@@ -39,20 +39,11 @@ fn build_help_detail() -> String {
         "用途：查看命令帮助。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
-        short_and_long(
-            format!("{} [command]", help_command_text(None, CommandStyle::Short)),
-            format!("{} [command]", help_command_text(None, CommandStyle::Long)),
-        ),
+        format!("{} [command]", help_command_text(None, CommandStyle::Long)),
         String::new(),
         "示例：".to_owned(),
-        short_and_long(
-            help_command_text(None, CommandStyle::Short),
-            help_command_text(None, CommandStyle::Long),
-        ),
-        short_and_long(
-            help_command_text(Some("transfer"), CommandStyle::Short),
-            help_command_text(Some("transfer"), CommandStyle::Long),
-        ),
+        help_command_text(None, CommandStyle::Long),
+        help_command_text(Some("transfer"), CommandStyle::Long),
     ]
     .join("\n")
 }
@@ -65,25 +56,13 @@ fn build_points_detail() -> String {
         "说明：普通用户创建转存任务前会按消息数量扣积分；admin 不扣积分；失败/取消会按规则退款并写入流水。".to_owned(),
         card::DIVIDER.to_owned(),
         "普通用户命令：".to_owned(),
-        short_and_long(
-            balance_command(CommandStyle::Short),
-            balance_command(CommandStyle::Long),
-        ),
-        short_and_long(
-            balance_history_command(10, 1, CommandStyle::Short),
-            balance_history_command(10, 1, CommandStyle::Long),
-        ),
+        balance_command(CommandStyle::Long),
+        balance_history_command(10, 1, CommandStyle::Long),
         String::new(),
         "管理员命令：".to_owned(),
-        short_and_long(
-            format!(
-                "{} <s|h|a|sub> <user_id> [amount|limit] [reason|page]",
-                command_root("points", CommandStyle::Short)
-            ),
-            format!(
-                "{} <show|history|add|sub> <user_id> [amount|limit] [reason|page]",
-                command_root("points", CommandStyle::Long)
-            ),
+        format!(
+            "{} <show|history|add|sub> <user_id> [amount|limit] [reason|page]",
+            command_root("points", CommandStyle::Long)
         ),
         String::new(),
         "动作：".to_owned(),
@@ -93,30 +72,12 @@ fn build_points_detail() -> String {
         format!("{}：扣除指定用户积分。", card::code("sub")),
         String::new(),
         "示例：".to_owned(),
-        short_and_long(
-            balance_command(CommandStyle::Short),
-            balance_command(CommandStyle::Long),
-        ),
-        short_and_long(
-            balance_history_command(10, 1, CommandStyle::Short),
-            balance_history_command(10, 1, CommandStyle::Long),
-        ),
-        short_and_long(
-            points_show_command(123456789, CommandStyle::Short),
-            points_show_command(123456789, CommandStyle::Long),
-        ),
-        short_and_long(
-            points_history_command(123456789, 10, 1, CommandStyle::Short),
-            points_history_command(123456789, 10, 1, CommandStyle::Long),
-        ),
-        short_and_long(
-            points_change_command("a", 123456789, 10, "admin_adjust", CommandStyle::Short),
-            points_change_command("add", 123456789, 10, "admin_adjust", CommandStyle::Long),
-        ),
-        short_and_long(
-            points_change_command("sub", 123456789, 10, "admin_adjust", CommandStyle::Short),
-            points_change_command("sub", 123456789, 10, "admin_adjust", CommandStyle::Long),
-        ),
+        balance_command(CommandStyle::Long),
+        balance_history_command(10, 1, CommandStyle::Long),
+        points_show_command(123456789, CommandStyle::Long),
+        points_history_command(123456789, 10, 1, CommandStyle::Long),
+        points_change_command("add", 123456789, 10, "admin_adjust", CommandStyle::Long),
+        points_change_command("sub", 123456789, 10, "admin_adjust", CommandStyle::Long),
     ]
     .join("\n")
 }
@@ -129,16 +90,10 @@ fn build_health_detail() -> String {
         "说明：展示任务规模、恢复队列、缓存队列、并发和运行时配置，不修改任何状态。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
-        short_and_long(
-            health_command_text(CommandStyle::Short),
-            health_command_text(CommandStyle::Long),
-        ),
+        health_command_text(CommandStyle::Long),
         String::new(),
         "示例：".to_owned(),
-        short_and_long(
-            health_command_text(CommandStyle::Short),
-            health_command_text(CommandStyle::Long),
-        ),
+        health_command_text(CommandStyle::Long),
     ]
     .join("\n")
 }
@@ -151,24 +106,12 @@ fn build_cache_detail() -> String {
         "说明：默认展示状态概览；page 模式展示最近更新的缓存记录，不执行删除。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
-        short_and_long(
-            cache_command(None, None, None, CommandStyle::Short),
-            cache_command(None, None, None, CommandStyle::Long),
-        ),
-        short_and_long(
-            cache_command(Some("page"), None, None, CommandStyle::Short),
-            cache_command(Some("page"), None, None, CommandStyle::Long),
-        ),
+        cache_command(None, None, None, CommandStyle::Long),
+        cache_command(Some("page"), None, None, CommandStyle::Long),
         String::new(),
         "示例：".to_owned(),
-        short_and_long(
-            cache_command(None, None, None, CommandStyle::Short),
-            cache_command(None, None, None, CommandStyle::Long),
-        ),
-        short_and_long(
-            cache_command(Some("page"), Some(10), Some(1), CommandStyle::Short),
-            cache_command(Some("page"), Some(10), Some(1), CommandStyle::Long),
-        ),
+        cache_command(None, None, None, CommandStyle::Long),
+        cache_command(Some("page"), Some(10), Some(1), CommandStyle::Long),
     ]
     .join("\n")
 }
@@ -181,24 +124,12 @@ fn build_transfer_detail() -> String {
         "说明：target 可填数字 chat_id 或配置里的别名；不传时使用 targets 默认目标。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
-        short_and_long(
-            transfer_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target]"),
-            transfer_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
-        ),
+        transfer_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
         String::new(),
         "示例：".to_owned(),
-        short_and_long(
-            "/t https://t.me/c/123/456".to_owned(),
-            "/transfer https://t.me/c/123/456".to_owned(),
-        ),
-        short_and_long(
-            "/t https://t.me/c/123/456 -1001234567890".to_owned(),
-            "/transfer https://t.me/c/123/456 -1001234567890".to_owned(),
-        ),
-        short_and_long(
-            "/t https://t.me/c/123/456 archive".to_owned(),
-            "/transfer https://t.me/c/123/456 archive".to_owned(),
-        ),
+        "/transfer https://t.me/c/123/456".to_owned(),
+        "/transfer https://t.me/c/123/456 -1001234567890".to_owned(),
+        "/transfer https://t.me/c/123/456 archive".to_owned(),
     ]
     .join("\n")
 }
@@ -211,24 +142,12 @@ fn build_lookup_detail() -> String {
         "说明：target 可填数字 chat_id 或配置里的别名；命中成功任务时会返回目标消息入口或定位信息。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
-        short_and_long(
-            lookup_command("<link>", 0, CommandStyle::Short).replace(" 0", " [target]"),
-            lookup_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
-        ),
+        lookup_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
         String::new(),
         "示例：".to_owned(),
-        short_and_long(
-            "/lk https://t.me/c/123/456".to_owned(),
-            "/lookup https://t.me/c/123/456".to_owned(),
-        ),
-        short_and_long(
-            "/lk https://t.me/c/123/456 -1001234567890".to_owned(),
-            "/lookup https://t.me/c/123/456 -1001234567890".to_owned(),
-        ),
-        short_and_long(
-            "/lk https://t.me/c/123/456 archive".to_owned(),
-            "/lookup https://t.me/c/123/456 archive".to_owned(),
-        ),
+        "/lookup https://t.me/c/123/456".to_owned(),
+        "/lookup https://t.me/c/123/456 -1001234567890".to_owned(),
+        "/lookup https://t.me/c/123/456 archive".to_owned(),
     ]
     .join("\n")
 }
@@ -240,32 +159,17 @@ fn build_config_detail() -> String {
         "用途：查看或修改可动态生效的运行配置。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
-        short_and_long(
-            format!(
-                "{} [show|set <key> <value>]",
-                command_root("config", CommandStyle::Short)
-            ),
-            format!(
-                "{} [show|set <key> <value>]",
-                command_root("config", CommandStyle::Long)
-            ),
+        format!(
+            "{} [show|set <key> <value>]",
+            command_root("config", CommandStyle::Long)
         ),
         String::new(),
-        short_and_long(
-            config_show_command(CommandStyle::Short),
-            config_show_command(CommandStyle::Long),
-        ),
+        config_show_command(CommandStyle::Long),
         "显示当前可调配置。".to_owned(),
         String::new(),
-        short_and_long(
-            format!(
-                "{} set <key> <value>",
-                command_root("config", CommandStyle::Short)
-            ),
-            format!(
-                "{} set <key> <value>",
-                command_root("config", CommandStyle::Long)
-            ),
+        format!(
+            "{} set <key> <value>",
+            command_root("config", CommandStyle::Long)
         ),
         "修改并持久化某个可调配置，修改后立即生效。".to_owned(),
         String::new(),
@@ -278,34 +182,13 @@ fn build_config_detail() -> String {
         card::code("menu_input_timeout_seconds"),
         String::new(),
         "示例：".to_owned(),
-        short_and_long(
-            config_show_command(CommandStyle::Short),
-            config_show_command(CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("job_concurrency", 4, CommandStyle::Short),
-            config_set_command("job_concurrency", 4, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("file_delete_delay_minutes", 3, CommandStyle::Short),
-            config_set_command("file_delete_delay_minutes", 3, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("file_gc_interval_seconds", 30, CommandStyle::Short),
-            config_set_command("file_gc_interval_seconds", 30, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Short),
-            config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("downloads_default_page_size", 10, CommandStyle::Short),
-            config_set_command("downloads_default_page_size", 10, CommandStyle::Long),
-        ),
-        short_and_long(
-            config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Short),
-            config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Long),
-        ),
+        config_show_command(CommandStyle::Long),
+        config_set_command("job_concurrency", 4, CommandStyle::Long),
+        config_set_command("file_delete_delay_minutes", 3, CommandStyle::Long),
+        config_set_command("file_gc_interval_seconds", 30, CommandStyle::Long),
+        config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Long),
+        config_set_command("downloads_default_page_size", 10, CommandStyle::Long),
+        config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Long),
     ]
     .join("\n")
 }
@@ -317,15 +200,9 @@ fn build_downloads_detail() -> String {
         "用途：查看任务列表、状态和真实下载进度。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
-        short_and_long(
-            format!(
-                "{} [filter] [limit] [page]",
-                downloads_command(None, None, None, CommandStyle::Short)
-            ),
-            format!(
-                "{} [filter] [limit] [page]",
-                downloads_command(None, None, None, CommandStyle::Long)
-            ),
+        format!(
+            "{} [filter] [limit] [page]",
+            downloads_command(None, None, None, CommandStyle::Long)
         ),
         String::new(),
         "筛选参数：".to_owned(),
@@ -334,26 +211,11 @@ fn build_downloads_detail() -> String {
         ),
         String::new(),
         "示例：".to_owned(),
-        short_and_long(
-            downloads_command(None, None, None, CommandStyle::Short),
-            downloads_command(None, None, None, CommandStyle::Long),
-        ),
-        short_and_long(
-            downloads_command(None, Some(10), None, CommandStyle::Short),
-            downloads_command(None, Some(10), None, CommandStyle::Long),
-        ),
-        short_and_long(
-            downloads_command(Some("dl"), None, None, CommandStyle::Short),
-            downloads_command(Some("dl"), None, None, CommandStyle::Long),
-        ),
-        short_and_long(
-            downloads_command(Some("done"), Some(5), None, CommandStyle::Short),
-            downloads_command(Some("done"), Some(5), None, CommandStyle::Long),
-        ),
-        short_and_long(
-            downloads_command(Some("done"), Some(5), Some(2), CommandStyle::Short),
-            downloads_command(Some("done"), Some(5), Some(2), CommandStyle::Long),
-        ),
+        downloads_command(None, None, None, CommandStyle::Long),
+        downloads_command(None, Some(10), None, CommandStyle::Long),
+        downloads_command(Some("dl"), None, None, CommandStyle::Long),
+        downloads_command(Some("done"), Some(5), None, CommandStyle::Long),
+        downloads_command(Some("done"), Some(5), Some(2), CommandStyle::Long),
     ]
     .join("\n")
 }
@@ -365,52 +227,34 @@ fn build_job_detail() -> String {
         "用途：手动控制转存任务。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
-        short_and_long(
-            format!(
-                "{} <p|r|s|st> <job_id>",
-                command_root("job", CommandStyle::Short)
-            ),
-            format!(
-                "{} <pause|resume|stop|status> <job_id>",
-                command_root("job", CommandStyle::Long)
-            ),
+        format!(
+            "{} <pause|resume|stop|status> <job_id>",
+            command_root("job", CommandStyle::Long)
         ),
         String::new(),
         "动作：".to_owned(),
         format!(
             "{}：暂停任务，当前单次 TDLib 调用会在安全点停止。",
-            card::code("pause | p")
+            card::code("pause")
         ),
         format!(
             "{}：唤醒 paused/pending/running 任务；若当前进程已有执行器则不会重复派发。",
-            card::code("resume | r")
+            card::code("resume")
         ),
         format!(
             "{}：停止任务并释放文件引用，文件按删除队列延迟清理。",
-            card::code("stop | s")
+            card::code("stop")
         ),
         format!(
             "{}：查看单任务详情、阶段计数和真实下载进度。",
-            card::code("status | st")
+            card::code("status")
         ),
         String::new(),
         "示例：".to_owned(),
-        short_and_long(
-            job_command("p", 123, CommandStyle::Short),
-            job_command("pause", 123, CommandStyle::Long),
-        ),
-        short_and_long(
-            job_command("r", 123, CommandStyle::Short),
-            job_command("resume", 123, CommandStyle::Long),
-        ),
-        short_and_long(
-            job_command("s", 123, CommandStyle::Short),
-            job_command("stop", 123, CommandStyle::Long),
-        ),
-        short_and_long(
-            job_command("st", 123, CommandStyle::Short),
-            job_command("status", 123, CommandStyle::Long),
-        ),
+        job_command("pause", 123, CommandStyle::Long),
+        job_command("resume", 123, CommandStyle::Long),
+        job_command("stop", 123, CommandStyle::Long),
+        job_command("status", 123, CommandStyle::Long),
     ]
     .join("\n")
 }
@@ -424,17 +268,14 @@ fn build_menu_detail() -> String {
             .to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
-        short_and_long(
-            menu_command(CommandStyle::Short),
-            menu_command(CommandStyle::Long),
-        ),
+        menu_command(CommandStyle::Long),
         String::new(),
         "可做操作：".to_owned(),
-        "转存：按钮引导输入源链接、目标和确认；也保留短/长命令模板。".to_owned(),
-        "查询：按钮引导输入源链接和目标；也保留短/长命令模板。".to_owned(),
+        "转存：按钮引导输入源链接、目标和确认；需要手输时只展示长命令模板。".to_owned(),
+        "查询：按钮引导输入源链接和目标；需要手输时只展示长命令模板。".to_owned(),
         "下载：覆盖全部筛选参数，并可进入分页列表。".to_owned(),
         "任务：从列表进入详情后可暂停、恢复、停止、刷新。".to_owned(),
-        "配置：覆盖全部可动态修改字段，常用值也保留短/长命令。".to_owned(),
+        "配置：覆盖全部可动态修改字段，常用值也保留长命令模板。".to_owned(),
         "帮助：覆盖所有 help topic，可原地切换详情页。".to_owned(),
         String::new(),
         "取消输入：".to_owned(),

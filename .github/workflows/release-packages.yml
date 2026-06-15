@@ -70,11 +70,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Restore Linux build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-cache/linux/${{ matrix.id }}/cargo-home
+            .ci-cache/linux/${{ matrix.id }}/rustup
+            .ci-cache/linux/${{ matrix.id }}/target
+          key: ${{ runner.os }}-linux-build-${{ matrix.id }}-${{ hashFiles('Cargo.lock', '.github/scripts/build_linux_package.sh', '.github/workflows/release-packages.yml', '.github/workflows/test-single-target.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-linux-build-${{ matrix.id }}-
+
+      - name: Prepare Linux cache dirs
+        run: |
+          mkdir -p ".ci-cache/linux/${{ matrix.id }}/cargo-home"
+          mkdir -p ".ci-cache/linux/${{ matrix.id }}/rustup"
+          mkdir -p ".ci-cache/linux/${{ matrix.id }}/target"
+
       - name: Build TDLib and package transfer_bot
         run: |
           set -eux
           docker run --rm \
             -v "$PWD:/work" \
+            -v "$PWD/.ci-cache/linux/${{ matrix.id }}/cargo-home:/root/.cargo" \
+            -v "$PWD/.ci-cache/linux/${{ matrix.id }}/rustup:/root/.rustup" \
+            -v "$PWD/.ci-cache/linux/${{ matrix.id }}/target:/work/target" \
             -w /work \
             -e "CI_DISTRO_ID=${{ matrix.id }}" \
             -e "CI_IMAGE=${{ matrix.image }}" \
@@ -101,10 +121,13 @@ jobs:
     runs-on: windows-2022
     env:
       CI_ARTIFACT_NAME: ${{ env.ARTIFACT_PREFIX }}-windows-x86_64-msvc
+      CARGO_TARGET_DIR: ${{ github.workspace }}\.ci-cache\windows\target
       LOCAL_TDLIB_PATH: ${{ github.workspace }}\tdlib-install
       TD_BUILD_DIR: ${{ runner.temp }}\td-build
       TD_SOURCE_DIR: ${{ runner.temp }}\td
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.ci-cache\windows\vcpkg-archives
       VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_INSTALLATION_ROOT: ${{ github.workspace }}\.ci-cache\windows\vcpkg-root
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -113,6 +136,26 @@ jobs:
         uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: rustfmt, clippy
+
+      - name: Restore Windows build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            .ci-cache/windows/target
+            .ci-cache/windows/vcpkg-root
+            .ci-cache/windows/vcpkg-archives
+          key: ${{ runner.os }}-windows-build-msvc-${{ hashFiles('Cargo.lock', '.github/scripts/build_windows_package.ps1', '.github/workflows/release-packages.yml', '.github/workflows/test-single-target.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-windows-build-msvc-
+
+      - name: Prepare Windows cache dirs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ".ci-cache/windows/target" | Out-Null
+          New-Item -ItemType Directory -Force ".ci-cache/windows/vcpkg-root" | Out-Null
+          New-Item -ItemType Directory -Force ".ci-cache/windows/vcpkg-archives" | Out-Null
 
       - name: Prepare Windows dependencies
         shell: pwsh

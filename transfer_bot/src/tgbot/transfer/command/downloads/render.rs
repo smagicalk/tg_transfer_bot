@@ -1,7 +1,10 @@
 // `/downloads` 的文本渲染。
 // 该模块只把已经查询好的任务快照渲染为 card 标记文本。
 
-use super::super::common::{CommandStyle, format_bytes, short_and_long};
+use super::super::common::{
+    CommandStyle, build_page_command_section, build_page_empty_note, build_ready_page_header,
+    format_bytes, short_and_long,
+};
 use super::keyboard::build_downloads_page_command;
 use super::types::DownloadsArgs;
 use crate::tgbot::transfer::card;
@@ -21,16 +24,17 @@ pub(super) fn format_downloads_text(
             build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Long),
         );
         let current_page_line = format!("当前页：{}", current_page_command);
-        return format!(
-            "下载列表为空\n筛选：{}  页码：{}  每页：{}\n{}\n{}\n{}\n{}",
+        let mut lines = build_ready_page_header("下载列表为空");
+        lines.push(format!(
+            "筛选：{}  页码：{}  每页：{}",
             card::code(args.filter.label()),
             card::code(page_label),
             card::code(args.limit),
-            card::DIVIDER,
-            card::section("命令"),
-            current_page_line,
-            card::note("可切换筛选或稍后刷新。")
-        );
+        ));
+        lines.push(build_page_command_section());
+        lines.push(current_page_line);
+        lines.push(build_page_empty_note("可切换筛选或稍后刷新。"));
+        return lines.join("\n");
     }
 
     let mut lines = Vec::new();
@@ -91,7 +95,7 @@ pub(super) fn format_downloads_text(
         ));
         lines.push(card::command_line(
             "命令",
-            super::super::common::job_command("st", snapshot.job.id, CommandStyle::Short),
+            super::super::common::job_command("status", snapshot.job.id, CommandStyle::Long),
         ));
     }
 

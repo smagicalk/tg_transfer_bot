@@ -249,20 +249,20 @@ cargo run -p transfer_bot -- -c config.json
 
 ## 常用命令
 
-| 命令 | 短命令 | 作用 |
-| --- | --- | --- |
-| `/help [command]` | `/h [command]` | 查看命令目录或单个命令帮助 |
-| `/menu` | `/m` | 打开交互菜单 |
-| `/transfer [link] [target]` | `/t [link] [target]` | 创建转存任务或进入向导 |
-| `/lookup <link> [target]` | `/lk <link> [target]` | 查询历史成功转存结果 |
-| `/downloads [filter] [limit] [page]` | `/d [filter] [limit] [page]` | 查看任务列表和下载进度 |
-| `/job <pause|resume|stop> <job_id>` | `/j <p|r|s> <job_id>` | 控制任务 |
-| `/balance` | `/bal` | 查看当前用户积分余额 |
-| `/balance history [limit] [page]` | `/bal h [limit] [page]` | 查看当前用户积分流水 |
-| `/points <show|history|add|sub> <user_id> [amount|limit] [reason|page]` | `/pts <s|h|a|sub> ...` | 管理员查看、查询流水或调整用户积分 |
-| `/config [show|set <key> <value>]` | `/cfg [show|set <key> <value>]` | 查看或调整已开放的运行时参数 |
-| `/health` | `/hl` | 查看健康状态、并发和缓存摘要 |
-| `/cache [summary|page] [limit] [page]` | `/fc [summary|page] [limit] [page]` | 查看文件缓存 |
+| 命令 | 作用 |
+| --- | --- |
+| `/help [command]` | 查看命令目录或单个命令帮助 |
+| `/menu` | 打开交互菜单 |
+| `/transfer [link] [target]` | 创建转存任务或进入向导 |
+| `/lookup <link> [target]` | 查询历史成功转存结果 |
+| `/downloads [filter] [limit] [page]` | 查看任务列表和下载进度 |
+| `/job <pause|resume|stop|status> <job_id>` | 控制任务 |
+| `/balance` | 查看当前用户积分余额 |
+| `/balance history [limit] [page]` | 查看当前用户积分流水 |
+| `/points <show|history|add|sub> <user_id> [amount|limit] [reason|page]` | 管理员查看、查询流水或调整用户积分 |
+| `/config [show|set <key> <value>]` | 查看或调整已开放的运行时参数 |
+| `/health` | 查看健康状态、并发和缓存摘要 |
+| `/cache [summary|page] [limit] [page]` | 查看文件缓存 |
 
 ### 常见使用方式
 
@@ -321,9 +321,10 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
 控制任务：
 
 ```text
-/job p 123
-/job r 123
-/job s 123
+/job status 123
+/job pause 123
+/job resume 123
+/job stop 123
 ```
 
 积分：

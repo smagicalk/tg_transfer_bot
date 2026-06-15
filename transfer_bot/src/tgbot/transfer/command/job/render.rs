@@ -5,8 +5,8 @@ use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store::{self, JobProgressSnapshot};
 
 use super::super::common::{
-    CommandStyle, downloads_command as build_downloads_command, format_bytes,
-    job_command as build_job_command,
+    CommandStyle, build_page_command_section, build_ready_page_header,
+    downloads_command as build_downloads_command, format_bytes, job_command as build_job_command,
 };
 
 /// 构造 `/job` 动作结果卡片。
@@ -33,14 +33,13 @@ pub(super) fn format_job_action_text(
 pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
     let total = snapshot.job.total_items.max(0);
     let finished = snapshot.success_count + snapshot.failed_count + snapshot.cancelled_count;
-    let mut lines = vec![
-        "任务详情".to_owned(),
+    let mut lines = build_ready_page_header("任务详情");
+    lines.extend([
         card::summary_line(
             &snapshot.job.status,
             Some(snapshot.job.id),
             snapshot.job.target_chat_id,
         ),
-        card::DIVIDER.to_owned(),
         card::section("进度"),
         card::field("总进度", format!("{}/{}", finished, total)),
         card::field("完成率", card::progress_bar(finished.into(), total.into())),
@@ -56,7 +55,7 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
             "已停",
             snapshot.cancelled_count,
         ),
-    ];
+    ]);
 
     if snapshot.active_download_files > 0 {
         lines.push(format!("真实下载：{}", format_job_live_download(snapshot)));
@@ -78,24 +77,24 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
         snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
     ));
     // 按钮在用户号登录模式下会被发送层统一禁用，因此正文也必须保留可复制命令。
-    lines.push(card::section("命令"));
+    lines.push(build_page_command_section());
     lines.push(card::command_line(
         "详情",
-        build_job_command("st", snapshot.job.id, CommandStyle::Short),
+        build_job_command("status", snapshot.job.id, CommandStyle::Long),
     ));
     match snapshot.job.status.as_str() {
         store::JOB_STATUS_PAUSED => {
             lines.push(card::command_line(
                 "恢复",
-                build_job_command("r", snapshot.job.id, CommandStyle::Short),
+                build_job_command("resume", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "停止",
-                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+                build_job_command("stop", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("pause"), None, None, CommandStyle::Long),
             ));
         }
         store::JOB_STATUS_CANCELLING
@@ -103,21 +102,21 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
         | store::JOB_STATUS_CANCELLED => {
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("cancel"), None, None, CommandStyle::Long),
             ));
         }
         _ => {
             lines.push(card::command_line(
                 "暂停",
-                build_job_command("p", snapshot.job.id, CommandStyle::Short),
+                build_job_command("pause", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "停止",
-                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+                build_job_command("stop", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("run"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("run"), None, None, CommandStyle::Long),
             ));
         }
     }
@@ -177,15 +176,16 @@ mod tests {
         let text = format_job_status_text(&snapshot);
 
         assert!(text.contains("任务详情"));
+        assert!(text.contains("状态：‹ready›"));
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("状态：‹running›"));
         assert!(text.contains("总进度：‹1/3›"));
         assert!(text.contains("完成率：‹|||||||------------- 33%›"));
         assert!(text.contains("■ 时间"));
         assert!(text.contains("■ 命令"));
-        assert!(text.contains("暂停：‹/j p 42›"));
-        assert!(text.contains("停止：‹/j s 42›"));
-        assert!(text.contains("列表：‹/d run›"));
+        assert!(text.contains("暂停：‹/job pause 42›"));
+        assert!(text.contains("停止：‹/job stop 42›"));
+        assert!(text.contains("列表：‹/downloads run›"));
     }
 
     // 失败任务详情应展示 transfer_job.last_error，方便事后通过 /job st 追溯失败原因。

@@ -7,8 +7,8 @@ use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
 
 use super::common::{
-    CommandStyle, downloads_command as downloads_command_text,
-    health_command as health_command_text, help_command as help_command_text,
+    CommandStyle, build_copy_only_row, build_page_command_section, build_ready_page_header,
+    build_refresh_return_menu_row, downloads_command as downloads_command_text,
 };
 
 /// `/health` callback 前缀。
@@ -102,11 +102,6 @@ async fn send_health_callback_error(
 fn build_health_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
         vec![
-            send::build_callback_button(
-                "刷新",
-                &build_health_callback_data(),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
             downloads_run_button(),
             send::build_callback_button(
                 "文件缓存",
@@ -114,27 +109,15 @@ fn build_health_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
-        vec![
-            send::build_copy_button(
-                "复制 /hl",
-                &health_command_text(CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
+        build_refresh_return_menu_row(
+            send::build_callback_button(
+                "刷新",
+                &build_health_callback_data(),
+                tdlib_rs::enums::ButtonStyle::Primary,
             ),
-            send::build_copy_button(
-                "复制运行列表",
-                &downloads_command_text(Some("run"), None, None, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_copy_button(
-                "复制 /h",
-                &help_command_text(None, CommandStyle::Short),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            send::build_copy_button(
-                "复制 /help",
-                &help_command_text(None, CommandStyle::Long),
+            send::build_callback_button(
+                "帮助",
+                &super::build_help_button_data(None),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_callback_button(
@@ -142,7 +125,12 @@ fn build_health_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
                 &super::build_menu_home_button_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-        ],
+        ),
+        build_copy_only_row(send::build_copy_button(
+            "复制 /health",
+            "/health",
+            tdlib_rs::enums::ButtonStyle::Default,
+        )),
     ]
 }
 
@@ -162,7 +150,7 @@ fn downloads_run_button() -> tdlib_rs::types::InlineKeyboardButton {
     tracing::warn!("downloads run callback data is unavailable, fallback to copy command");
     send::build_copy_button(
         "下载列表",
-        &downloads_command_text(Some("run"), None, None, CommandStyle::Short),
+        &downloads_command_text(Some("run"), None, None, CommandStyle::Long),
         tdlib_rs::enums::ButtonStyle::Default,
     )
 }
@@ -191,10 +179,8 @@ async fn build_health_snapshot() -> anyhow::Result<HealthSnapshot> {
 /// 构造健康卡片正文。
 fn format_health_text(snapshot: &HealthSnapshot) -> String {
     let transfer = &snapshot.transfer;
-    [
-        "运行健康".to_owned(),
-        format!("状态：{}", card::code("ready")),
-        card::DIVIDER.to_owned(),
+    let mut lines = build_ready_page_header("运行健康");
+    lines.extend([
         card::section("客户端"),
         format_client_line(snapshot.clients),
         card::field("ready_at", snapshot.now.format("%Y-%m-%d %H:%M:%S")),
@@ -248,12 +234,12 @@ fn format_health_text(snapshot: &HealthSnapshot) -> String {
             "file_gc_interval_seconds",
             transfer.file_gc_interval_seconds,
         ),
-        card::section("命令"),
+        build_page_command_section(),
         card::command_line("缓存", "/cache"),
         card::command_line("下载", "/downloads"),
         card::command_line("帮助", "/help"),
-    ]
-    .join("\n")
+    ]);
+    lines.join("\n")
 }
 
 /// 格式化当前执行 client 组合。
@@ -303,7 +289,7 @@ mod tests {
         }
     }
 
-    // 健康页仍保留短命令复制，方便 reply_markup 异常时手动排查。
+    // 健康页保留少量复制兜底，但主操作应优先使用 callback。
     #[test]
     fn test_build_health_buttons_keep_copy_fallbacks() {
         let rows = build_health_buttons();
@@ -313,8 +299,57 @@ mod tests {
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        assert!(labels.contains(&"复制 /hl"));
-        assert!(labels.contains(&"复制运行列表"));
-        assert!(labels.contains(&"复制 /h"));
+        assert!(labels.contains(&"帮助"));
+        assert!(labels.contains(&"菜单"));
+        assert!(labels.contains(&"复制 /health"));
+    }
+
+    #[test]
+    fn test_build_health_buttons_primary_row_hierarchy() {
+        let rows = build_health_buttons();
+
+        assert_eq!(rows[0][0].text, "下载列表");
+        assert_eq!(rows[0][1].text, "文件缓存");
+        assert_eq!(rows[1][0].text, "刷新");
+        assert_eq!(rows[1][1].text, "帮助");
+        assert_eq!(rows[1][2].text, "菜单");
+        assert_eq!(rows[2][0].text, "复制 /health");
+    }
+
+    #[test]
+    fn test_format_health_text_uses_ready_header_and_command_section() {
+        let now = store::now_utc8();
+        let snapshot = HealthSnapshot {
+            transfer: store::TransferHealthSnapshot {
+                total_jobs: 1,
+                total_items: 2,
+                active_jobs: 1,
+                success_jobs: 0,
+                failed_jobs: 0,
+                recoverable_jobs: 0,
+                cancelling_jobs: 0,
+                cancelled_jobs: 0,
+                preparing_items: 0,
+                uploading_items: 0,
+                file_cache_rows: 3,
+                file_cache_active_rows: 2,
+                file_cache_due_rows: 1,
+                file_cache_failed_rows: 0,
+                active_transfer_jobs: 1,
+                job_concurrency: 2,
+                progress_edit_interval_seconds: 5,
+                file_delete_delay_minutes: 10,
+                file_gc_interval_seconds: 30,
+            },
+            clients: None,
+            now,
+        };
+
+        let text = format_health_text(&snapshot);
+
+        assert!(text.contains("运行健康"));
+        assert!(text.contains("状态：‹ready›"));
+        assert!(text.contains("■ 命令"));
+        assert!(text.contains("缓存：‹/cache›"));
     }
 }

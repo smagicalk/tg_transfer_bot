@@ -80,11 +80,19 @@ pub(in crate::tgbot::transfer) fn build_downloads_filter_button_data(
     downloads::build_downloads_filter_value_callback_data(filter_value, limit)
 }
 
-/// 给卡片按钮生成可复制的短 `/downloads` 命令。
-///
-/// 调用方只传筛选参数，不直接依赖命令内部的 `CommandStyle`，避免非命令模块知道过多实现细节。
-pub(in crate::tgbot::transfer) fn build_downloads_short_command(filter: Option<&str>) -> String {
-    common::downloads_command(filter, None, None, common::CommandStyle::Short)
+/// 给外层错误卡片生成“打开帮助”按钮数据。
+pub(in crate::tgbot) fn build_help_button_data(topic: Option<&str>) -> String {
+    help::build_help_callback_data(topic)
+}
+
+/// 给外层错误卡片生成“返回菜单”按钮数据。
+pub(in crate::tgbot) fn build_menu_home_button_data_for_outer() -> String {
+    menu::build_menu_home_callback_data()
+}
+
+/// 给外层错误卡片生成“查看余额”按钮数据。
+pub(in crate::tgbot) fn build_balance_button_data() -> String {
+    points::build_balance_home_callback_data()
 }
 
 /// 给各类状态卡片生成“返回菜单”按钮数据。
@@ -243,10 +251,9 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
 mod tests {
     use super::{
         CallbackRoute, build_cache_button_data, build_downloads_filter_button_data,
-        build_downloads_short_command, build_downloads_status_button_data,
-        build_health_button_data, build_job_pause_button_data, build_job_resume_button_data,
-        build_job_status_button_data, build_job_stop_button_data, build_menu_home_button_data,
-        classify_callback_route,
+        build_downloads_status_button_data, build_health_button_data, build_job_pause_button_data,
+        build_job_resume_button_data, build_job_status_button_data, build_job_stop_button_data,
+        build_menu_home_button_data, classify_callback_route,
     };
 
     // callback 分发只看短前缀，具体参数合法性由各命令模块自行校验。
@@ -347,7 +354,6 @@ mod tests {
             CallbackRoute::Menu
         );
         assert!(build_downloads_filter_button_data("unknown", 8).is_none());
-        assert_eq!(build_downloads_short_command(Some("run")), "/d run");
     }
 
     // 当前所有 callback 前缀必须互不覆盖，否则统一路由会把按钮分发到错误模块。
