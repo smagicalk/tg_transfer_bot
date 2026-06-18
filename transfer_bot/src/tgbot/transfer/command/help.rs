@@ -140,7 +140,11 @@ fn build_help_page(
 ///
 /// 普通用户不能执行 `/health`、`/cache`、`/config`，帮助入口也不应把这些管理命令暴露成按钮。
 fn help_topic_allowed(command_name: &str, actor: crate::config::RequestActor) -> bool {
-    actor.is_admin() || !matches!(command_name, "health" | "cache" | "config")
+    actor.is_admin()
+        || !matches!(
+            command_name,
+            "health" | "cache" | "config" | "targets" | "acl" | "billing"
+        )
 }
 
 #[cfg(test)]

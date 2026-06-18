@@ -1,7 +1,7 @@
 // `/menu` callback payload 协议。
 // payload 保持短格式，避免超过 Telegram callback_data 长度限制。
 
-use super::input::MenuJobAction;
+use super::input::{AdminInputAction, MenuJobAction};
 
 /// 菜单按钮回调前缀。
 const MENU_CALLBACK_PREFIX: &str = "m:";
@@ -18,6 +18,9 @@ pub(super) enum MenuPage {
     Jobs,
     Lookup,
     Config,
+    Targets,
+    Acl,
+    Billing,
     Help,
 }
 
@@ -34,6 +37,9 @@ impl MenuPage {
             Self::Jobs => "任务",
             Self::Lookup => "查询",
             Self::Config => "配置",
+            Self::Targets => "目标",
+            Self::Acl => "权限",
+            Self::Billing => "计费",
             Self::Help => "帮助",
         }
     }
@@ -50,6 +56,9 @@ impl MenuPage {
             Self::Jobs => "j",
             Self::Lookup => "lk",
             Self::Config => "cfg",
+            Self::Targets => "tg",
+            Self::Acl => "acl",
+            Self::Billing => "bil",
             Self::Help => "h",
         }
     }
@@ -66,6 +75,9 @@ impl MenuPage {
             "j" => Some(Self::Jobs),
             "lk" => Some(Self::Lookup),
             "cfg" => Some(Self::Config),
+            "tg" => Some(Self::Targets),
+            "acl" => Some(Self::Acl),
+            "bil" => Some(Self::Billing),
             "h" => Some(Self::Help),
             _ => None,
         }
@@ -87,6 +99,7 @@ pub(super) enum MenuRequestAction {
     TargetConfirm,
     TargetBack,
     JobIdInput(MenuJobAction),
+    AdminInput(AdminInputAction),
     PointLedgerUserInput,
     ContinueInput,
     CancelInput,
@@ -114,6 +127,10 @@ pub(super) fn parse_menu_callback_data(data: &str) -> Option<MenuRequestAction> 
         "jp" => Some(MenuRequestAction::JobIdInput(MenuJobAction::Pause)),
         "jr" => Some(MenuRequestAction::JobIdInput(MenuJobAction::Resume)),
         "js" => Some(MenuRequestAction::JobIdInput(MenuJobAction::Stop)),
+        admin if admin.starts_with("ai:") => admin
+            .strip_prefix("ai:")
+            .and_then(AdminInputAction::parse)
+            .map(MenuRequestAction::AdminInput),
         "pl" => Some(MenuRequestAction::PointLedgerUserInput),
         "ci" => Some(MenuRequestAction::ContinueInput),
         "cx" => Some(MenuRequestAction::CancelInput),
@@ -191,6 +208,11 @@ pub(super) fn job_id_input_callback_data(action: MenuJobAction) -> String {
     menu_callback_data(code)
 }
 
+/// 启动管理单步输入的 callback payload。
+pub(super) fn admin_input_callback_data(action: AdminInputAction) -> String {
+    menu_callback_data(&format!("ai:{}", action.log_name()))
+}
+
 /// 输入用户 ID 查询积分流水的 callback payload。
 pub(super) fn point_ledger_user_input_callback_data() -> String {
     menu_callback_data("pl")
@@ -233,6 +255,18 @@ mod tests {
         assert_eq!(
             parse_menu_callback_data("m:mh"),
             Some(MenuRequestAction::Page(MenuPage::AdminHub))
+        );
+        assert_eq!(
+            parse_menu_callback_data("m:tg"),
+            Some(MenuRequestAction::Page(MenuPage::Targets))
+        );
+        assert_eq!(
+            parse_menu_callback_data("m:acl"),
+            Some(MenuRequestAction::Page(MenuPage::Acl))
+        );
+        assert_eq!(
+            parse_menu_callback_data("m:bil"),
+            Some(MenuRequestAction::Page(MenuPage::Billing))
         );
         assert_eq!(
             parse_menu_callback_data("m:new"),
@@ -291,6 +325,12 @@ mod tests {
             Some(MenuRequestAction::JobIdInput(MenuJobAction::Stop))
         );
         assert_eq!(
+            parse_menu_callback_data("m:ai:billing_set_base_cost"),
+            Some(MenuRequestAction::AdminInput(
+                AdminInputAction::BillingSetBaseCost
+            ))
+        );
+        assert_eq!(
             parse_menu_callback_data("m:pl"),
             Some(MenuRequestAction::PointLedgerUserInput)
         );
@@ -312,6 +352,10 @@ mod tests {
         assert_eq!(job_id_input_callback_data(MenuJobAction::Pause), "m:jp");
         assert_eq!(job_id_input_callback_data(MenuJobAction::Resume), "m:jr");
         assert_eq!(job_id_input_callback_data(MenuJobAction::Stop), "m:js");
+        assert_eq!(
+            admin_input_callback_data(AdminInputAction::BillingSetAnnouncement),
+            "m:ai:billing_set_announcement"
+        );
         assert_eq!(point_ledger_user_input_callback_data(), "m:pl");
     }
 }

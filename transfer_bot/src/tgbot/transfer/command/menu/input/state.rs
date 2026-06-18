@@ -117,7 +117,7 @@ impl MenuInputKind {
     }
 
     /// 日志中使用的输入流程名，避免直接打印 Debug 后未来重命名影响排查关键词。
-    pub(super) fn log_name(self) -> &'static str {
+    pub(in crate::tgbot::transfer::command::menu) fn log_name(self) -> &'static str {
         match self {
             Self::Transfer => "transfer",
             Self::TransferDefault => "transfer_default",
@@ -132,7 +132,7 @@ impl MenuInputKind {
     }
 
     /// 从数据库编码恢复输入类型。
-    fn parse(code: &str) -> Option<Self> {
+    pub(in crate::tgbot::transfer::command::menu) fn parse(code: &str) -> Option<Self> {
         match code {
             "transfer" => Some(Self::Transfer),
             "transfer_default" => Some(Self::TransferDefault),
@@ -187,7 +187,7 @@ impl MenuJobAction {
     }
 
     /// 日志中使用的稳定动作名。
-    pub(super) fn log_name(self) -> &'static str {
+    pub(in crate::tgbot::transfer::command) fn log_name(self) -> &'static str {
         match self {
             Self::Status => "status",
             Self::Pause => "pause",
@@ -202,12 +202,320 @@ impl MenuJobAction {
     }
 
     /// 从数据库编码恢复任务动作。
-    fn parse(code: &str) -> Option<Self> {
+    pub(in crate::tgbot::transfer::command) fn parse(code: &str) -> Option<Self> {
         match code {
             "status" => Some(Self::Status),
             "pause" => Some(Self::Pause),
             "resume" => Some(Self::Resume),
             "stop" => Some(Self::Stop),
+            _ => None,
+        }
+    }
+}
+
+/// 菜单里的管理配置输入动作。
+///
+/// 这些动作都属于“单步输入”：
+/// - 点按钮后等待用户回复一行参数
+/// - 状态机会把回复组装成已有命令，再复用原命令逻辑
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::tgbot::transfer::command) enum AdminInputAction {
+    TargetsSetDefault,
+    TargetsSetRoute,
+    TargetsDelRoute,
+    TargetsSetAlias,
+    TargetsDelAlias,
+    AclAddAdmin,
+    AclDelAdmin,
+    AclAddAllowUser,
+    AclDelAllowUser,
+    AclAddBan,
+    AclDelBan,
+    AclAddAllowTarget,
+    AclDelAllowTarget,
+    AclAddAllowRequest,
+    AclDelAllowRequest,
+    ConfigSetJobConcurrency,
+    ConfigSetFileDeleteDelayMinutes,
+    ConfigSetFileGcIntervalSeconds,
+    ConfigSetProgressEditIntervalSeconds,
+    ConfigSetDownloadsDefaultPageSize,
+    ConfigSetMenuInputTimeoutSeconds,
+    BillingSetBaseCost,
+    BillingSetItemCost,
+    BillingSetInitialUserPoints,
+    BillingSetAnnouncement,
+}
+
+impl AdminInputAction {
+    /// 当前所有管理输入动作。
+    ///
+    /// 这个清单主要用于覆盖测试：新增动作时必须同步确认编码、文案和命令规格。
+    #[cfg(test)]
+    const ALL: &'static [Self] = &[
+        Self::TargetsSetDefault,
+        Self::TargetsSetRoute,
+        Self::TargetsDelRoute,
+        Self::TargetsSetAlias,
+        Self::TargetsDelAlias,
+        Self::AclAddAdmin,
+        Self::AclDelAdmin,
+        Self::AclAddAllowUser,
+        Self::AclDelAllowUser,
+        Self::AclAddBan,
+        Self::AclDelBan,
+        Self::AclAddAllowTarget,
+        Self::AclDelAllowTarget,
+        Self::AclAddAllowRequest,
+        Self::AclDelAllowRequest,
+        Self::ConfigSetJobConcurrency,
+        Self::ConfigSetFileDeleteDelayMinutes,
+        Self::ConfigSetFileGcIntervalSeconds,
+        Self::ConfigSetProgressEditIntervalSeconds,
+        Self::ConfigSetDownloadsDefaultPageSize,
+        Self::ConfigSetMenuInputTimeoutSeconds,
+        Self::BillingSetBaseCost,
+        Self::BillingSetItemCost,
+        Self::BillingSetInitialUserPoints,
+        Self::BillingSetAnnouncement,
+    ];
+}
+
+/// 配置输入动作从 `/config` 字段规格读取文案，保证按钮、help 和 ForceReply 一致。
+fn config_field_spec(
+    action: AdminInputAction,
+) -> Option<&'static crate::tgbot::transfer::command::config_cmd::ConfigFieldSpec> {
+    crate::tgbot::transfer::command::config_cmd::config_field_spec_for_admin_action(action)
+}
+
+/// 目标输入动作从 `/targets` 动作规格读取文案，保证按钮、help 和 ForceReply 一致。
+fn targets_input_spec(
+    action: AdminInputAction,
+) -> Option<&'static crate::tgbot::transfer::command::targets::TargetsInputSpec> {
+    crate::tgbot::transfer::command::targets::targets_input_spec_for_admin_action(action)
+}
+
+/// 访问控制输入动作从 `/acl` 动作规格读取文案，保证按钮、help 和 ForceReply 一致。
+fn acl_input_spec(
+    action: AdminInputAction,
+) -> Option<&'static crate::tgbot::transfer::command::acl::AclInputSpec> {
+    crate::tgbot::transfer::command::acl::acl_input_spec_for_admin_action(action)
+}
+
+/// 计费输入动作从 `/billing` 字段规格读取文案，保证按钮、help 和 ForceReply 一致。
+fn billing_input_meta(
+    action: AdminInputAction,
+) -> Option<(&'static str, &'static str, &'static str)> {
+    if let Some(spec) =
+        crate::tgbot::transfer::command::billing::billing_numeric_spec_for_admin_action(action)
+    {
+        return Some((spec.input_title, spec.input_detail, spec.input_placeholder));
+    }
+    crate::tgbot::transfer::command::billing::billing_announcement_spec_for_admin_action(action)
+        .map(|spec| (spec.input_title, spec.input_detail, spec.input_placeholder))
+}
+
+impl AdminInputAction {
+    /// 对外展示的稳定标题。
+    pub(super) fn input_title(self) -> &'static str {
+        if let Some(spec) = targets_input_spec(self) {
+            return spec.input_title;
+        }
+        if let Some(spec) = acl_input_spec(self) {
+            return spec.input_title;
+        }
+        if let Some((title, _, _)) = billing_input_meta(self) {
+            return title;
+        }
+        if let Some(spec) = config_field_spec(self) {
+            return spec.input_title;
+        }
+
+        match self {
+            Self::TargetsSetDefault
+            | Self::TargetsSetRoute
+            | Self::TargetsDelRoute
+            | Self::TargetsSetAlias
+            | Self::TargetsDelAlias => unreachable!("targets input title uses spec"),
+            Self::AclAddAdmin
+            | Self::AclDelAdmin
+            | Self::AclAddAllowUser
+            | Self::AclDelAllowUser
+            | Self::AclAddBan
+            | Self::AclDelBan
+            | Self::AclAddAllowTarget
+            | Self::AclDelAllowTarget
+            | Self::AclAddAllowRequest
+            | Self::AclDelAllowRequest => unreachable!("acl input title uses spec"),
+            Self::ConfigSetJobConcurrency
+            | Self::ConfigSetFileDeleteDelayMinutes
+            | Self::ConfigSetFileGcIntervalSeconds
+            | Self::ConfigSetProgressEditIntervalSeconds
+            | Self::ConfigSetDownloadsDefaultPageSize
+            | Self::ConfigSetMenuInputTimeoutSeconds => {
+                unreachable!("config input title uses spec")
+            }
+            Self::BillingSetBaseCost
+            | Self::BillingSetItemCost
+            | Self::BillingSetInitialUserPoints
+            | Self::BillingSetAnnouncement => unreachable!("billing input title uses spec"),
+        }
+    }
+
+    /// ForceReply 提示正文。
+    pub(super) fn input_detail(self) -> &'static str {
+        if let Some(spec) = targets_input_spec(self) {
+            return spec.input_detail;
+        }
+        if let Some(spec) = acl_input_spec(self) {
+            return spec.input_detail;
+        }
+        if let Some((_, detail, _)) = billing_input_meta(self) {
+            return detail;
+        }
+        if let Some(spec) = config_field_spec(self) {
+            return spec.input_detail;
+        }
+
+        match self {
+            Self::TargetsSetDefault
+            | Self::TargetsSetRoute
+            | Self::TargetsDelRoute
+            | Self::TargetsSetAlias
+            | Self::TargetsDelAlias => unreachable!("targets input detail uses spec"),
+            Self::AclAddAdmin
+            | Self::AclDelAdmin
+            | Self::AclAddAllowUser
+            | Self::AclDelAllowUser
+            | Self::AclAddBan
+            | Self::AclDelBan
+            | Self::AclAddAllowTarget
+            | Self::AclDelAllowTarget
+            | Self::AclAddAllowRequest
+            | Self::AclDelAllowRequest => unreachable!("acl input detail uses spec"),
+            Self::ConfigSetJobConcurrency
+            | Self::ConfigSetFileDeleteDelayMinutes
+            | Self::ConfigSetFileGcIntervalSeconds
+            | Self::ConfigSetProgressEditIntervalSeconds
+            | Self::ConfigSetDownloadsDefaultPageSize
+            | Self::ConfigSetMenuInputTimeoutSeconds => {
+                unreachable!("config input detail uses spec")
+            }
+            Self::BillingSetBaseCost
+            | Self::BillingSetItemCost
+            | Self::BillingSetInitialUserPoints
+            | Self::BillingSetAnnouncement => unreachable!("billing input detail uses spec"),
+        }
+    }
+
+    /// 输入框占位文案。
+    pub(super) fn input_placeholder(self) -> &'static str {
+        if let Some(spec) = targets_input_spec(self) {
+            return spec.input_placeholder;
+        }
+        if let Some(spec) = acl_input_spec(self) {
+            return spec.input_placeholder;
+        }
+        if let Some((_, _, placeholder)) = billing_input_meta(self) {
+            return placeholder;
+        }
+        if let Some(spec) = config_field_spec(self) {
+            return spec.input_placeholder;
+        }
+
+        match self {
+            Self::TargetsSetDefault
+            | Self::TargetsSetRoute
+            | Self::TargetsDelRoute
+            | Self::TargetsSetAlias
+            | Self::TargetsDelAlias => unreachable!("targets input placeholder uses spec"),
+            Self::AclAddAdmin
+            | Self::AclDelAdmin
+            | Self::AclAddAllowUser
+            | Self::AclDelAllowUser
+            | Self::AclAddBan
+            | Self::AclDelBan
+            | Self::AclAddAllowTarget
+            | Self::AclDelAllowTarget
+            | Self::AclAddAllowRequest
+            | Self::AclDelAllowRequest => unreachable!("acl input placeholder uses spec"),
+            Self::ConfigSetJobConcurrency
+            | Self::ConfigSetFileDeleteDelayMinutes
+            | Self::ConfigSetFileGcIntervalSeconds
+            | Self::ConfigSetProgressEditIntervalSeconds
+            | Self::ConfigSetDownloadsDefaultPageSize
+            | Self::ConfigSetMenuInputTimeoutSeconds => {
+                unreachable!("config input placeholder uses spec")
+            }
+            Self::BillingSetBaseCost
+            | Self::BillingSetItemCost
+            | Self::BillingSetInitialUserPoints
+            | Self::BillingSetAnnouncement => unreachable!("billing input placeholder uses spec"),
+        }
+    }
+
+    /// 日志与持久化使用的稳定编码。
+    pub(in crate::tgbot::transfer::command) fn log_name(self) -> &'static str {
+        match self {
+            Self::TargetsSetDefault => "targets_set_default",
+            Self::TargetsSetRoute => "targets_set_route",
+            Self::TargetsDelRoute => "targets_del_route",
+            Self::TargetsSetAlias => "targets_set_alias",
+            Self::TargetsDelAlias => "targets_del_alias",
+            Self::AclAddAdmin => "acl_add_admin",
+            Self::AclDelAdmin => "acl_del_admin",
+            Self::AclAddAllowUser => "acl_add_allow_user",
+            Self::AclDelAllowUser => "acl_del_allow_user",
+            Self::AclAddBan => "acl_add_ban",
+            Self::AclDelBan => "acl_del_ban",
+            Self::AclAddAllowTarget => "acl_add_allow_target",
+            Self::AclDelAllowTarget => "acl_del_allow_target",
+            Self::AclAddAllowRequest => "acl_add_allow_request",
+            Self::AclDelAllowRequest => "acl_del_allow_request",
+            Self::ConfigSetJobConcurrency => "config_set_job_concurrency",
+            Self::ConfigSetFileDeleteDelayMinutes => "config_set_delete_delay",
+            Self::ConfigSetFileGcIntervalSeconds => "config_set_gc_interval",
+            Self::ConfigSetProgressEditIntervalSeconds => "config_set_progress_interval",
+            Self::ConfigSetDownloadsDefaultPageSize => "config_set_page_size",
+            Self::ConfigSetMenuInputTimeoutSeconds => "config_set_menu_timeout",
+            Self::BillingSetBaseCost => "billing_set_base_cost",
+            Self::BillingSetItemCost => "billing_set_item_cost",
+            Self::BillingSetInitialUserPoints => "billing_set_initial_points",
+            Self::BillingSetAnnouncement => "billing_set_announcement",
+        }
+    }
+
+    fn code(self) -> &'static str {
+        self.log_name()
+    }
+
+    pub(in crate::tgbot::transfer::command) fn parse(code: &str) -> Option<Self> {
+        match code {
+            "targets_set_default" => Some(Self::TargetsSetDefault),
+            "targets_set_route" => Some(Self::TargetsSetRoute),
+            "targets_del_route" => Some(Self::TargetsDelRoute),
+            "targets_set_alias" => Some(Self::TargetsSetAlias),
+            "targets_del_alias" => Some(Self::TargetsDelAlias),
+            "acl_add_admin" => Some(Self::AclAddAdmin),
+            "acl_del_admin" => Some(Self::AclDelAdmin),
+            "acl_add_allow_user" => Some(Self::AclAddAllowUser),
+            "acl_del_allow_user" => Some(Self::AclDelAllowUser),
+            "acl_add_ban" => Some(Self::AclAddBan),
+            "acl_del_ban" => Some(Self::AclDelBan),
+            "acl_add_allow_target" => Some(Self::AclAddAllowTarget),
+            "acl_del_allow_target" => Some(Self::AclDelAllowTarget),
+            "acl_add_allow_request" => Some(Self::AclAddAllowRequest),
+            "acl_del_allow_request" => Some(Self::AclDelAllowRequest),
+            "config_set_job_concurrency" => Some(Self::ConfigSetJobConcurrency),
+            "config_set_delete_delay" => Some(Self::ConfigSetFileDeleteDelayMinutes),
+            "config_set_gc_interval" => Some(Self::ConfigSetFileGcIntervalSeconds),
+            "config_set_progress_interval" => Some(Self::ConfigSetProgressEditIntervalSeconds),
+            "config_set_page_size" => Some(Self::ConfigSetDownloadsDefaultPageSize),
+            "config_set_menu_timeout" => Some(Self::ConfigSetMenuInputTimeoutSeconds),
+            "billing_set_base_cost" => Some(Self::BillingSetBaseCost),
+            "billing_set_item_cost" => Some(Self::BillingSetItemCost),
+            "billing_set_initial_points" => Some(Self::BillingSetInitialUserPoints),
+            "billing_set_announcement" => Some(Self::BillingSetAnnouncement),
             _ => None,
         }
     }
@@ -239,6 +547,9 @@ pub(super) enum MenuInputStep {
     JobId {
         action: MenuJobAction,
     },
+    AdminInput {
+        action: AdminInputAction,
+    },
     PointLedgerUserId,
 }
 
@@ -263,6 +574,7 @@ impl MenuInputDraft {
             MenuInputStep::ChatPicker { .. } => "选择群组",
             MenuInputStep::Confirm { .. } => "确认执行",
             MenuInputStep::JobId { action } => action.input_title(),
+            MenuInputStep::AdminInput { action } => action.input_title(),
             MenuInputStep::PointLedgerUserId => "用户积分流水",
         }
     }
@@ -294,6 +606,11 @@ impl MenuInputDraft {
     /// 构造等待任务编号的草稿。
     pub(super) fn job_id(action: MenuJobAction) -> Self {
         Self::new(MenuInputStep::JobId { action })
+    }
+
+    /// 构造等待管理配置输入的草稿。
+    pub(super) fn admin_input(action: AdminInputAction) -> Self {
+        Self::new(MenuInputStep::AdminInput { action })
     }
 
     /// 构造等待用户 ID 的积分流水草稿。
@@ -350,6 +667,9 @@ impl MenuInputDraft {
             },
             "job_id" => MenuInputStep::JobId {
                 action: MenuJobAction::parse(model.job_action.as_deref()?)?,
+            },
+            "admin_input" => MenuInputStep::AdminInput {
+                action: AdminInputAction::parse(model.job_action.as_deref()?)?,
             },
             "point_ledger_user_id" => MenuInputStep::PointLedgerUserId,
             _ => return None,
@@ -413,6 +733,14 @@ impl DraftFields {
             MenuInputStep::JobId { action } => Self {
                 step: "job_id",
                 input_kind: None,
+                job_action: Some(action.code()),
+                source_link: None,
+                target_chat_id: None,
+            },
+            MenuInputStep::AdminInput { action } => Self {
+                step: "admin_input",
+                input_kind: None,
+                // 复用可空字符串列保存单步管理动作编码，避免为短草稿状态再单独加 schema。
                 job_action: Some(action.code()),
                 source_link: None,
                 target_chat_id: None,
@@ -717,22 +1045,6 @@ pub(super) async fn put_draft(key: DraftKey, draft: MenuInputDraft) -> anyhow::R
     put_draft_unlocked(key, draft).await
 }
 
-/// 构造草稿当前业务字段绑定值。
-///
-/// SQL 中使用 SQLite 的 `IS ?`，它既能匹配 NULL，也能匹配普通值；比 ORM 组合多列
-/// `IS NULL` / `=` 条件更直接，避免 SQLite 测试库上出现空值字段匹配不到的情况。
-fn current_draft_values(model: &db::menu_input_draft::Model) -> Vec<sea_orm::Value> {
-    vec![
-        model.request_chat_id.into(),
-        model.sender_user_id.into(),
-        model.step.clone().into(),
-        model.input_kind.clone().into(),
-        model.job_action.clone().into(),
-        model.source_link.clone().into(),
-        model.target_chat_id.into(),
-    ]
-}
-
 /// 写入目标选择草稿。
 pub(super) async fn put_target_choice_draft(
     key: DraftKey,
@@ -767,6 +1079,7 @@ pub(super) fn target_context_from_step(step: &MenuInputStep) -> Option<(MenuInpu
         } => Some((*kind, source_link.clone())),
         MenuInputStep::SourceLink { .. }
         | MenuInputStep::JobId { .. }
+        | MenuInputStep::AdminInput { .. }
         | MenuInputStep::PointLedgerUserId => None,
     }
 }
@@ -1183,6 +1496,50 @@ mod tests {
         assert_eq!(MenuJobAction::Pause.command_action(), "pause");
         assert_eq!(MenuJobAction::Resume.command_action(), "resume");
         assert_eq!(MenuJobAction::Stop.command_action(), "stop");
+    }
+
+    #[test]
+    fn test_admin_input_action_prompt_meta() {
+        assert_eq!(
+            AdminInputAction::TargetsSetDefault.input_title(),
+            "设置默认目标"
+        );
+        assert!(
+            AdminInputAction::TargetsSetRoute
+                .input_detail()
+                .contains("request_chat_id")
+        );
+        assert_eq!(
+            AdminInputAction::BillingSetAnnouncement.input_placeholder(),
+            "输入公告内容，或发送 /cancel"
+        );
+    }
+
+    #[test]
+    fn test_admin_input_action_all_roundtrip_and_prompt_meta() {
+        for action in AdminInputAction::ALL {
+            assert_eq!(
+                AdminInputAction::parse(action.log_name()),
+                Some(*action),
+                "admin input action code should roundtrip: {}",
+                action.log_name()
+            );
+            assert!(
+                !action.input_title().trim().is_empty(),
+                "admin input action title should not be empty: {}",
+                action.log_name()
+            );
+            assert!(
+                !action.input_detail().trim().is_empty(),
+                "admin input action detail should not be empty: {}",
+                action.log_name()
+            );
+            assert!(
+                !action.input_placeholder().trim().is_empty(),
+                "admin input action placeholder should not be empty: {}",
+                action.log_name()
+            );
+        }
     }
 
     // 上次目标只是交互捷径，按 chat + user 隔离，避免多个管理员互相覆盖。

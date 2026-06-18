@@ -174,7 +174,9 @@ pub(super) async fn continue_flow_input(
             send_confirm_prompt(*kind, source_link, *target_chat_id, chat_id, client_id).await?;
             Ok(true)
         }
-        MenuInputStep::JobId { .. } | MenuInputStep::PointLedgerUserId => Ok(false),
+        MenuInputStep::JobId { .. }
+        | MenuInputStep::AdminInput { .. }
+        | MenuInputStep::PointLedgerUserId => Ok(false),
     }
 }
 
@@ -217,7 +219,9 @@ pub(super) async fn handle_flow_input(
             .await?;
             Ok(Some(true))
         }
-        MenuInputStep::JobId { .. } | MenuInputStep::PointLedgerUserId => Ok(None),
+        MenuInputStep::JobId { .. }
+        | MenuInputStep::AdminInput { .. }
+        | MenuInputStep::PointLedgerUserId => Ok(None),
     }
 }
 

@@ -169,7 +169,7 @@ fn command_error_action(kind: transfer_mod::TransferErrorKind) -> CommandErrorAc
         },
         transfer_mod::TransferErrorKind::MissingTarget => CommandErrorAction {
             primary_label: "转存模板",
-            primary_command: "/transfer <link> <target>",
+            primary_command: "/transfer <link> <target_chat_id>",
             primary_action: CommandErrorPrimaryAction::CopyPrimaryCommand,
             help_command: "/help transfer",
         },

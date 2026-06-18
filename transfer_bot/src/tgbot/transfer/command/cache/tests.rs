@@ -88,7 +88,7 @@ fn test_cache_keyboard_follow_row_hierarchy() {
 
     assert_eq!(keyboard.rows[0][0].text, "概览");
     assert_eq!(keyboard.rows[1][0].text, "刷新");
-    assert_eq!(keyboard.rows[1][1].text, "返回");
+    assert_eq!(keyboard.rows[1][1].text, "健康");
     assert_eq!(keyboard.rows[1][2].text, "菜单");
     assert_eq!(keyboard.rows[2][0].text, "复制当前命令");
 }

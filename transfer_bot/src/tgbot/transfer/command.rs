@@ -2,6 +2,8 @@
 // - 按命令职责拆分子模块
 // - 对外保持统一导出，避免上层调用方感知文件结构变化
 
+mod acl;
+mod billing;
 mod cache;
 pub(super) mod common;
 mod config_cmd;
@@ -12,8 +14,11 @@ mod job;
 mod lookup;
 mod menu;
 mod points;
+mod targets;
 mod transfer_cmd;
 
+pub use acl::acl_command;
+pub use billing::billing_command;
 pub use cache::cache_command;
 pub use config_cmd::config_command;
 pub use downloads::downloads_command;
@@ -26,6 +31,7 @@ pub use menu::{
     handle_menu_shared_chat_input, handle_menu_text_input, menu_command,
 };
 pub use points::{balance_command, points_command};
+pub use targets::targets_command;
 pub use transfer_cmd::{transfer_bot_message_auto_command, transfer_command};
 
 /// 给转存结果/进度卡片生成“任务详情”按钮数据。
@@ -100,6 +106,31 @@ pub(in crate::tgbot::transfer) fn build_menu_home_button_data() -> String {
     menu::build_menu_home_callback_data()
 }
 
+/// 给启动引导或其他管理卡片生成“打开管理页”按钮数据。
+pub(in crate::tgbot::transfer) fn build_menu_admin_hub_button_data() -> String {
+    menu::build_menu_admin_hub_callback_data()
+}
+
+/// 给启动引导或其他管理卡片生成“打开运行配置页”按钮数据。
+pub(in crate::tgbot::transfer) fn build_menu_config_button_data() -> String {
+    menu::build_menu_config_callback_data()
+}
+
+/// 给启动引导或其他管理卡片生成“打开目标配置页”按钮数据。
+pub(in crate::tgbot::transfer) fn build_menu_targets_button_data() -> String {
+    menu::build_menu_targets_callback_data()
+}
+
+/// 给启动引导或其他管理卡片生成“打开访问控制页”按钮数据。
+pub(in crate::tgbot::transfer) fn build_menu_acl_button_data() -> String {
+    menu::build_menu_acl_callback_data()
+}
+
+/// 给启动引导或其他管理卡片生成“打开计费配置页”按钮数据。
+pub(in crate::tgbot::transfer) fn build_menu_billing_button_data() -> String {
+    menu::build_menu_billing_callback_data()
+}
+
 /// 给菜单页生成“运行健康”按钮数据。
 pub(in crate::tgbot::transfer) fn build_health_button_data() -> String {
     health::build_health_callback_data()
@@ -117,6 +148,9 @@ enum CallbackRoute {
     Downloads,
     Job,
     Config,
+    Targets,
+    Acl,
+    Billing,
     Health,
     Cache,
     Points,
@@ -153,6 +187,16 @@ pub async fn transfer_callback_query(
             config_cmd::config_callback_query(update, client_id).await
         }
         CallbackRoute::Config => send_permission_denied_callback(update, client_id).await,
+        CallbackRoute::Targets if actor.is_admin() => {
+            targets::targets_callback_query(update, client_id).await
+        }
+        CallbackRoute::Targets => send_permission_denied_callback(update, client_id).await,
+        CallbackRoute::Acl if actor.is_admin() => acl::acl_callback_query(update, client_id).await,
+        CallbackRoute::Acl => send_permission_denied_callback(update, client_id).await,
+        CallbackRoute::Billing if actor.is_admin() => {
+            billing::billing_callback_query(update, client_id).await
+        }
+        CallbackRoute::Billing => send_permission_denied_callback(update, client_id).await,
         CallbackRoute::Health if actor.is_admin() => {
             health::health_callback_query(update, client_id).await
         }
@@ -223,6 +267,21 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
             CallbackRoute::Config
         }
         tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if targets::is_targets_callback_data(&data.data) =>
+        {
+            CallbackRoute::Targets
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if acl::is_acl_callback_data(&data.data) =>
+        {
+            CallbackRoute::Acl
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if billing::is_billing_callback_data(&data.data) =>
+        {
+            CallbackRoute::Billing
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
             if health::is_health_callback_data(&data.data) =>
         {
             CallbackRoute::Health
@@ -274,6 +333,18 @@ mod tests {
         assert_eq!(
             classify_callback_route(&payload("cfg:r")),
             CallbackRoute::Config
+        );
+        assert_eq!(
+            classify_callback_route(&payload("tcfg:r")),
+            CallbackRoute::Targets
+        );
+        assert_eq!(
+            classify_callback_route(&payload("acfg:r")),
+            CallbackRoute::Acl
+        );
+        assert_eq!(
+            classify_callback_route(&payload("bcfg:r")),
+            CallbackRoute::Billing
         );
         assert_eq!(
             classify_callback_route(&payload("hl:show")),
@@ -364,6 +435,9 @@ mod tests {
             ("d:f:run:8:1", CallbackRoute::Downloads),
             ("j:p:42", CallbackRoute::Job),
             ("cfg:a:gc:10", CallbackRoute::Config),
+            ("tcfg:r", CallbackRoute::Targets),
+            ("acfg:r", CallbackRoute::Acl),
+            ("bcfg:r", CallbackRoute::Billing),
             ("hl:show", CallbackRoute::Health),
             ("c:v:summary:10:1", CallbackRoute::Cache),
             ("pt:p:b:1:10:1", CallbackRoute::Points),

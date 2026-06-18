@@ -3,20 +3,42 @@
 // - file_cache 引用计数与删除队列管理
 // - 启动恢复任务扫描
 
+mod access_control_runtime_config;
 mod account;
+mod billing_runtime_config;
 mod file_cache;
 mod item;
 mod job;
 mod observability;
 mod progress;
 mod result;
+mod runtime_config;
+mod targets_runtime_config;
 
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use access_control_runtime_config::ensure_access_control_runtime_config;
+pub(crate) use access_control_runtime_config::ensure_access_control_runtime_config_on;
+pub(crate) use access_control_runtime_config::save_access_control_runtime_config;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use access_control_runtime_config::{
+    load_access_control_runtime_config, load_access_control_runtime_config_on,
+};
 pub(in crate::tgbot::transfer) use account::{
     PointLedgerEntry, PointLedgerPage, PointsChange, UserAccountSnapshot, change_points,
     ensure_user_account, get_user_account, list_point_ledger_page,
+};
+#[cfg(test)]
+pub(crate) use billing_runtime_config::ensure_billing_runtime_config;
+pub(crate) use billing_runtime_config::ensure_billing_runtime_config_on;
+pub(crate) use billing_runtime_config::save_billing_runtime_config;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use billing_runtime_config::{
+    load_billing_runtime_config, load_billing_runtime_config_on,
 };
 #[cfg(test)]
 pub(super) use file_cache::{acquire_file_ref, release_job_file_refs};
@@ -48,6 +70,21 @@ pub(super) use progress::{
 pub(super) use result::{
     ResultMessageRecord, list_result_messages_by_job, replace_result_messages_on_conn,
     update_result_message_record_link,
+};
+#[cfg(test)]
+pub(crate) use runtime_config::ensure_transfer_runtime_config;
+pub(crate) use runtime_config::ensure_transfer_runtime_config_on;
+pub(crate) use runtime_config::save_transfer_runtime_config;
+#[cfg(test)]
+pub(crate) use runtime_config::{load_transfer_runtime_config, load_transfer_runtime_config_on};
+#[cfg(test)]
+pub(crate) use targets_runtime_config::ensure_targets_runtime_config;
+pub(crate) use targets_runtime_config::ensure_targets_runtime_config_on;
+pub(crate) use targets_runtime_config::save_targets_runtime_config;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use targets_runtime_config::{
+    load_targets_runtime_config, load_targets_runtime_config_on,
 };
 
 /// 主任务状态：等待后台执行。

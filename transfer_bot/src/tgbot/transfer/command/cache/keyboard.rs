@@ -92,7 +92,7 @@ pub(super) fn build_cache_keyboard(
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         send::build_callback_button(
-            "返回",
+            "健康",
             &super::super::build_health_button_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),

@@ -3,11 +3,15 @@
 
 use super::super::common::{
     CommandStyle, balance_command, balance_history_command, build_copy_only_row,
-    build_refresh_return_menu_row, build_return_menu_row, cache_command, config_set_command,
-    config_show_command, downloads_command, health_command, help_command as help_command_text,
+    build_refresh_return_menu_row, build_return_menu_row, build_runtime_admin_help_copy_rows,
+    cache_command, downloads_command, health_command, help_command as help_command_text,
     job_command, points_change_command, points_history_command, points_show_command,
 };
 use super::super::menu::build_menu_home_callback_data;
+use super::super::{
+    acl::acl_help_descriptor, billing::billing_help_descriptor, config_cmd::config_help_descriptor,
+    targets::targets_help_descriptor,
+};
 use super::topic::normalize_help_topic;
 use crate::tgbot::send;
 
@@ -77,6 +81,14 @@ pub(super) fn build_help_index_buttons(
                 help_nav_button("运行配置", "config", tdlib_rs::enums::ButtonStyle::Default),
             ],
         );
+        rows.insert(
+            4,
+            vec![
+                help_nav_button("目标配置", "targets", tdlib_rs::enums::ButtonStyle::Default),
+                help_nav_button("访问控制", "acl", tdlib_rs::enums::ButtonStyle::Default),
+                help_nav_button("计费配置", "billing", tdlib_rs::enums::ButtonStyle::Default),
+            ],
+        );
         rows.push(vec![
             send::build_copy_button(
                 "复制 /health",
@@ -84,11 +96,16 @@ pub(super) fn build_help_index_buttons(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_copy_button(
-                "复制 /config show",
-                &config_show_command(CommandStyle::Long),
+                "复制 /config reset",
+                "/config reset",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ]);
+        rows.push(vec![send::build_copy_button(
+            "复制 /config show",
+            "/config show",
+            tdlib_rs::enums::ButtonStyle::Default,
+        )]);
         rows.push(build_copy_only_row(send::build_copy_button(
             "复制 /cache",
             &cache_command(None, None, None, CommandStyle::Long),
@@ -183,19 +200,38 @@ pub(super) fn build_help_detail_buttons(
             )),
             build_return_menu_row(help_index_button(), menu_home_button()),
         ],
-        "config" => vec![
-            build_copy_only_row(send::build_copy_button(
-                "复制 /config show",
-                &config_show_command(CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制并发命令",
-                &config_set_command("job_concurrency", 4, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
-            build_return_menu_row(help_index_button(), menu_home_button()),
-        ],
+        "config" => [
+            build_runtime_admin_help_copy_rows(&config_help_descriptor()),
+            vec![build_return_menu_row(
+                help_index_button(),
+                menu_home_button(),
+            )],
+        ]
+        .concat(),
+        "targets" => [
+            build_runtime_admin_help_copy_rows(&targets_help_descriptor()),
+            vec![build_return_menu_row(
+                help_index_button(),
+                menu_home_button(),
+            )],
+        ]
+        .concat(),
+        "acl" => [
+            build_runtime_admin_help_copy_rows(&acl_help_descriptor()),
+            vec![build_return_menu_row(
+                help_index_button(),
+                menu_home_button(),
+            )],
+        ]
+        .concat(),
+        "billing" => [
+            build_runtime_admin_help_copy_rows(&billing_help_descriptor()),
+            vec![build_return_menu_row(
+                help_index_button(),
+                menu_home_button(),
+            )],
+        ]
+        .concat(),
         "downloads" => vec![
             build_copy_only_row(send::build_copy_button(
                 "复制 /downloads",
@@ -292,6 +328,21 @@ mod tests {
         assert_eq!(rows[3][0].text, "复制详情命令");
         assert_eq!(rows[4][0].text, "返回目录");
         assert_eq!(rows[4][1].text, "菜单");
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_help_detail_buttons_cover_runtime_entry_points() -> anyhow::Result<()> {
+        let rows = build_help_detail_buttons("config")?;
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"复制 /config show"));
+        assert!(labels.contains(&"复制 /config reset"));
+        assert!(labels.contains(&"复制并发"));
         Ok(())
     }
 }

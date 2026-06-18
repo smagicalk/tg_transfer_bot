@@ -24,6 +24,8 @@ use text::{
     build_step_prompt_text, build_user_account_menu_text,
 };
 
+pub(super) use input::AdminInputAction;
+
 /// 判断 callback payload 是否属于 `/menu`。
 pub(super) fn is_menu_callback_data(data: &str) -> bool {
     callback::is_menu_callback_data(data)
@@ -43,6 +45,58 @@ pub(super) fn build_menu_home_callback_data() -> String {
 /// 让用户能从命令详情页回到菜单里的下载筛选总览。
 pub(super) fn build_menu_downloads_callback_data() -> String {
     callback::menu_page_callback_data(MenuPage::Downloads)
+}
+
+/// 生成菜单配置页 callback 数据。
+pub(super) fn build_menu_config_callback_data() -> String {
+    callback::menu_page_callback_data(MenuPage::Config)
+}
+
+/// 生成菜单管理页 callback 数据。
+pub(super) fn build_menu_admin_hub_callback_data() -> String {
+    callback::menu_page_callback_data(MenuPage::AdminHub)
+}
+
+/// 生成菜单目标配置页 callback 数据。
+pub(super) fn build_menu_targets_callback_data() -> String {
+    callback::menu_page_callback_data(MenuPage::Targets)
+}
+
+/// 生成菜单访问控制页 callback 数据。
+pub(super) fn build_menu_acl_callback_data() -> String {
+    callback::menu_page_callback_data(MenuPage::Acl)
+}
+
+/// 生成菜单计费配置页 callback 数据。
+pub(super) fn build_menu_billing_callback_data() -> String {
+    callback::menu_page_callback_data(MenuPage::Billing)
+}
+
+/// 生成管理单步输入 callback 数据。
+pub(in crate::tgbot::transfer::command) fn build_menu_admin_input_button_data(
+    action: AdminInputAction,
+) -> String {
+    callback::admin_input_callback_data(action)
+}
+
+/// 启动管理配置单步输入。
+pub(super) async fn start_admin_input_callback(
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    action: AdminInputAction,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    input::admin_input_callback_query(
+        callback_query_id,
+        chat_id,
+        message_id,
+        sender_user_id,
+        action,
+        client_id,
+    )
+    .await
 }
 
 /// `/menu` 命令入口。
@@ -138,6 +192,17 @@ pub async fn menu_callback_query(
                 update.sender_user_id,
                 client_id,
                 kind,
+            )
+            .await
+        }
+        MenuCallbackRoute::StartAdminInput(action) => {
+            start_admin_input_callback(
+                update.id,
+                update.chat_id,
+                update.message_id,
+                update.sender_user_id,
+                action,
+                client_id,
             )
             .await
         }
@@ -266,6 +331,7 @@ pub async fn menu_callback_query(
             | MenuRequestAction::QuickTransferDefault
             | MenuRequestAction::NewLookup
             | MenuRequestAction::QuickLookupDefault
+            | MenuRequestAction::AdminInput(_)
             | MenuRequestAction::ContinueInput => unreachable!("routed earlier"),
         },
     }
@@ -289,6 +355,7 @@ impl MenuRequestAction {
                 | Self::TargetConfirm
                 | Self::TargetBack
                 | Self::JobIdInput(_)
+                | Self::AdminInput(_)
                 | Self::PointLedgerUserInput
                 | Self::ContinueInput
                 | Self::CancelInput
@@ -314,6 +381,7 @@ enum MenuCallbackDecision {
 enum MenuCallbackRoute {
     Page(MenuPage),
     StartInput(MenuInputKind),
+    StartAdminInput(AdminInputAction),
     ContinueInput,
     Forward(MenuRequestAction),
 }
@@ -354,6 +422,7 @@ fn route_menu_callback_action(action: MenuRequestAction) -> MenuCallbackRoute {
         MenuRequestAction::QuickLookupDefault => {
             MenuCallbackRoute::StartInput(MenuInputKind::LookupDefault)
         }
+        MenuRequestAction::AdminInput(action) => MenuCallbackRoute::StartAdminInput(action),
         MenuRequestAction::ContinueInput => MenuCallbackRoute::ContinueInput,
         other => MenuCallbackRoute::Forward(other),
     }
@@ -609,8 +678,8 @@ async fn send_menu_page(
 
 /// 构造一个菜单页的正文和按钮。
 ///
-/// 首页需要读取最近任务作为快捷入口；配置页直接复用 `/cfg` 的实时配置卡片，
-/// 这样 `/m -> 配置` 和 `/cfg` 展示的是同一套运行参数。
+/// 首页需要读取最近任务作为快捷入口；配置页直接复用 `/config` 的实时配置卡片，
+/// 这样菜单里的“运行配置”和直接发送 `/config` 展示的是同一套运行参数。
 async fn build_menu_page(
     page: MenuPage,
     actor: crate::config::RequestActor,
@@ -638,6 +707,12 @@ async fn build_menu_page(
     };
     let text = if page == MenuPage::Config && actor.is_admin() {
         config_cmd::format_current_transfer_config_text("当前可调配置")
+    } else if page == MenuPage::Targets && actor.is_admin() {
+        super::targets::format_targets_text("当前目标配置")
+    } else if page == MenuPage::Acl && actor.is_admin() {
+        super::acl::format_acl_text("当前访问控制")
+    } else if page == MenuPage::Billing && actor.is_admin() {
+        super::billing::format_billing_text("当前计费配置")
     } else if page == MenuPage::Config {
         build_permission_denied_menu_text(
             "运行配置",
@@ -645,6 +720,8 @@ async fn build_menu_page(
         )
     } else if page == MenuPage::AdminHub && !actor.is_admin() {
         build_permission_denied_menu_text("管理", "没有权限查看管理页，管理页仅管理员可查看。")
+    } else if matches!(page, MenuPage::Targets | MenuPage::Acl | MenuPage::Billing) {
+        build_permission_denied_menu_text(page.title(), "该页面仅管理员可查看。")
     } else if page == MenuPage::Home {
         build_menu_home_text(&MenuHomeSummary {
             active_jobs: health.as_ref().map_or(0, |health| health.active_jobs),
@@ -658,6 +735,9 @@ async fn build_menu_page(
                 .map_or(0, |health| health.file_cache_failed_rows),
             recent_jobs: recent_jobs.len(),
             pending_input: draft_summary.as_ref().map(|draft| draft.title),
+            announcement_text: crate::app_context::app_context()
+                .home_announcement
+                .announcement_text(),
             is_admin: actor.is_admin(),
         })
     } else {
@@ -680,6 +760,7 @@ mod tests {
     enum MenuCallbackPlan {
         AckAndRenderPage(MenuPage),
         AckAndStartInput(MenuInputKind),
+        AckAndStartAdminInput(AdminInputAction),
         AckAndContinueInput,
         Delegate(MenuRequestAction),
     }
@@ -689,6 +770,9 @@ mod tests {
         match route {
             MenuCallbackRoute::Page(page) => MenuCallbackPlan::AckAndRenderPage(page),
             MenuCallbackRoute::StartInput(kind) => MenuCallbackPlan::AckAndStartInput(kind),
+            MenuCallbackRoute::StartAdminInput(action) => {
+                MenuCallbackPlan::AckAndStartAdminInput(action)
+            }
             MenuCallbackRoute::ContinueInput => MenuCallbackPlan::AckAndContinueInput,
             MenuCallbackRoute::Forward(action) => MenuCallbackPlan::Delegate(action),
         }
@@ -739,7 +823,8 @@ mod tests {
 
         assert!(text.contains("没有权限"));
         assert!(!text.contains("job_concurrency"));
-        assert!(rows.iter().flatten().any(|button| button.text == "返回"));
+        assert!(rows.iter().flatten().any(|button| button.text == "首页"));
+        assert!(rows.iter().flatten().any(|button| button.text == "帮助"));
         Ok(())
     }
 
@@ -756,7 +841,8 @@ mod tests {
 
         assert!(text.contains("没有权限"));
         assert!(!text.contains("文件缓存"));
-        assert!(rows.iter().flatten().any(|button| button.text == "返回"));
+        assert!(rows.iter().flatten().any(|button| button.text == "首页"));
+        assert!(rows.iter().flatten().any(|button| button.text == "帮助"));
         Ok(())
     }
 

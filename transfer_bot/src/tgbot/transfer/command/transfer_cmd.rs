@@ -86,7 +86,7 @@ pub async fn transfer_link_command(
 
 /// bot 收到可见媒体后自动转存。
 ///
-/// 自动模式只使用配置默认目标，不解析用户输入；没有默认目标时调用方会得到错误并提示手动 `/t <target>`。
+/// 自动模式只使用配置默认目标，不解析用户输入；没有默认目标时调用方会得到错误并提示手动指定目标。
 pub async fn transfer_bot_message_auto_command(
     config: Arc<BotConfig>,
     request_message: tdlib_rs::types::Message,
@@ -141,7 +141,7 @@ async fn run_transfer_plan(
         source_kind: source.source_kind,
         preferred_source_client_role: source.preferred_source_client_role,
         allow_user_fallback: actor.is_admin(),
-        billing: config.billing.clone(),
+        billing: crate::tgbot::transfer::billing_runtime_config(),
         source_message_chat_id: source.source_message_chat_id,
         source_message_id: source.source_message_id,
         target_chat_id,
@@ -220,9 +220,9 @@ fn build_transfer_accepted_button_rows(
 
 /// 解析 `/transfer` 的源输入。
 ///
-/// 支持两种第一版输入：
-/// - `/t <link> [target]`：链接源，优先 bot 读取，失败再 user；
-/// - 回复 bot 可见媒体后发送 `/t [target]`：bot 消息源，直接读取被回复消息。
+/// 支持两种输入：
+/// - `/transfer <link> [target]`：链接源，优先 bot 读取，失败再 user；
+/// - 回复 bot 可见媒体后发送 `/transfer [target]`：bot 消息源，直接读取被回复消息。
 fn resolve_transfer_source(
     text: &[&str],
     request_message: &tdlib_rs::types::Message,
@@ -268,23 +268,24 @@ fn effective_link_source_role(config: &BotConfig) -> ClientRole {
 
 /// 解析目标 chat。
 ///
-/// 回复消息模式下 `/t archive` 的第 2 个参数是 target；链接模式下 `/t <link> archive`
-/// 的第 3 个参数才是 target，因此这里需要按 source_kind 重新组装给公共解析器。
+/// 回复消息模式下 `/transfer archive` 的第 2 个参数是 target；
+/// 链接模式下 `/transfer <link> archive` 的第 3 个参数才是 target，
+/// 因此这里需要按 source_kind 重新组装给公共解析器。
 fn resolve_transfer_target_chat_id(
     text: &[&str],
     source: &ResolvedTransferSource,
-    config: &BotConfig,
+    _config: &BotConfig,
     request_chat_id: i64,
 ) -> anyhow::Result<i64> {
     match source.source_kind {
-        SourceKind::Link => resolve_target_chat_id(text, config, request_chat_id),
+        SourceKind::Link => resolve_target_chat_id(text, request_chat_id),
         SourceKind::BotMessage => {
             let target_args = if text.len() >= 2 {
                 vec![text[0], "bot-message-source", text[1]]
             } else {
                 vec![text[0], "bot-message-source"]
             };
-            resolve_target_chat_id(&target_args, config, request_chat_id)
+            resolve_target_chat_id(&target_args, request_chat_id)
         }
     }
 }
@@ -355,8 +356,19 @@ mod tests {
         format_transfer_accepted_text, resolve_transfer_target_chat_id,
     };
     use crate::ClientRole;
+    use crate::app_context::app_context;
     use crate::config::{ActorRole, BillingConfig, BotConfig, RequestActor};
     use crate::tgbot::transfer::types::{SourceKind, TransferPlan};
+
+    fn install_target_runtime(
+        targets: crate::config::TargetsConfig,
+        access_control: crate::config::AccessControlConfig,
+    ) {
+        let app = app_context();
+        app.targets_runtime.update_runtime_config(targets);
+        app.access_control_runtime
+            .update_runtime_config(access_control);
+    }
 
     // 首次回执应直接使用卡片标记，后续编辑不会从 Markdown 样式跳到 card 样式。
     #[test]
@@ -413,8 +425,15 @@ mod tests {
     // 回复媒体模式下第二个参数应当被当成 target，而不是 source link。
     #[test]
     fn test_resolve_target_for_bot_message_source() {
-        let mut config = BotConfig::default();
-        config.target_aliases.insert("archive".to_owned(), -100);
+        let config = BotConfig::default();
+        install_target_runtime(
+            crate::config::TargetsConfig {
+                default_chat_id: 0,
+                by_request_chat_id: Default::default(),
+                aliases: std::collections::HashMap::from([("archive".to_owned(), -100)]),
+            },
+            crate::config::AccessControlConfig::default(),
+        );
         let source = ResolvedTransferSource {
             source_link: bot_message_source_link(10, 20),
             source_kind: SourceKind::BotMessage,

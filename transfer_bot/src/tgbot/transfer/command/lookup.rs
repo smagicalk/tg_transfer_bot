@@ -32,7 +32,7 @@ pub async fn lookup_command(
     }
 
     let source_link = text[1].to_string();
-    let target_chat_id = resolve_target_chat_id(&text, &config, actor.request_chat_id)?;
+    let target_chat_id = resolve_target_chat_id(&text, actor.request_chat_id)?;
     // 源链接可能来自私有聊天，日志只记录请求 chat 与目标 chat。
     tracing::info!(
         request_chat_id = actor.request_chat_id,

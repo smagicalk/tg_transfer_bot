@@ -10,7 +10,7 @@ use super::input::MenuInputKind;
 /// 菜单首页摘要。
 ///
 /// 首页只展示影响操作决策的数字，详细列表仍交给 `/downloads`、`/health`、`/cache`。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct MenuHomeSummary {
     /// 当前查看者是否 admin；普通用户首页不展示全局管理入口。
     pub(super) is_admin: bool,
@@ -28,6 +28,8 @@ pub(super) struct MenuHomeSummary {
     pub(super) recent_jobs: usize,
     /// 当前未完成输入标题。
     pub(super) pending_input: Option<&'static str>,
+    /// 首页公告文本；空表示不展示公告区块。
+    pub(super) announcement_text: Option<String>,
 }
 
 /// 构造菜单页文本。
@@ -42,6 +44,9 @@ pub(super) fn build_menu_text(page: MenuPage) -> String {
         MenuPage::Jobs => jobs_text(),
         MenuPage::Lookup => lookup_text(),
         MenuPage::Config => config_text(),
+        MenuPage::Targets => targets_text(),
+        MenuPage::Acl => acl_text(),
+        MenuPage::Billing => billing_text(),
         MenuPage::Help => help_text(),
     }
 }
@@ -86,12 +91,71 @@ fn admin_hub_text() -> String {
         build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("操作"),
-        "运行配置、健康、缓存和用户流水统一放在这里。".to_owned(),
+        "运行配置、目标配置、访问控制、计费、健康、缓存和用户流水统一放在这里。".to_owned(),
         card::section("命令"),
         card::command_line("运行配置", "/config show"),
+        card::command_line("目标配置", "/targets show"),
+        card::command_line("访问控制", "/acl show"),
+        card::command_line("计费配置", "/billing show"),
         card::command_line("运行健康", "/health"),
         card::command_line("文件缓存", "/cache"),
         card::command_line("用户流水", "/points history <user_id>"),
+    ]
+    .join("\n")
+}
+
+/// 目标配置页。
+fn targets_text() -> String {
+    [
+        "目标配置".to_owned(),
+        build_menu_state_line("ready"),
+        card::DIVIDER.to_owned(),
+        card::section("操作"),
+        "管理默认目标、请求 chat 路由和目标别名。".to_owned(),
+        card::section("命令"),
+        card::command_line("查看", "/targets show"),
+        card::command_line("默认目标", "/targets set-default <target_chat_id>"),
+        card::command_line(
+            "请求路由",
+            "/targets set-route <request_chat_id> <target_chat_id>",
+        ),
+        card::command_line("目标别名", "/targets set-alias <alias> <target_chat_id>"),
+    ]
+    .join("\n")
+}
+
+/// 访问控制页。
+fn acl_text() -> String {
+    [
+        "访问控制".to_owned(),
+        build_menu_state_line("ready"),
+        card::DIVIDER.to_owned(),
+        card::section("操作"),
+        "管理数据库里的管理员、普通用户入口、黑名单和聊天白名单。".to_owned(),
+        card::section("命令"),
+        card::command_line("查看", "/acl show"),
+        card::command_line("开放私聊", "/acl set allow_all_private_users true"),
+        card::command_line("添加管理员", "/acl add-admin <user_id>"),
+        card::command_line("添加用户", "/acl add-allow-user <user_id>"),
+        card::command_line("添加目标", "/acl add-allow-target <chat_id>"),
+    ]
+    .join("\n")
+}
+
+/// 计费配置页。
+fn billing_text() -> String {
+    [
+        "计费配置".to_owned(),
+        build_menu_state_line("ready"),
+        card::DIVIDER.to_owned(),
+        card::section("操作"),
+        "管理积分扣费、新用户初始积分和首页公告。".to_owned(),
+        card::section("命令"),
+        card::command_line("查看", "/billing show"),
+        card::command_line("计费开关", "/billing set enabled true"),
+        card::command_line("基础扣分", "/billing set base_cost_points 1"),
+        card::command_line("单项扣分", "/billing set item_cost_points 1"),
+        card::command_line("首页公告", "/billing set announcement_text <text>"),
     ]
     .join("\n")
 }
@@ -121,6 +185,12 @@ pub(super) fn build_menu_home_text(summary: &MenuHomeSummary) -> String {
             "删失败",
             summary.failed_cache_files,
         ),
+        if summary.announcement_text.is_some() {
+            card::section("公告")
+        } else {
+            String::new()
+        },
+        summary.announcement_text.clone().unwrap_or_default(),
         card::section("操作"),
         if let Some(pending_input) = summary.pending_input {
             format!(
@@ -131,11 +201,11 @@ pub(super) fn build_menu_home_text(summary: &MenuHomeSummary) -> String {
             "当前没有未完成输入。".to_owned()
         },
         if summary.is_admin {
-            "首页已经放了常用直达动作：开始转存、快速转存、快速查询和管理入口。".to_owned()
+            "首页已经放了常用直达动作：开始转存、快速转存和管理入口。".to_owned()
         } else {
-            "首页已经放了常用直达动作：开始转存、快速转存、快速查询和账户入口。".to_owned()
+            "首页已经放了常用直达动作：开始转存、快速转存和账户入口。".to_owned()
         },
-        "任务状态、最近任务和任务控制已下沉到“任务”页，首页只保留高频入口。".to_owned(),
+        "任务状态、最近任务、任务控制和查询结果已下沉到“任务”页，首页只保留高频入口。".to_owned(),
         card::section("命令"),
         card::command_line("转存", "/transfer"),
         card::command_line("下载列表", "/downloads run"),
@@ -430,6 +500,7 @@ fn config_text() -> String {
         "常用项可点按钮小步调整；其他字段复制命令后手动修改。".to_owned(),
         card::section("命令"),
         card::command_line("查看配置", "/config show"),
+        card::command_line("重置默认", "/config reset"),
         card::command_line("改并发", "/config set job_concurrency 4"),
         card::command_line("改分页", "/config set downloads_default_page_size 10"),
         card::command_line("改菜单超时", "/config set menu_input_timeout_seconds 900"),
@@ -467,7 +538,7 @@ mod tests {
 
         assert!(text.contains("转存菜单"));
         assert!(text.contains("开始转存"));
-        assert!(text.contains("快速查询"));
+        assert!(text.contains("查询结果已下沉到“任务”页"));
         assert!(text.contains("活跃任务"));
     }
 
@@ -483,6 +554,26 @@ mod tests {
         assert!(account.contains("/balance"));
         assert!(admin.contains("运行配置"));
         assert!(admin.contains("/config show"));
+        assert!(admin.contains("/targets show"));
+        assert!(admin.contains("/acl show"));
+        assert!(admin.contains("/billing show"));
+    }
+
+    #[test]
+    fn test_build_runtime_admin_page_texts() {
+        let targets = build_menu_text(MenuPage::Targets);
+        let acl = build_menu_text(MenuPage::Acl);
+        let billing = build_menu_text(MenuPage::Billing);
+
+        assert!(targets.contains("目标配置"));
+        assert!(targets.contains("/targets set-default <target_chat_id>"));
+        assert!(targets.contains("/targets set-route <request_chat_id> <target_chat_id>"));
+        assert!(acl.contains("访问控制"));
+        assert!(acl.contains("/acl set allow_all_private_users true"));
+        assert!(acl.contains("/acl add-admin <user_id>"));
+        assert!(billing.contains("计费配置"));
+        assert!(billing.contains("/billing set enabled true"));
+        assert!(billing.contains("/billing set announcement_text <text>"));
     }
 
     #[test]
@@ -512,12 +603,25 @@ mod tests {
             failed_cache_files: 4,
             recent_jobs: 5,
             pending_input: Some("快速转存"),
+            announcement_text: Some("今晚 22:00 维护，期间转存可能延迟。".to_owned()),
         });
 
         assert!(text.contains("活跃任务：‹2›"));
         assert!(text.contains("失败任务：‹1›"));
         assert!(text.contains("待删缓存：‹3›"));
+        assert!(text.contains("■ 公告"));
+        assert!(text.contains("今晚 22:00 维护"));
         assert!(text.contains("当前有未完成输入：‹快速转存›"));
+        assert!(text.contains("查询结果已下沉到“任务”页"));
+    }
+
+    #[test]
+    fn test_build_tasks_hub_text() {
+        let text = build_menu_text(MenuPage::TasksHub);
+
+        assert!(text.contains("最近任务"));
+        assert!(text.contains("/downloads run"));
+        assert!(text.contains("/lookup <link> <target_chat_id>"));
     }
 
     // reply_markup 不可用时不能继续提示按钮；正文必须包含可复制命令作为降级入口。

@@ -44,40 +44,8 @@
     "upload_client": "bot"
   },
   "access_control": {
-    "admin_user_ids": [
+    "bootstrap_admin_user_ids": [
       123456789
-    ],
-    "allowed_user_ids": [
-      987654321
-    ],
-    "allow_all_private_users": false,
-    "banned_user_ids": [],
-    "allowed_request_chat_ids": [],
-    "allowed_target_chat_ids": [
-      -1001234567890
     ]
-  },
-  "targets": {
-    "default_chat_id": -1001234567890,
-    "by_request_chat_id": {
-      "123456789": -1001234567890
-    },
-    "aliases": {
-      "archive": -1001234567890
-    }
-  },
-  "billing": {
-    "enabled": true,
-    "base_cost_points": 1,
-    "item_cost_points": 1,
-    "initial_user_points": 0
-  },
-  "transfer_config": {
-    "job_concurrency": 2,
-    "file_delete_delay_minutes": 2,
-    "file_gc_interval_seconds": 60,
-    "progress_edit_interval_seconds": 2,
-    "downloads_default_page_size": 8,
-    "menu_input_timeout_seconds": 600
   }
 }

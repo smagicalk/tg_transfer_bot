@@ -141,6 +141,8 @@ pub(super) fn build_target_choice_buttons(
     sender_user_id: i64,
     kind: MenuInputKind,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let _ = config;
+    let targets_runtime = crate::tgbot::transfer::targets_runtime_config();
     let mut rows = Vec::new();
     let mut seen_targets = HashSet::new();
 
@@ -165,8 +167,8 @@ pub(super) fn build_target_choice_buttons(
         )]);
     }
 
-    let mut alias_buttons = config
-        .target_aliases
+    let mut alias_buttons = targets_runtime
+        .aliases
         .iter()
         .filter_map(|(alias, chat_id)| {
             if resolve_target_by_id(*chat_id, config, request_chat_id).is_err() {
@@ -237,33 +239,24 @@ pub(super) fn resolve_target_input(
     if input.eq_ignore_ascii_case("default") {
         return resolve_default_target(config, request_chat_id);
     }
-    resolve_target_chat_id(
-        &["/menu-input", "placeholder", input],
-        config,
-        request_chat_id,
-    )
-    .ok()
+    resolve_target_chat_id(&["/menu-input", "placeholder", input], request_chat_id).ok()
 }
 
 /// 用数字 chat_id 走同一套目标白名单校验。
 pub(super) fn resolve_target_by_id(
     target_chat_id: i64,
-    config: &BotConfig,
+    _config: &BotConfig,
     request_chat_id: i64,
 ) -> anyhow::Result<i64> {
     let target = target_chat_id.to_string();
-    resolve_target_chat_id(
-        &["/menu-input", "placeholder", &target],
-        config,
-        request_chat_id,
-    )
+    resolve_target_chat_id(&["/menu-input", "placeholder", &target], request_chat_id)
 }
 
 /// 解析菜单“快速转存/查询”使用的默认目标。
 ///
 /// 这里提前解析是为了在缺少默认目标时继续引导输入目标，而不是让复用的命令入口直接报错。
-pub(super) fn resolve_default_target(config: &BotConfig, request_chat_id: i64) -> Option<i64> {
-    resolve_target_chat_id(&["/menu-input", "placeholder"], config, request_chat_id).ok()
+pub(super) fn resolve_default_target(_config: &BotConfig, request_chat_id: i64) -> Option<i64> {
+    resolve_target_chat_id(&["/menu-input", "placeholder"], request_chat_id).ok()
 }
 
 /// 目标选择卡片正文。
@@ -338,26 +331,64 @@ fn default_target_button_label(kind: MenuInputKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_context::app_context;
+
+    fn install_target_runtime(
+        targets: crate::config::TargetsConfig,
+        access_control: crate::config::AccessControlConfig,
+    ) {
+        let app = app_context();
+        app.targets_runtime.update_runtime_config(targets);
+        app.access_control_runtime
+            .update_runtime_config(access_control);
+    }
 
     // 快速转存应优先使用当前请求 chat 的默认目标，再使用全局兜底目标。
     #[test]
     fn test_resolve_default_target() {
-        let mut config = BotConfig::default();
+        let config = BotConfig::default();
+        install_target_runtime(
+            crate::config::TargetsConfig::default(),
+            crate::config::AccessControlConfig::default(),
+        );
         assert_eq!(resolve_default_target(&config, 1), None);
 
-        config.target_map.insert(0, -100);
+        install_target_runtime(
+            crate::config::TargetsConfig {
+                default_chat_id: -100,
+                by_request_chat_id: Default::default(),
+                aliases: Default::default(),
+            },
+            crate::config::AccessControlConfig::default(),
+        );
         assert_eq!(resolve_default_target(&config, 1), Some(-100));
 
-        config.target_map.insert(1, -200);
+        install_target_runtime(
+            crate::config::TargetsConfig {
+                default_chat_id: -100,
+                by_request_chat_id: std::collections::HashMap::from([(1, -200)]),
+                aliases: Default::default(),
+            },
+            crate::config::AccessControlConfig::default(),
+        );
         assert_eq!(resolve_default_target(&config, 1), Some(-200));
     }
 
     // 快速转存的默认目标也必须遵守 allowed_target_chat_ids。
     #[test]
     fn test_resolve_default_target_respects_allowed_targets() {
-        let mut config = BotConfig::default();
-        config.target_map.insert(0, -200);
-        config.allowed_target_chat_ids = vec![-100];
+        let config = BotConfig::default();
+        install_target_runtime(
+            crate::config::TargetsConfig {
+                default_chat_id: -200,
+                by_request_chat_id: Default::default(),
+                aliases: Default::default(),
+            },
+            crate::config::AccessControlConfig {
+                allowed_target_chat_ids: vec![-100],
+                ..Default::default()
+            },
+        );
 
         assert_eq!(resolve_default_target(&config, 1), None);
     }
@@ -365,10 +396,18 @@ mod tests {
     // 目标选择页应优先提供快速目标、常用目标、Telegram 原生选群和手动输入。
     #[test]
     fn test_build_target_choice_buttons_layout() {
-        let mut config = BotConfig::default();
-        config.target_map.insert(0, -100);
-        config.allowed_target_chat_ids = vec![-100, -200];
-        config.target_aliases.insert("archive".to_owned(), -200);
+        let config = BotConfig::default();
+        install_target_runtime(
+            crate::config::TargetsConfig {
+                default_chat_id: -100,
+                by_request_chat_id: Default::default(),
+                aliases: std::collections::HashMap::from([("archive".to_owned(), -200)]),
+            },
+            crate::config::AccessControlConfig {
+                allowed_target_chat_ids: vec![-100, -200],
+                ..Default::default()
+            },
+        );
 
         let rows = build_target_choice_buttons(&config, 1, 2, MenuInputKind::Transfer);
 
@@ -382,9 +421,18 @@ mod tests {
     // 查询流程里的默认目标按钮应显示“快速查询”，避免和转存动作混淆。
     #[test]
     fn test_build_target_choice_buttons_lookup_label() {
-        let mut config = BotConfig::default();
-        config.target_map.insert(0, -100);
-        config.allowed_target_chat_ids = vec![-100];
+        let config = BotConfig::default();
+        install_target_runtime(
+            crate::config::TargetsConfig {
+                default_chat_id: -100,
+                by_request_chat_id: Default::default(),
+                aliases: Default::default(),
+            },
+            crate::config::AccessControlConfig {
+                allowed_target_chat_ids: vec![-100],
+                ..Default::default()
+            },
+        );
 
         let rows = build_target_choice_buttons(&config, 1, 2, MenuInputKind::Lookup);
 
@@ -409,9 +457,18 @@ mod tests {
     #[test]
     fn test_build_target_choice_buttons_prefers_last_target() {
         super::super::state::remember_last_target(101, 202, -100);
-        let mut config = BotConfig::default();
-        config.target_map.insert(0, -100);
-        config.allowed_target_chat_ids = vec![-100];
+        let config = BotConfig::default();
+        install_target_runtime(
+            crate::config::TargetsConfig {
+                default_chat_id: -100,
+                by_request_chat_id: Default::default(),
+                aliases: Default::default(),
+            },
+            crate::config::AccessControlConfig {
+                allowed_target_chat_ids: vec![-100],
+                ..Default::default()
+            },
+        );
 
         let rows = build_target_choice_buttons(&config, 101, 202, MenuInputKind::Transfer);
 

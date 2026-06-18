@@ -3,10 +3,17 @@
 
 use super::super::super::common::{
     CommandStyle, balance_command, balance_history_command, cache_command, command_root,
-    config_set_command, config_show_command, downloads_command,
-    health_command as health_command_text, help_command as help_command_text, job_command,
-    lookup_command, menu_command, points_change_command, points_history_command,
+    downloads_command, health_command as health_command_text, help_command as help_command_text,
+    job_command, lookup_command, menu_command, points_change_command, points_history_command,
     points_show_command, transfer_command,
+};
+use super::super::super::common::{
+    build_runtime_admin_examples_block, build_runtime_admin_interaction_block,
+    build_runtime_admin_usage_block,
+};
+use super::super::super::config_cmd::config_help_descriptor;
+use super::super::super::{
+    acl::acl_help_descriptor, billing::billing_help_descriptor, targets::targets_help_descriptor,
 };
 use super::super::topic::normalize_help_topic;
 use crate::tgbot::transfer::card;
@@ -24,6 +31,9 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_detail_text(
         "health" => build_health_detail(),
         "cache" => build_cache_detail(),
         "config" => build_config_detail(),
+        "targets" => build_targets_detail(),
+        "acl" => build_acl_detail(),
+        "billing" => build_billing_detail(),
         "downloads" => build_downloads_detail(),
         "job" => build_job_detail(),
         "menu" => build_menu_detail(),
@@ -154,24 +164,18 @@ fn build_lookup_detail() -> String {
 
 /// 构造 `/config` 的说明。
 fn build_config_detail() -> String {
-    vec![
+    let descriptor = config_help_descriptor();
+    let mut lines = vec![
         "config".to_owned(),
         "用途：查看或修改可动态生效的运行配置。".to_owned(),
+        "说明：配置页同时支持两种方式：".to_owned(),
+        "1. 直接点按钮做小步增减。".to_owned(),
+        "2. 点“设并发 / 设删除 / 设GC / 设进度 / 设分页 / 设超时”进入输入流，再回复一个值。"
+            .to_owned(),
         card::DIVIDER.to_owned(),
-        "命令：".to_owned(),
-        format!(
-            "{} [show|set <key> <value>]",
-            command_root("config", CommandStyle::Long)
-        ),
-        String::new(),
-        config_show_command(CommandStyle::Long),
-        "显示当前可调配置。".to_owned(),
-        String::new(),
-        format!(
-            "{} set <key> <value>",
-            command_root("config", CommandStyle::Long)
-        ),
-        "修改并持久化某个可调配置，修改后立即生效。".to_owned(),
+    ];
+    lines.extend(build_runtime_admin_usage_block(&descriptor));
+    lines.extend([
         String::new(),
         "可调字段：".to_owned(),
         card::code("job_concurrency"),
@@ -180,16 +184,62 @@ fn build_config_detail() -> String {
         card::code("progress_edit_interval_seconds"),
         card::code("downloads_default_page_size"),
         card::code("menu_input_timeout_seconds"),
-        String::new(),
-        "示例：".to_owned(),
-        config_show_command(CommandStyle::Long),
-        config_set_command("job_concurrency", 4, CommandStyle::Long),
-        config_set_command("file_delete_delay_minutes", 3, CommandStyle::Long),
-        config_set_command("file_gc_interval_seconds", 30, CommandStyle::Long),
-        config_set_command("progress_edit_interval_seconds", 3, CommandStyle::Long),
-        config_set_command("downloads_default_page_size", 10, CommandStyle::Long),
-        config_set_command("menu_input_timeout_seconds", 900, CommandStyle::Long),
+    ]);
+    lines.extend(build_runtime_admin_interaction_block(&descriptor));
+    lines.extend(build_runtime_admin_examples_block(&descriptor));
+    lines.join("\n")
+}
+
+/// 构造 `/targets` 的说明。
+fn build_targets_detail() -> String {
+    let descriptor = targets_help_descriptor();
+    vec![
+        "targets".to_owned(),
+        "用途：管理转存默认目标、按请求 chat 路由和目标别名。".to_owned(),
+        "说明：targets 页支持直接 callback 操作，也支持按钮进入输入流。".to_owned(),
+        card::DIVIDER.to_owned(),
     ]
+    .into_iter()
+    .chain(build_runtime_admin_usage_block(&descriptor))
+    .chain(build_runtime_admin_interaction_block(&descriptor))
+    .chain(build_runtime_admin_examples_block(&descriptor))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+/// 构造 `/acl` 的说明。
+fn build_acl_detail() -> String {
+    let descriptor = acl_help_descriptor();
+    vec![
+        "acl".to_owned(),
+        "用途：管理访问控制规则。".to_owned(),
+        "说明：bootstrap_admin_user_ids 仍由 config.json 提供，这里只管理数据库运行态规则。"
+            .to_owned(),
+        "说明：ACL 页支持直接 callback 开关，也支持按钮进入输入流。".to_owned(),
+        card::DIVIDER.to_owned(),
+    ]
+    .into_iter()
+    .chain(build_runtime_admin_usage_block(&descriptor))
+    .chain(build_runtime_admin_interaction_block(&descriptor))
+    .chain(build_runtime_admin_examples_block(&descriptor))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+/// 构造 `/billing` 的说明。
+fn build_billing_detail() -> String {
+    let descriptor = billing_help_descriptor();
+    vec![
+        "billing".to_owned(),
+        "用途：管理积分计费和首页公告。".to_owned(),
+        "说明：billing 页支持按钮直接调整数值，也支持按钮进入数值/公告输入流。".to_owned(),
+        card::DIVIDER.to_owned(),
+    ]
+    .into_iter()
+    .chain(build_runtime_admin_usage_block(&descriptor))
+    .chain(build_runtime_admin_interaction_block(&descriptor))
+    .chain(build_runtime_admin_examples_block(&descriptor))
+    .collect::<Vec<_>>()
     .join("\n")
 }
 
@@ -275,11 +325,25 @@ fn build_menu_detail() -> String {
         "查询：按钮引导输入源链接和目标；需要手输时只展示长命令模板。".to_owned(),
         "下载：覆盖全部筛选参数，并可进入分页列表。".to_owned(),
         "任务：从列表进入详情后可暂停、恢复、停止、刷新。".to_owned(),
-        "配置：覆盖全部可动态修改字段，常用值也保留长命令模板。".to_owned(),
+        "配置：config / targets / acl / billing 都支持按钮 + 输入流混合操作。".to_owned(),
         "帮助：覆盖所有 help topic，可原地切换详情页。".to_owned(),
         String::new(),
+        "管理输入：".to_owned(),
+        "进入输入流后，会发送 ForceReply；回复参数即可，发送其他命令时命令优先。".to_owned(),
         "取消输入：".to_owned(),
         card::code("/cancel"),
     ]
     .join("\n")
+}
+
+#[cfg(test)]
+mod config_detail_tests {
+    use super::build_config_detail;
+
+    #[test]
+    fn test_build_config_detail_mentions_reset() {
+        let text = build_config_detail();
+        assert!(text.contains("/config reset"));
+        assert!(text.contains("重置为启动配置中的默认值"));
+    }
 }

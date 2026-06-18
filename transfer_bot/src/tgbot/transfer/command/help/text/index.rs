@@ -58,7 +58,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text(is_admin:
             "交互菜单".to_owned(),
             build_page_command_section(),
             menu_command(CommandStyle::Long),
-            "说明：打开转存菜单；bot token 模式显示按钮，手机号/OCR 模式显示文本命令。".to_owned(),
+            "说明：打开转存菜单；bot token 模式显示按钮，四个运行态管理页也支持输入流。".to_owned(),
             String::new(),
             "运行配置".to_owned(),
             build_page_command_section(),
@@ -66,7 +66,31 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text(is_admin:
                 "{} [show|set <key> <value>]",
                 command_root("config", CommandStyle::Long)
             ),
-            "说明：查看或修改可动态生效的运行配置。".to_owned(),
+            "说明：查看或修改可动态生效的运行配置；支持按钮小步调整和输入式设置。".to_owned(),
+            String::new(),
+            "目标配置".to_owned(),
+            build_page_command_section(),
+            format!(
+                "{} [show|set-default|set-route|del-route|set-alias|del-alias]",
+                command_root("targets", CommandStyle::Long)
+            ),
+            "说明：管理默认目标、按请求 chat 路由和目标别名；支持输入式设置。".to_owned(),
+            String::new(),
+            "访问控制".to_owned(),
+            build_page_command_section(),
+            format!(
+                "{} [show|add-admin|add-allow-user|add-ban|set ...]",
+                command_root("acl", CommandStyle::Long)
+            ),
+            "说明：管理管理员、允许用户、封禁用户和目标白名单；支持输入式设置。".to_owned(),
+            String::new(),
+            "计费配置".to_owned(),
+            build_page_command_section(),
+            format!(
+                "{} [show|set|clear announcement_text]",
+                command_root("billing", CommandStyle::Long)
+            ),
+            "说明：管理积分计费参数和首页公告；支持按钮调整和公告输入流。".to_owned(),
             String::new(),
         ]);
     }
@@ -95,7 +119,12 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text(is_admin:
     ]);
 
     if is_admin {
-        lines.extend([help_command_text(Some("config"), CommandStyle::Long)]);
+        lines.extend([
+            help_command_text(Some("config"), CommandStyle::Long),
+            help_command_text(Some("targets"), CommandStyle::Long),
+            help_command_text(Some("acl"), CommandStyle::Long),
+            help_command_text(Some("billing"), CommandStyle::Long),
+        ]);
     }
 
     lines.extend([

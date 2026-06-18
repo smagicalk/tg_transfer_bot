@@ -15,19 +15,36 @@ mod types;
 mod workflow;
 
 pub use command::{
-    balance_command, cache_command, cancel_menu_input, config_command, discard_menu_input,
-    discard_menu_input_for_command, downloads_command, handle_menu_shared_chat_input,
-    handle_menu_text_input, health_command, help_command, job_command, lookup_command,
-    menu_command, points_command, transfer_bot_message_auto_command, transfer_callback_query,
-    transfer_command,
+    acl_command, balance_command, billing_command, cache_command, cancel_menu_input,
+    config_command, discard_menu_input, discard_menu_input_for_command, downloads_command,
+    handle_menu_shared_chat_input, handle_menu_text_input, health_command, help_command,
+    job_command, lookup_command, menu_command, points_command, targets_command,
+    transfer_bot_message_auto_command, transfer_callback_query, transfer_command,
 };
 pub(in crate::tgbot) use command::{
     build_balance_button_data, build_help_button_data, build_menu_home_button_data_for_outer,
 };
 pub(in crate::tgbot) use outcome::{TransferErrorKind, classify_transfer_error_text};
-pub(in crate::tgbot::transfer) use runtime::runtime_config;
-pub use runtime::{init_runtime_config, update_runtime_config};
+pub use runtime::{
+    RuntimeInitBundle, init_runtime_config, update_access_control_runtime_config,
+    update_billing_runtime_config, update_runtime_config, update_targets_runtime_config,
+};
+pub(in crate::tgbot) use runtime::{access_control_runtime_config, billing_runtime_config};
+pub(in crate::tgbot::transfer) use runtime::{
+    access_control_runtime_default_config, billing_runtime_default_config, runtime_config,
+    runtime_default_config, targets_runtime_config, targets_runtime_default_config,
+};
 pub(in crate::tgbot::transfer) use spawn::{spawn_recovery_job, spawn_transfer_job};
+pub(crate) use store::{
+    ensure_access_control_runtime_config_on, ensure_billing_runtime_config_on,
+    ensure_targets_runtime_config_on, ensure_transfer_runtime_config_on,
+};
+#[cfg(test)]
+pub(crate) use store::{load_transfer_runtime_config, load_transfer_runtime_config_on};
+pub(crate) use store::{
+    save_access_control_runtime_config, save_billing_runtime_config, save_targets_runtime_config,
+    save_transfer_runtime_config,
+};
 pub(in crate::tgbot::transfer) use workflow::{
     refresh_stored_result_link, refresh_stored_result_messages,
 };
@@ -78,6 +95,12 @@ pub fn on_clients_ready(
         upload_client_id = client_ids.upload,
         "starting transfer background services"
     );
+    tokio::spawn(async move {
+        if let Err(err) = workflow::maybe_send_startup_setup_guide(client_ids.interaction).await {
+            tracing::error!("send startup setup guide failed: {:#}", err);
+        }
+    });
+
     let recovery_context = app_context.clone();
     tokio::spawn(async move {
         if let Err(err) = workflow::recover_unfinished_jobs(recovery_context, client_ids).await {

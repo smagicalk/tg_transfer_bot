@@ -1,9 +1,8 @@
 // 命令层公共工具：
 // - 目标 chat 解析
-// - 短命令 / 长命令构造
+// - 统一构造命令字符串
 // - 各命令共用的基础依赖
 
-use crate::config::BotConfig;
 use crate::tgbot::transfer::card;
 
 /// 命令输出风格：
@@ -20,34 +19,32 @@ pub(crate) enum CommandStyle {
 /// 2. 否则从 `targets.by_request_chat_id[request_chat_id]` 获取
 /// 3. 再否则尝试 `targets.default_chat_id` 兜底
 /// 4. 如果配置了 `allowed_target_chat_ids`，最终目标必须命中白名单
-pub(crate) fn resolve_target_chat_id(
-    text: &[&str],
-    config: &BotConfig,
-    request_chat_id: i64,
-) -> anyhow::Result<i64> {
+pub(crate) fn resolve_target_chat_id(text: &[&str], request_chat_id: i64) -> anyhow::Result<i64> {
+    let targets_config = crate::tgbot::transfer::targets_runtime_config();
+    let access_control = crate::tgbot::transfer::access_control_runtime_config();
     let target_chat_id = if text.len() >= 3 {
-        parse_target_arg(text[2], config)?
-    } else if let Some(chat_id) = config.target_map.get(&request_chat_id) {
+        parse_target_arg(text[2], &targets_config)?
+    } else if let Some(chat_id) = targets_config.by_request_chat_id.get(&request_chat_id) {
         *chat_id
-    } else if let Some(chat_id) = config.target_map.get(&0) {
-        *chat_id
+    } else if targets_config.default_chat_id != 0 {
+        targets_config.default_chat_id
     } else {
         anyhow::bail!("not found transfer target")
     };
 
-    ensure_target_allowed(target_chat_id, config)?;
+    ensure_target_allowed(target_chat_id, &access_control)?;
     Ok(target_chat_id)
 }
 
 /// 解析命令里的目标参数。
 ///
 /// 目标可以是数字 chat_id，也可以是 `targets.aliases` 中配置的短名称。
-fn parse_target_arg(arg: &str, config: &BotConfig) -> anyhow::Result<i64> {
+fn parse_target_arg(arg: &str, config: &crate::config::TargetsConfig) -> anyhow::Result<i64> {
     if let Ok(chat_id) = arg.parse::<i64>() {
         return Ok(chat_id);
     }
     config
-        .target_aliases
+        .aliases
         .get(arg)
         .copied()
         .ok_or_else(|| anyhow::anyhow!("unknown target chat alias: {}", arg))
@@ -56,16 +53,21 @@ fn parse_target_arg(arg: &str, config: &BotConfig) -> anyhow::Result<i64> {
 /// 校验目标 chat 是否允许。
 ///
 /// 空白名单表示不限制；一旦配置了白名单，默认目标、别名和显式数字都必须在列表内。
-fn ensure_target_allowed(target_chat_id: i64, config: &BotConfig) -> anyhow::Result<()> {
-    if config.allowed_target_chat_ids.is_empty()
-        || config.allowed_target_chat_ids.contains(&target_chat_id)
+fn ensure_target_allowed(
+    target_chat_id: i64,
+    access_control: &crate::config::AccessControlConfig,
+) -> anyhow::Result<()> {
+    if access_control.allowed_target_chat_ids.is_empty()
+        || access_control
+            .allowed_target_chat_ids
+            .contains(&target_chat_id)
     {
         return Ok(());
     }
     anyhow::bail!("target chat is not allowed: {}", target_chat_id)
 }
 
-/// 构造 `/transfer` 或 `/t` 命令。
+/// 构造 `/transfer` 命令。
 pub(crate) fn transfer_command(
     source_link: &str,
     target_chat_id: i64,
@@ -79,7 +81,7 @@ pub(crate) fn transfer_command(
     )
 }
 
-/// 构造 `/lookup` 或 `/lk` 命令。
+/// 构造 `/lookup` 命令。
 pub(crate) fn lookup_command(
     source_link: &str,
     target_chat_id: i64,
@@ -93,7 +95,7 @@ pub(crate) fn lookup_command(
     )
 }
 
-/// 构造 `/downloads` 或 `/d` 命令。
+/// 构造 `/downloads` 命令。
 pub(crate) fn downloads_command(
     filter: Option<&str>,
     limit: Option<u64>,
@@ -113,7 +115,7 @@ pub(crate) fn downloads_command(
     parts.join(" ")
 }
 
-/// 构造 `/job ...` 或 `/j ...` 命令。
+/// 构造 `/job ...` 命令。
 pub(crate) fn job_command(action: &str, job_id: i64, style: CommandStyle) -> String {
     format!(
         "{} {} {}",
@@ -123,12 +125,12 @@ pub(crate) fn job_command(action: &str, job_id: i64, style: CommandStyle) -> Str
     )
 }
 
-/// 构造 `/balance` 或 `/bal` 命令。
+/// 构造 `/balance` 命令。
 pub(crate) fn balance_command(style: CommandStyle) -> String {
     command_name("balance", style)
 }
 
-/// 构造 `/balance history ...` 或 `/bal h ...` 命令。
+/// 构造 `/balance history ...` 命令。
 pub(crate) fn balance_history_command(limit: u64, page: u64, style: CommandStyle) -> String {
     let _ = style;
     let action = "history";
@@ -141,14 +143,14 @@ pub(crate) fn balance_history_command(limit: u64, page: u64, style: CommandStyle
     )
 }
 
-/// 构造 `/points show ...` 或 `/pts s ...` 命令。
+/// 构造 `/points show ...` 命令。
 pub(crate) fn points_show_command(user_id: i64, style: CommandStyle) -> String {
     let _ = style;
     let action = "show";
     format!("{} {} {}", command_name("points", style), action, user_id)
 }
 
-/// 构造 `/points history ...` 或 `/pts h ...` 命令。
+/// 构造 `/points history ...` 命令。
 pub(crate) fn points_history_command(
     user_id: i64,
     limit: u64,
@@ -167,7 +169,7 @@ pub(crate) fn points_history_command(
     )
 }
 
-/// 构造 `/points add/sub ...` 或 `/pts a/sub ...` 命令。
+/// 构造 `/points add/sub ...` 命令。
 ///
 /// `reason` 会进入积分账本，命令帮助中统一给出可复制模板，避免手动输入时漏掉原因。
 pub(crate) fn points_change_command(
@@ -194,12 +196,27 @@ pub(crate) fn points_change_command(
     )
 }
 
-/// 构造 `/config show` 或 `/cfg show` 命令。
+/// 构造 `/config show` 命令。
 pub(crate) fn config_show_command(style: CommandStyle) -> String {
     format!("{} show", command_name("config", style))
 }
 
-/// 构造 `/config set ...` 或 `/cfg set ...` 命令。
+/// 构造 `/targets show` 命令。
+pub(crate) fn targets_show_command(style: CommandStyle) -> String {
+    format!("{} show", command_name("targets", style))
+}
+
+/// 构造 `/acl show` 命令。
+pub(crate) fn acl_show_command(style: CommandStyle) -> String {
+    format!("{} show", command_name("acl", style))
+}
+
+/// 构造 `/billing show` 命令。
+pub(crate) fn billing_show_command(style: CommandStyle) -> String {
+    format!("{} show", command_name("billing", style))
+}
+
+/// 构造 `/config set ...` 命令。
 pub(crate) fn config_set_command(key: &str, value: impl ToString, style: CommandStyle) -> String {
     format!(
         "{} set {} {}",
@@ -209,7 +226,7 @@ pub(crate) fn config_set_command(key: &str, value: impl ToString, style: Command
     )
 }
 
-/// 构造 `/help <topic>` 或 `/h <topic>` 命令。
+/// 构造 `/help <topic>` 命令。
 pub(crate) fn help_command(topic: Option<&str>, style: CommandStyle) -> String {
     match topic {
         Some(topic) => format!("{} {}", command_name("help", style), topic),
@@ -270,12 +287,12 @@ pub(crate) fn format_bytes(bytes: i64) -> String {
 /// 返回命令根名称。
 ///
 /// 帮助页需要展示 `/config [show|set ...]` 这类不完全等同于具体命令的用法，
-/// 所以这里提供一个统一入口，避免各模块手写 `/cfg`、`/config` 字符串。
+/// 所以这里提供一个统一入口，避免各模块重复手写命令根字符串。
 pub(crate) fn command_root(kind: &str, style: CommandStyle) -> String {
     command_name(kind, style)
 }
 
-/// 同时展示短命令和长命令。
+/// 同时展示兼容命令和标准命令。
 pub(crate) fn short_and_long(short: String, long: String) -> String {
     // 帮助和列表回复统一使用 card 格式；发送层会把 `‹...›` 转成 TDLib code 实体。
     if short == long {
@@ -294,9 +311,141 @@ pub(crate) fn build_ready_page_header(title: &str) -> Vec<String> {
     ]
 }
 
+/// 构造运行态管理页统一开头：
+/// - 标题
+/// - ready 状态
+/// - 分割线
+/// - 简要说明
+pub(crate) fn build_runtime_admin_page_intro(title: &str, detail: &str) -> Vec<String> {
+    let mut lines = build_ready_page_header(title);
+    lines.push(card::note(detail));
+    lines.push(String::new());
+    lines
+}
+
 /// 构造交互页统一命令分区标题。
 pub(crate) fn build_page_command_section() -> String {
     card::section("命令")
+}
+
+/// 运行态管理页统一命令示例区。
+///
+/// 只负责拼接：
+/// - 空行
+/// - `命令` 标题
+/// - 若干示例命令
+///
+/// 每页仍自己决定展示哪些示例，不把业务字段硬抽成一套。
+pub(crate) fn build_command_examples<I, S>(examples: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut lines = vec![String::new(), build_page_command_section()];
+    lines.extend(examples.into_iter().map(Into::into));
+    lines
+}
+
+/// 运行态管理页帮助用的命令说明 descriptor。
+///
+/// 当前先只覆盖：
+/// - 命令用法说明
+/// - 交互说明
+/// - 示例命令
+/// - help 页复制按钮
+///
+/// 后续如果继续做“同一份元数据驱动”，可以再把 callback/action 文案补进来。
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeAdminHelpDescriptor {
+    /// `命令：` 下方的总用法，例如 `/config [show|reset|set <key> <value>]`。
+    pub synopsis: String,
+    /// 逐条命令说明，例如 `/config show` 对应一句解释。
+    pub usage_items: Vec<RuntimeAdminUsageItem>,
+    /// `交互：` 分区里的逐条说明。
+    pub interaction_items: Vec<String>,
+    /// `示例：` 分区里的示例命令。
+    pub example_commands: Vec<String>,
+    /// help 详情页里的复制按钮定义。
+    pub help_copy_buttons: Vec<RuntimeAdminHelpCopyButton>,
+}
+
+/// 管理页帮助中的单条命令说明。
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeAdminUsageItem {
+    pub command: String,
+    pub detail: String,
+}
+
+/// 管理页帮助中的复制按钮定义。
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeAdminHelpCopyButton {
+    pub label: String,
+    pub command: String,
+    pub style: tdlib_rs::enums::ButtonStyle,
+}
+
+impl RuntimeAdminHelpCopyButton {
+    /// 构造一条复制按钮定义。
+    pub(crate) fn new(
+        label: impl Into<String>,
+        command: impl Into<String>,
+        style: tdlib_rs::enums::ButtonStyle,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            command: command.into(),
+            style,
+        }
+    }
+}
+
+/// 渲染管理页帮助中的“命令：”分区。
+pub(crate) fn build_runtime_admin_usage_block(
+    descriptor: &RuntimeAdminHelpDescriptor,
+) -> Vec<String> {
+    let mut lines = vec!["命令：".to_owned(), descriptor.synopsis.clone()];
+    for item in &descriptor.usage_items {
+        lines.push(String::new());
+        lines.push(item.command.clone());
+        lines.push(item.detail.clone());
+    }
+    lines
+}
+
+/// 渲染管理页帮助中的“交互：”分区。
+pub(crate) fn build_runtime_admin_interaction_block(
+    descriptor: &RuntimeAdminHelpDescriptor,
+) -> Vec<String> {
+    let mut lines = vec!["交互：".to_owned()];
+    lines.extend(descriptor.interaction_items.iter().cloned());
+    lines.push(format!("取消：{}", card::code("/cancel")));
+    lines
+}
+
+/// 渲染管理页帮助中的“示例：”分区。
+pub(crate) fn build_runtime_admin_examples_block(
+    descriptor: &RuntimeAdminHelpDescriptor,
+) -> Vec<String> {
+    let mut lines = vec![String::new(), "示例：".to_owned()];
+    lines.extend(descriptor.example_commands.iter().cloned());
+    lines
+}
+
+/// 把 descriptor 中的复制按钮定义渲染成 help 详情页按钮行。
+pub(crate) fn build_runtime_admin_help_copy_rows(
+    descriptor: &RuntimeAdminHelpDescriptor,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    descriptor
+        .help_copy_buttons
+        .iter()
+        .map(|button| {
+            build_copy_only_row(crate::tgbot::send::build_copy_button(
+                &button.label,
+                &button.command,
+                button.style.clone(),
+            ))
+        })
+        .collect()
 }
 
 /// 构造交互页统一空态说明。
@@ -330,6 +479,103 @@ pub(crate) fn build_return_menu_row(
     vec![back, menu]
 }
 
+/// 运行态管理页统一“帮助 / 菜单”导航行。
+pub(crate) fn build_help_menu_row(
+    help: tdlib_rs::types::InlineKeyboardButton,
+    menu: tdlib_rs::types::InlineKeyboardButton,
+) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    vec![help, menu]
+}
+
+/// 统一“已更新...”成功标题。
+pub(crate) fn updated_action_title(subject: &str) -> String {
+    format!("已更新{}", subject)
+}
+
+/// 统一“已清空...”成功标题。
+pub(crate) fn cleared_action_title(subject: &str) -> String {
+    format!("已清空{}", subject)
+}
+
+/// 统一“已删除...”成功标题。
+pub(crate) fn deleted_action_title(subject: &str) -> String {
+    format!("已删除{}", subject)
+}
+
+/// 统一“已添加...”成功标题。
+pub(crate) fn added_action_title(subject: &str) -> String {
+    format!("已添加{}", subject)
+}
+
+/// 统一“已解除...”成功标题。
+pub(crate) fn released_action_title(subject: &str) -> String {
+    format!("已解除{}", subject)
+}
+
+/// 统一“XXX已重置为启动默认值”成功标题。
+pub(crate) fn reset_action_title(subject: &str) -> String {
+    format!("{subject}已重置为启动默认值")
+}
+
+/// 统一运行态管理页 callback 错误卡片标题。
+pub(crate) fn runtime_admin_error_title(subject: &str) -> String {
+    format!("{subject}操作失败")
+}
+
+/// 统一运行态管理页 callback 错误卡片副文案。
+pub(crate) fn runtime_admin_error_detail(subject: &str) -> String {
+    format!("{subject}未更新，请检查日志或复制错误信息。")
+}
+
+/// 统一运行态管理页编辑原消息失败时的标题。
+pub(crate) fn runtime_admin_edit_error_title(subject: &str) -> String {
+    format!("{subject}刷新失败")
+}
+
+/// 统一运行态管理页编辑原消息失败时的副文案。
+pub(crate) fn runtime_admin_edit_error_detail(command: &str) -> String {
+    format!("配置已处理，但原消息编辑失败；请复制错误或重新发送 {command}。")
+}
+
+/// 统一发送运行态管理页的 callback 错误卡片。
+pub(crate) async fn send_runtime_admin_callback_error(
+    request_chat_id: i64,
+    client_id: i32,
+    subject: &str,
+    err: &anyhow::Error,
+) -> anyhow::Result<()> {
+    crate::tgbot::send::send_interaction_error_card(
+        request_chat_id,
+        client_id,
+        &runtime_admin_error_title(subject),
+        &runtime_admin_error_detail(subject),
+        err,
+    )
+    .await
+}
+
+/// 统一编辑运行态管理页交互卡片，并在失败时输出一致的提示。
+pub(crate) async fn edit_runtime_admin_interaction_card_or_error(
+    text: String,
+    chat_id: i64,
+    message_id: i64,
+    keyboard: tdlib_rs::types::ReplyMarkupInlineKeyboard,
+    client_id: i32,
+    subject: &str,
+    retry_command: &str,
+) -> anyhow::Result<()> {
+    crate::tgbot::send::edit_interaction_card_or_error(
+        text,
+        chat_id,
+        message_id,
+        keyboard,
+        client_id,
+        &runtime_admin_edit_error_title(subject),
+        &runtime_admin_edit_error_detail(retry_command),
+    )
+    .await
+}
+
 /// 返回命令名称。
 fn command_name(kind: &str, style: CommandStyle) -> String {
     let _ = style;
@@ -340,6 +586,9 @@ fn command_name(kind: &str, style: CommandStyle) -> String {
         "lookup" => "/lookup",
         "cache" => "/cache",
         "config" => "/config",
+        "targets" => "/targets",
+        "acl" => "/acl",
+        "billing" => "/billing",
         "downloads" => "/downloads",
         "job" => "/job",
         "balance" => "/balance",
@@ -366,7 +615,18 @@ fn normalize_job_action(action: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_context::app_context;
     use std::collections::HashMap;
+
+    fn install_target_runtime(
+        targets: crate::config::TargetsConfig,
+        access_control: crate::config::AccessControlConfig,
+    ) {
+        let app = app_context();
+        app.targets_runtime.update_runtime_config(targets);
+        app.access_control_runtime
+            .update_runtime_config(access_control);
+    }
 
     // 用户可见输出统一使用长命令；Short 枚举目前只保留兼容调用形状。
     #[test]
@@ -453,13 +713,19 @@ mod tests {
     // 目标解析应支持配置别名，避免每次都手动输入长 chat_id。
     #[test]
     fn test_resolve_target_chat_id_supports_alias() {
-        let config = BotConfig {
-            target_aliases: HashMap::from([("archive".to_owned(), -100)]),
-            allowed_target_chat_ids: vec![-100],
-            ..Default::default()
-        };
+        install_target_runtime(
+            crate::config::TargetsConfig {
+                default_chat_id: 0,
+                by_request_chat_id: HashMap::new(),
+                aliases: HashMap::from([("archive".to_owned(), -100)]),
+            },
+            crate::config::AccessControlConfig {
+                allowed_target_chat_ids: vec![-100],
+                ..Default::default()
+            },
+        );
 
-        let target = resolve_target_chat_id(&["/t", "https://t.me/c/1/2", "archive"], &config, 1)
+        let target = resolve_target_chat_id(&["/t", "https://t.me/c/1/2", "archive"], 1)
             .expect("alias should resolve to target chat");
 
         assert_eq!(target, -100);
@@ -468,13 +734,19 @@ mod tests {
     // 默认目标同样要受目标白名单保护，避免配置了 allowed_target_chat_ids 但实际未生效。
     #[test]
     fn test_resolve_target_chat_id_rejects_disallowed_default_target() {
-        let config = BotConfig {
-            target_map: HashMap::from([(0, -200)]),
-            allowed_target_chat_ids: vec![-100],
-            ..Default::default()
-        };
+        install_target_runtime(
+            crate::config::TargetsConfig {
+                default_chat_id: -200,
+                by_request_chat_id: HashMap::new(),
+                aliases: HashMap::new(),
+            },
+            crate::config::AccessControlConfig {
+                allowed_target_chat_ids: vec![-100],
+                ..Default::default()
+            },
+        );
 
-        let err = resolve_target_chat_id(&["/t", "https://t.me/c/1/2"], &config, 1).unwrap_err();
+        let err = resolve_target_chat_id(&["/t", "https://t.me/c/1/2"], 1).unwrap_err();
 
         assert!(err.to_string().contains("target chat is not allowed"));
     }
@@ -482,13 +754,15 @@ mod tests {
     // 显式数字目标也必须命中白名单。
     #[test]
     fn test_resolve_target_chat_id_rejects_disallowed_explicit_target() {
-        let config = BotConfig {
-            allowed_target_chat_ids: vec![-100],
-            ..Default::default()
-        };
+        install_target_runtime(
+            crate::config::TargetsConfig::default(),
+            crate::config::AccessControlConfig {
+                allowed_target_chat_ids: vec![-100],
+                ..Default::default()
+            },
+        );
 
-        let err =
-            resolve_target_chat_id(&["/t", "https://t.me/c/1/2", "-200"], &config, 1).unwrap_err();
+        let err = resolve_target_chat_id(&["/t", "https://t.me/c/1/2", "-200"], 1).unwrap_err();
 
         assert!(err.to_string().contains("target chat is not allowed"));
     }

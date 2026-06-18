@@ -1,6 +1,6 @@
 # tg_transfer_bot
 
-`tg_transfer_bot` 是一个基于 TDLib 的 Telegram 转存机器人，用于把指定消息、相册或 bot 可见媒体转存到目标聊天，并把任务状态、文件缓存和恢复信息持久化到本地 SQLite。
+`tg_transfer_bot` 是一个基于 TDLib 的 Telegram 转存机器人，用于把指定消息、相册或 bot 可见媒体转存到目标聊天，并把任务状态、文件缓存和恢复信息持久化到业务数据库。
 
 它的重点不是“能发一次消息”，而是“能稳定长期跑”：
 
@@ -26,7 +26,7 @@
 - `/job` 手动暂停、恢复、停止任务。
 - `/balance` 查看当前用户积分余额和积分流水。
 - `/points` 由管理员查看、查询流水、增加或扣减普通用户积分。
-- `/config` 动态调整已开放的转存运行时参数并写回配置文件。
+- `/config` 动态调整已开放的转存运行时参数并写入数据库。
 - `/health` 查看运行健康、并发和缓存摘要。
 - `/cache` 查看文件缓存概览和分页明细。
 
@@ -88,7 +88,7 @@ cargo run -p transfer_bot -- -c config.json
 
 - `user` client 可能需要二维码、验证码或二次密码登录。
 - `bot` client 会使用 `token` 登录。
-- 程序会自动创建业务 SQLite 库和运行目录。
+- 程序会自动执行数据库 migration；SQLite 文件库会自动创建运行目录。
 
 ## GitHub Actions
 
@@ -147,39 +147,28 @@ cargo run -p transfer_bot -- -c config.json
 - `storage`：业务数据库位置，保存任务、缓存、恢复和菜单草稿。
 - `clients.user` / `clients.bot`：两个 Telegram client 的本地目录和登录方式。
 - `workflow`：上传使用哪个 client。
-- `access_control`：哪些人、哪些 chat 可以发命令和作为目标。
-- `billing`：普通用户积分计费规则。
-- `targets`：默认目标 chat、按请求 chat 的映射和目标别名。
-- `transfer_config`：并发、GC、进度刷新、分页、菜单超时等运行参数。
+- `access_control.bootstrap_admin_user_ids`：文件兜底管理员。其余访问控制名单放在数据库，通过 `/acl` 或菜单管理。
+- 运行参数、目标配置、计费配置都以数据库为准，通过 `/config`、`/targets`、`/billing` 或菜单管理。
 
 ### 关键字段
 
 | 字段 | 说明 |
 | --- | --- |
 | `config_version` | 当前配置版本，现为 `2` |
-| `storage.database_url` | 业务 SQLite 连接串，默认 `sqlite://tg/app/transfer.sqlite?mode=rwc` |
+| `storage.database_url` | 业务数据库连接串，支持 `sqlite://...`、`postgres://...`、`postgresql://...` |
 | `clients.user.login_info` | user 登录方式，支持 `OCR`、`PHONE` |
 | `clients.bot.token` | BotFather 生成的 bot token |
 | `workflow.upload_client` | 上传使用 `bot` 或 `user` |
-| `access_control.admin_user_ids` | 允许管理机器人的用户 ID |
-| `access_control.allowed_user_ids` | 允许作为普通用户私聊 bot 的用户 ID |
-| `access_control.allow_all_private_users` | 是否允许任意私聊用户作为普通用户使用 |
-| `access_control.banned_user_ids` | 禁止使用 bot 的用户 ID |
-| `access_control.allowed_request_chat_ids` | 旧配置兼容字段；当前交互只支持私聊 bot，不再允许群聊命令入口 |
-| `access_control.allowed_target_chat_ids` | 允许转存到的目标 chat ID |
-| `billing.enabled` | 是否启用普通用户积分计费 |
-| `billing.base_cost_points` | 每次转存基础成本 |
-| `billing.item_cost_points` | 每条源消息成本 |
-| `billing.initial_user_points` | 普通用户首次创建账号时发放的初始积分 |
-| `targets.default_chat_id` | 未显式指定目标时的默认目标 |
-| `targets.by_request_chat_id` | 按请求 chat 映射默认目标 |
-| `targets.aliases` | 目标别名，例如 `archive` |
-| `transfer_config.job_concurrency` | 后台转存任务并发数 |
-| `transfer_config.file_delete_delay_minutes` | 文件引用归零后的延迟删除时间 |
-| `transfer_config.file_gc_interval_seconds` | 文件 GC 扫描间隔 |
-| `transfer_config.progress_edit_interval_seconds` | 进度卡片最短编辑间隔 |
-| `transfer_config.downloads_default_page_size` | `/downloads` 默认页大小 |
-| `transfer_config.menu_input_timeout_seconds` | 菜单输入超时 |
+| `access_control.bootstrap_admin_user_ids` | 文件兜底管理员用户 ID；数据库 ACL 异常或为空时仍可进入管理命令 |
+
+以下字段不再建议写入 `config.json`，运行时以数据库为准：
+
+| 数据库配置 | 管理方式 |
+| --- | --- |
+| 管理员、普通用户、黑名单、目标白名单 | `/acl show`、`/acl ...` 或菜单“管理 -> 访问控制” |
+| 默认目标、请求路由、目标别名 | `/targets show`、`/targets ...` 或菜单“管理 -> 目标配置” |
+| 积分计费与首页公告 | `/billing show`、`/billing ...` 或菜单“管理 -> 计费配置” |
+| 并发、文件清理、分页、菜单输入超时 | `/config show`、`/config ...` 或菜单“管理 -> 运行配置” |
 
 ### 推荐 workflow
 
@@ -197,7 +186,7 @@ cargo run -p transfer_bot -- -c config.json
 - `bot` 无法读取或准备文件时自动回退 `user`。
 - 最终上传端由 `workflow.upload_client` 决定。
 
-`/config` 只开放 `transfer_config` 中的运行时参数，例如并发、GC 间隔、进度刷新、分页大小和菜单超时。TDLib 登录、API ID、API Hash、bot token、数据库目录等启动级配置仍需手工修改配置文件后重启生效。
+`/config` 只开放运行时参数，例如并发、GC 间隔、进度刷新、分页大小和菜单超时。命令修改会直接写入业务数据库并立即生效，不再回写 `config.json`。TDLib 登录、API ID、API Hash、bot token、数据库目录等启动级配置仍需手工修改配置文件后重启生效。
 
 重复转存的业务语义固定是 `source_link + target_chat_id`，不区分上传端。
 
@@ -260,7 +249,7 @@ cargo run -p transfer_bot -- -c config.json
 | `/balance` | 查看当前用户积分余额 |
 | `/balance history [limit] [page]` | 查看当前用户积分流水 |
 | `/points <show|history|add|sub> <user_id> [amount|limit] [reason|page]` | 管理员查看、查询流水或调整用户积分 |
-| `/config [show|set <key> <value>]` | 查看或调整已开放的运行时参数 |
+| `/config [show|reset|set <key> <value>]` | 查看、重置或调整已开放的运行时参数 |
 | `/health` | 查看健康状态、并发和缓存摘要 |
 | `/cache [summary|page] [limit] [page]` | 查看文件缓存 |
 
@@ -303,6 +292,110 @@ admin 首页的“用户流水”会先让你回复 Telegram user_id，再打开
 ```
 
 `快速转存` 和 `快速查询` 会优先使用默认目标；如果当前请求 chat 或全局没有默认目标，会自动退回普通“选择目标 -> 确认”流程。
+
+运行态管理页也支持按钮进入输入流：
+
+```text
+/menu
+-> 管理
+-> 目标配置 / 访问控制 / 计费配置 / 运行配置
+```
+
+其中四页的输入式流程如下：
+
+```text
+目标配置
+- 刷新 / 重置默认 / 清空默认：直接 callback 执行
+- 设默认：回复 target_chat_id
+- 设路由：回复 request_chat_id target_chat_id
+- 删路由：回复 request_chat_id
+- 设别名：回复 alias target_chat_id
+- 删别名：回复 alias
+
+访问控制
+- 开放/关闭任意私聊、刷新、重置默认：直接 callback 执行
+- 加管理员 / 删管理员 / 加用户 / 删用户 / 封禁 / 解封：回复 user_id
+- 加目标 / 删目标 / 加请求 / 删请求：回复 chat_id
+
+计费配置
+- 开启/关闭计费、基础扣分增减、单项扣分增减、新用户积分增减、清空公告：直接 callback 执行
+- 设基础 / 设单项 / 设初始：回复一个非负整数
+- 设公告：回复公告全文
+
+运行配置
+- 并发、删除延迟、GC 间隔、进度刷新、分页大小、菜单超时：可按钮微调，也可进入 ForceReply 回复一个值
+```
+
+这些输入都复用同一套菜单草稿状态：
+
+```text
+- 发送 /cancel 可取消
+- 超时后会提示输入已过期
+- 重新打开 /menu 可继续输入
+- 中途发送其他命令时，命令优先
+```
+
+四个运行态管理页当前统一按钮层级为：
+
+```text
+1. 主操作
+2. 输入/调整
+3. 帮助 / 菜单
+4. 复制模板
+```
+
+这四页当前内部也已经统一成“规格表驱动”：
+
+```text
+/config  -> ConfigFieldSpec
+/targets -> TargetsInputSpec
+/acl     -> AclInputSpec
+/billing -> BillingNumericSpec + BillingAnnouncementSpec
+```
+
+也就是说，以下信息不再散落在多处手写维护：
+
+- callback 参数
+- 按钮文案
+- ForceReply 标题、说明、placeholder
+- 示例命令
+- help 复制按钮
+- 管理输入最终要复用的原始命令
+
+菜单输入分发现在也不再在主流程里硬编码四套 action 列表，而是先按规格反查所属命令模块，再统一分发到原命令入口。
+
+首启初始化与清库后重配建议按这个顺序执行：
+
+```text
+1. 启动程序，等待 bot 和 user 都登录完成。
+2. 如果数据库里还没有目标配置，bootstrap admin 会收到“初始化引导”卡片。
+3. 先进入 目标配置：
+   - 至少设置一个 default_chat_id，或配置常用 alias。
+4. 再进入 访问控制：
+   - 决定是否开放任意私聊
+   - 或添加允许用户 / 允许目标 / 允许请求 chat
+5. 再进入 计费配置：
+   - 决定是否启用计费
+   - 视需要调整基础扣分、单项扣分、新用户积分、首页公告
+6. 最后进入 运行配置：
+   - 检查并发、文件删除延迟、GC 间隔、进度刷新、分页大小、菜单超时
+7. 配完后可发送：
+   - /targets show
+   - /acl show
+   - /billing show
+   - /config show
+   逐项确认数据库运行态是否符合预期。
+```
+
+如果你删除了业务数据库但保留了 `tg/user`、`tg/bot` 的 TDLib 数据目录，重新启动后的恢复方式也是同一套：
+
+```text
+1. 保留 config.json 中的 access_control.bootstrap_admin_user_ids。
+2. 重新启动程序。
+3. 根据初始化引导重新配置 targets / acl / billing / config。
+4. 旧任务、积分、缓存和运行态配置会丢失；TDLib 登录态和本地媒体目录仍保留。
+5. 完成重配后再开始新的转存任务。
+```
 
 查看任务：
 
@@ -366,6 +459,49 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
 - 创建阶段按 `source_link + target_chat_id` 做业务去重。
 - 同一条命令按 `request_chat_id + request_message_id` 做幂等保护。
 
+### 开发阅读入口
+
+如果你要继续读代码，建议按这个顺序看：
+
+```text
+1. transfer_bot/src/tgbot/transfer/command.rs
+   看所有命令入口和 callback 分发总线。
+
+2. transfer_bot/src/tgbot/transfer/command/menu.rs
+   看 /menu 首页、hub 页面和 callback 总路由。
+
+3. transfer_bot/src/tgbot/transfer/command/menu/input.rs
+   看菜单输入主流程：
+   - 草稿读取
+   - ForceReply 继续输入
+   - admin 输入分发
+
+4. transfer_bot/src/tgbot/transfer/command/menu/input/state.rs
+   看菜单草稿状态、AdminInputAction、持久化编码和恢复逻辑。
+
+5. transfer_bot/src/tgbot/transfer/command/menu/input/admin.rs
+   看管理输入如何按规格转成原始命令：
+   - parse_admin_input_payload
+   - admin_command_kind
+
+6. transfer_bot/src/tgbot/transfer/command/config_cmd.rs
+   transfer_bot/src/tgbot/transfer/command/targets.rs
+   transfer_bot/src/tgbot/transfer/command/acl.rs
+   transfer_bot/src/tgbot/transfer/command/billing.rs
+   看四个运行态管理页各自的业务读写和按钮布局。
+
+7. transfer_bot/src/tgbot/transfer/command/common.rs
+   看四页共用的标题、错误卡片、导航行、help descriptor 和复制按钮 helper。
+```
+
+当前四个运行态管理页的共通设计是：
+
+```text
+命令入口 -> callback/按钮 -> 规格表 -> 菜单输入草稿 -> 原命令复用
+```
+
+这样做的目的不是抽象本身，而是让“按钮交互”和“命令入口”最终落到同一条写库逻辑，减少后续改字段时出现按钮和命令语义漂移。
+
 ## 日志与排查
 
 默认日志会输出到控制台和仓库根目录的 `tg_transfer.log`。
@@ -392,6 +528,9 @@ cargo run -p transfer_bot -- -c config.json
 | --- | --- |
 | `tdlib authorization ready` | 对应 client 登录成功 |
 | `starting transfer background services` | 恢复和 GC 后台服务已启动 |
+| `ensuring runtime database schema` | 启动期正在按当前数据库方言执行业务 migration |
+| `runtime database schema ready` | 业务库 migration 已完成 |
+| `runtime database state loaded` | 四类运行态配置已从数据库加载或 seed 完成 |
 | `ignored historical message` | 启动前历史消息被过滤 |
 | `ignored non-admin message` | 不在访问控制范围内的消息被忽略 |
 | `bot command received` | bot 收到并准备处理命令 |
@@ -417,7 +556,40 @@ cargo run -p transfer_bot -- -c config.json.enc decrypt <password>
 
 ## 数据库说明
 
-业务数据库默认路径是 `tg/app/transfer.sqlite`，由 `storage.database_url` 控制。程序启动时会直接确保当前代码所需的表结构存在，当前开发阶段不维护单独 migration 历史。
+业务数据库默认路径是 `tg/app/transfer.sqlite`，由 `storage.database_url` 控制。也支持 PostgreSQL，例如：
+
+```text
+postgresql://user:pass@127.0.0.1:5432/transfer
+```
+
+程序启动时会执行 SeaORM migration，后续表结构升级走版本化迁移。当前已包含初始 schema migration 和一个针对成功结果复用查询的增量索引 migration。
+运行时调参使用数据库中的 `transfer_runtime_config` 单行配置表；`config.json` 不再保存这些可变运行参数。
+`billing` 使用 `billing_runtime_config` 单行配置表；`targets` 使用 `transfer_target_config`、`transfer_target_route` 和 `transfer_target_alias` 三张表；`access_control` 使用 `access_control_runtime_config` 和多张名单表。
+根管理员兜底通过文件中的 `access_control.bootstrap_admin_user_ids` 保留，运行时会与数据库里的管理员列表合并。
+
+真实启动链会按这个顺序处理业务数据库：
+
+```text
+1. init_database_url
+2. ensure_runtime_schema
+3. ensure_transfer_runtime_config
+4. ensure_billing_runtime_config
+5. ensure_targets_runtime_config
+6. ensure_access_control_runtime_config
+```
+
+也就是说，PostgreSQL 路径现在验证的不只是“表能建出来”，还包括四类运行态配置是否真的能完成首次 seed 与回读。
+
+PostgreSQL 注意点：
+
+- 当前运行时代码按 `current_schema()` 探测元数据。
+- 测试链路会用独立 `search_path=<schema>` 创建临时 schema 验证 migration。
+- 生产部署建议给应用单独数据库，或至少单独 schema。
+
+迁移代码位置：
+- 实体模型在 `transfer_bot/src/db/*.rs`
+- migration 入口与版本文件在 `transfer_bot/src/db/migration/*.rs`
+- 初始 schema DDL 按业务域拆在 `transfer_bot/src/db/migration/runtime_schema/*.rs`
 
 核心表：
 
@@ -506,15 +678,27 @@ cargo test -p transfer_bot -- --nocapture
 cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
 ```
 
+如需额外验证 PostgreSQL 路径：
+
+```powershell
+$env:TEST_POSTGRES_DATABASE_URL = "postgresql://user:pass@127.0.0.1:5432/transfer_test"
+cargo test -p transfer_bot test_postgres_migration_and_insert_when_env_is_present -- --nocapture
+```
+
+这条测试会：
+- 创建独立测试 schema
+- 走真实启动数据库链（migration + 四类运行态 seed）
+- 探测关键列
+- 做一次最小插入
+- 最后自动删除该 schema
+
 最近一次完整验证结果：
 
 - `cargo check -p transfer_bot` 通过
-- `cargo test -p transfer_bot` 通过，`263 passed`
+- `cargo test -p transfer_bot` 通过，`406 passed`
 - `cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 通过
 
 注意：运行测试会重新生成 `transfer_bot/db.test.sqlite`。如果希望工作区里不保留业务数据库，测试结束后需要手动删除它。
-
-注意：运行测试会重新生成 `transfer_bot/db.test.sqlite`。如果你希望工作区里不保留业务数据库，测试结束后需要手动删掉它。
 
 如果只改文档，可以不跑完整测试；如果改了 `transfer_bot/src`、配置解析或任务状态流转，建议至少跑 `test` 和 `clippy`。
 

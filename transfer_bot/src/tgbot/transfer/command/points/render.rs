@@ -183,8 +183,8 @@ pub(super) fn ledger_button_rows(
     ));
     if admin_view {
         rows.push(build_copy_only_row(send::build_copy_button(
-            "复制余额",
-            &format!("/points show {}", user_id),
+            "复制当前页",
+            &points_history_command(user_id, page.limit, page.page, false),
             tdlib_rs::enums::ButtonStyle::Default,
         )));
     } else {
@@ -208,7 +208,13 @@ fn balance_return_button(
     match kind {
         super::LedgerCommandKind::Balance => send::build_callback_button(
             "返回",
-            &super::super::build_balance_button_data(),
+            &super::build_ledger_callback_data(
+                super::LedgerCallbackAction::BalanceHome,
+                super::LedgerCommandKind::Balance,
+                user_id,
+                10,
+                1,
+            ),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         super::LedgerCommandKind::Points => send::build_copy_button(
@@ -264,7 +270,7 @@ fn ledger_command(
     }
 }
 
-/// 构造 `/balance history` 或 `/bal h`。
+/// 构造 `/balance history` 命令；`short=true` 时只作为内部兼容样式。
 pub(super) fn balance_history_command(limit: u64, page: u64, short: bool) -> String {
     let style = if short {
         CommandStyle::Short
@@ -274,7 +280,7 @@ pub(super) fn balance_history_command(limit: u64, page: u64, short: bool) -> Str
     build_balance_history_command(limit, page, style)
 }
 
-/// 构造 `/points history` 或 `/pts h`。
+/// 构造 `/points history` 命令；`short=true` 时只作为内部兼容样式。
 pub(super) fn points_history_command(user_id: i64, limit: u64, page: u64, short: bool) -> String {
     let style = if short {
         CommandStyle::Short

@@ -1,6 +1,7 @@
 // `/menu` ForceReply 输入流程。
 // 本文件只保留普通输入事件处理；按钮、草稿状态和目标选择视图分别放到子模块。
 
+mod admin;
 mod callbacks;
 mod callbacks_simple;
 mod callbacks_target;
@@ -13,6 +14,10 @@ mod target;
 use crate::config::BotConfig;
 use crate::tgbot::send;
 
+use self::admin::{
+    AdminCommandKind, admin_command_kind, parse_admin_input_payload, run_existing_acl_command,
+    run_existing_billing_command, run_existing_config_command, run_existing_targets_command,
+};
 pub(super) use self::flow_callbacks::handle_shared_chat_input;
 use self::flow_callbacks::{FlowRequestContext, continue_flow_input, handle_flow_input};
 use self::simple::{
@@ -21,11 +26,12 @@ use self::simple::{
 };
 use super::text::{build_menu_recovery_text, build_step_prompt_text};
 pub(super) use callbacks::{
-    cancel_input_callback_query, job_id_input_callback_query,
+    admin_input_callback_query, cancel_input_callback_query, job_id_input_callback_query,
     point_ledger_user_input_callback_query, target_alias_callback_query,
     target_back_callback_query, target_confirm_callback_query, target_default_callback_query,
     target_manual_callback_query, target_request_chat_callback_query,
 };
+pub(in crate::tgbot::transfer::command) use state::AdminInputAction;
 use state::{
     DraftTakeResult, MenuInputDraft, MenuInputStep, peek_current_draft, put_draft,
     step_uses_reply_keyboard, take_current_draft,
@@ -118,6 +124,15 @@ pub(super) async fn continue_current_input(
                 build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
                 chat_id,
                 "输入 job_id，或发送 /cancel",
+                client_id,
+            )
+            .await?;
+        }
+        MenuInputStep::AdminInput { action } => {
+            send::send_card_message_with_force_reply_returning(
+                build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
+                chat_id,
+                action.input_placeholder(),
                 client_id,
             )
             .await?;
@@ -279,6 +294,57 @@ pub(super) async fn handle_menu_input(
                 "menu input dispatching job command"
             );
             run_existing_job_command(action, job_id, actor, client_id).await?;
+            Ok(true)
+        }
+        MenuInputStep::AdminInput { action } => {
+            tracing::debug!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                admin_action = action.log_name(),
+                "menu input admin action received"
+            );
+            let Some(command_owned) = parse_admin_input_payload(action, input) else {
+                put_draft(key, MenuInputDraft::admin_input(action)).await?;
+                tracing::debug!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    admin_action = action.log_name(),
+                    "menu input admin action rejected"
+                );
+                send::send_card_message_with_force_reply_returning(
+                    build_step_prompt_text("1/1", "输入格式不正确", action.input_detail()),
+                    request_chat_id,
+                    action.input_placeholder(),
+                    client_id,
+                )
+                .await?;
+                return Ok(true);
+            };
+
+            tracing::info!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                admin_action = action.log_name(),
+                "menu input dispatching admin config command"
+            );
+            match admin_command_kind(action) {
+                Some(AdminCommandKind::Targets) => {
+                    run_existing_targets_command(command_owned, request_chat_id, client_id).await?;
+                }
+                Some(AdminCommandKind::Acl) => {
+                    run_existing_acl_command(command_owned, request_chat_id, client_id).await?;
+                }
+                Some(AdminCommandKind::Config) => {
+                    run_existing_config_command(command_owned, request_chat_id, client_id).await?;
+                }
+                Some(AdminCommandKind::Billing) => {
+                    run_existing_billing_command(command_owned, request_chat_id, client_id).await?;
+                }
+                None => anyhow::bail!("unsupported admin input action: {}", action.log_name()),
+            }
             Ok(true)
         }
         MenuInputStep::PointLedgerUserId => {

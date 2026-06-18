@@ -17,7 +17,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_loop(
         if let Err(err) = run_file_gc_once(app_context.clone(), client_ids).await {
             tracing::error!("file gc round failed: {:#}", err);
         }
-        // 每轮 sleep 前重新读取运行时配置，保证 `/cfg set file_gc_interval_seconds`
+        // 每轮 sleep 前重新读取运行时配置，保证 `/config set file_gc_interval_seconds`
         // 对已经启动的 GC 循环也能生效。
         let interval = cleanup_interval_seconds(&app_context);
         tokio::time::sleep(Duration::from_secs(interval)).await;

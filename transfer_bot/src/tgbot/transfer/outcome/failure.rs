@@ -344,7 +344,11 @@ mod tests {
     // 恢复失败已知 job_id 时，应能从失败卡片直接跳任务详情和失败列表。
     #[test]
     fn test_build_failure_buttons_with_job_id() {
-        let buttons = build_failure_buttons(Some(42), "/t https://t.me/c/1/2 -100", "/lk x -100");
+        let buttons = build_failure_buttons(
+            Some(42),
+            "/transfer https://t.me/c/1/2 -100",
+            "/lookup x -100",
+        );
 
         assert!(buttons.iter().any(|button| button.text == "查看任务详情"));
         assert!(buttons.iter().any(|button| button.text == "查看失败列表"));

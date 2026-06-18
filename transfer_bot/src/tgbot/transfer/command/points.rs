@@ -194,6 +194,11 @@ pub async fn points_command(
                 &build_points_history_home_callback_data(user_id, DEFAULT_LEDGER_LIMIT, 1),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
+            send::build_copy_button(
+                "复制余额命令",
+                &format!("/points show {}", user_id),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
             send::build_callback_button(
                 "菜单",
                 &build_menu_home_button_data(),
@@ -229,6 +234,7 @@ enum LedgerCommandKind {
 enum LedgerCallbackAction {
     Page,
     Refresh,
+    BalanceHome,
 }
 
 /// 积分流水分页参数。
@@ -286,6 +292,7 @@ fn parse_points_callback_data(data: &str) -> Option<(LedgerCallbackAction, Ledge
     let action = match parts.next()? {
         "p" => LedgerCallbackAction::Page,
         "r" => LedgerCallbackAction::Refresh,
+        "bh" => LedgerCallbackAction::BalanceHome,
         _ => return None,
     };
     let kind = match parts.next()? {
@@ -325,6 +332,7 @@ fn build_ledger_callback_data(
     let action = match action {
         LedgerCallbackAction::Page => "p",
         LedgerCallbackAction::Refresh => "r",
+        LedgerCallbackAction::BalanceHome => "bh",
     };
     let kind = match kind {
         LedgerCommandKind::Balance => "b",
@@ -496,6 +504,8 @@ mod tests {
             rows[1][1].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
         ));
+        assert_eq!(rows[2][0].text, "复制当前页");
+        assert_ne!(rows[1][1].text, rows[2][0].text);
     }
 
     // 流水页不应同时出现“当前页复制”和独立“复制当前命令”两套完全等价入口。
@@ -519,6 +529,41 @@ mod tests {
 
         assert!(labels.contains(&"1/1"));
         assert!(!labels.contains(&"复制当前命令"));
+    }
+
+    // 普通用户流水页的“返回”按钮必须是独立返回动作，不能再复用刷新 payload。
+    #[test]
+    fn test_balance_ledger_return_button_uses_balance_home_action() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let page = store::PointLedgerPage {
+            telegram_user_id: 1,
+            entries: vec![],
+            total: 30,
+            limit: 10,
+            page: 2,
+            total_pages: 3,
+        };
+
+        let rows = ledger_button_rows(LedgerCommandKind::Balance, 1, &page, false);
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[1][1].r#type
+        else {
+            panic!("balance ledger return button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+
+        assert_eq!(decoded, "pt:bh:b:1:10:1");
+        assert_ne!(
+            decoded,
+            build_ledger_callback_data(
+                LedgerCallbackAction::Refresh,
+                LedgerCommandKind::Balance,
+                1,
+                10,
+                2
+            )
+        );
     }
 
     // 帮助文案已统一成长命令。
@@ -560,8 +605,75 @@ mod tests {
                 }
             ))
         );
+        assert_eq!(
+            parse_points_callback_data("pt:bh:b:1:10:1"),
+            Some((
+                LedgerCallbackAction::BalanceHome,
+                LedgerCallbackRequest {
+                    kind: LedgerCommandKind::Balance,
+                    user_id: 1,
+                    limit: 10,
+                    page: 1
+                }
+            ))
+        );
         assert_eq!(parse_points_callback_data("pt:p:b:1:10:2:bad"), None);
         assert_eq!(parse_points_callback_data("x:p:b:1:10:2"), None);
+    }
+
+    // admin 查看用户余额时，应提供余额查询、流水和调分相关的直接入口。
+    #[test]
+    fn test_points_show_card_keeps_adjustment_entry_points() {
+        let account = store::UserAccountSnapshot {
+            telegram_user_id: 42,
+            role: "user".to_owned(),
+            points_balance: 10,
+            total_points_added: 20,
+            total_points_spent: 10,
+        };
+
+        let panel = send::ReplyPanel::card(format_balance_text(&account))
+            .row(vec![
+                send::build_callback_button(
+                    "查看流水",
+                    &build_points_history_home_callback_data(42, DEFAULT_LEDGER_LIMIT, 1),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_copy_button(
+                    "复制余额命令",
+                    "/points show 42",
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_callback_button(
+                    "菜单",
+                    &build_menu_home_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ])
+            .row(vec![
+                send::build_copy_button(
+                    "复制加分",
+                    "/points add 42 10 admin_adjust",
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制扣分",
+                    "/points sub 42 10 admin_adjust",
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ]);
+        let (_text, keyboard) = panel.into_card_parts().expect("card parts");
+        let rows = keyboard.rows;
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"查看流水"));
+        assert!(labels.contains(&"复制余额命令"));
+        assert!(labels.contains(&"复制加分"));
+        assert!(labels.contains(&"复制扣分"));
     }
 
     // 积分流水 callback 前缀必须保持独立，避免被其他命令路由误判。

@@ -6,7 +6,9 @@ use crate::tgbot::transfer::command::menu::build_menu_home_callback_data;
 
 use super::super::text::{build_menu_status_text, build_step_prompt_text};
 use super::simple::send_keyboard_cleanup_notice;
-use super::state::{MenuInputDraft, MenuJobAction, cancel_menu_input_with_state, put_draft};
+use super::state::{
+    AdminInputAction, MenuInputDraft, MenuJobAction, cancel_menu_input_with_state, put_draft,
+};
 
 /// 处理任务页的“输入 job_id”按钮。
 ///
@@ -79,6 +81,43 @@ pub(in crate::tgbot::transfer::command::menu) async fn point_ledger_user_input_c
         ),
         chat_id,
         "输入 Telegram user_id，或发送 /cancel",
+        client_id,
+    )
+    .await?;
+    Ok(())
+}
+
+/// 处理管理配置页里的“输入参数”按钮。
+///
+/// 这里只启动输入草稿，不直接更新数据库；用户回复后会复用 `/targets`、`/acl`、`/billing`
+/// 现有命令入口，避免菜单输入流复制配置写库逻辑。
+pub(in crate::tgbot::transfer::command::menu) async fn admin_input_callback_query(
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    action: AdminInputAction,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    put_draft(
+        (chat_id, sender_user_id),
+        MenuInputDraft::admin_input(action),
+    )
+    .await?;
+    send::answer_callback_query(callback_query_id, Some("请输入参数"), client_id).await?;
+    super::callbacks_target::edit_input_waiting_card(
+        chat_id,
+        message_id,
+        client_id,
+        "1/1",
+        action.input_title(),
+        action.input_detail(),
+    )
+    .await;
+    send::send_card_message_with_force_reply_returning(
+        build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
+        chat_id,
+        action.input_placeholder(),
         client_id,
     )
     .await?;

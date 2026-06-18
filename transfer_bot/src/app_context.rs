@@ -5,7 +5,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
-use crate::config::{ClientRole, TransferClientIds, TransferConfig};
+use crate::config::{
+    AccessControlConfig, ActorRole, BillingConfig, ClientRole, RequestActor, TargetsConfig,
+    TransferClientIds, TransferConfig,
+};
 
 static APP_CONTEXT: LazyLock<Arc<AppContext>> = LazyLock::new(|| Arc::new(AppContext::default()));
 
@@ -15,21 +18,207 @@ pub(crate) fn app_context() -> Arc<AppContext> {
 
 pub struct AppContext {
     pub(crate) transfer_runtime: Arc<TransferRuntimeState>,
+    pub(crate) billing_runtime: Arc<BillingRuntimeState>,
+    pub(crate) targets_runtime: Arc<TargetsRuntimeState>,
+    pub(crate) access_control_runtime: Arc<AccessControlRuntimeState>,
     pub(crate) download_progress: Arc<DownloadProgressStore>,
     pub(crate) inflight_downloads: Arc<InflightDownloadRegistry>,
     pub(crate) transfer_guards: Arc<TransferExecutionGuards>,
     pub(crate) send_capabilities: Arc<SendCapabilities>,
+    pub(crate) home_announcement: Arc<HomeAnnouncementState>,
 }
 
 impl Default for AppContext {
     fn default() -> Self {
         Self {
             transfer_runtime: Arc::new(TransferRuntimeState::default()),
+            billing_runtime: Arc::new(BillingRuntimeState::default()),
+            targets_runtime: Arc::new(TargetsRuntimeState::default()),
+            access_control_runtime: Arc::new(AccessControlRuntimeState::default()),
             download_progress: Arc::new(DownloadProgressStore::default()),
             inflight_downloads: Arc::new(InflightDownloadRegistry::default()),
             transfer_guards: Arc::new(TransferExecutionGuards::default()),
             send_capabilities: Arc::new(SendCapabilities::default()),
+            home_announcement: Arc::new(HomeAnnouncementState::default()),
         }
+    }
+}
+
+#[derive(Default)]
+pub struct TargetsRuntimeState {
+    runtime_config: RwLock<TargetsConfig>,
+    runtime_default_config: RwLock<TargetsConfig>,
+}
+
+impl TargetsRuntimeState {
+    pub fn init_runtime_config(&self, config: TargetsConfig, default_config: TargetsConfig) {
+        self.set_runtime_default_config(default_config);
+        self.update_runtime_config(config);
+    }
+
+    pub fn update_runtime_config(&self, config: TargetsConfig) {
+        *recover_rwlock_write(&self.runtime_config, "targets runtime config") = config;
+    }
+
+    pub fn runtime_config(&self) -> TargetsConfig {
+        recover_rwlock_read(&self.runtime_config, "targets runtime config").clone()
+    }
+
+    pub fn set_runtime_default_config(&self, config: TargetsConfig) {
+        *recover_rwlock_write(
+            &self.runtime_default_config,
+            "targets runtime default config",
+        ) = config;
+    }
+
+    pub fn runtime_default_config(&self) -> TargetsConfig {
+        recover_rwlock_read(
+            &self.runtime_default_config,
+            "targets runtime default config",
+        )
+        .clone()
+    }
+}
+
+#[derive(Default)]
+pub struct AccessControlRuntimeState {
+    runtime_config: RwLock<AccessControlConfig>,
+    runtime_default_config: RwLock<AccessControlConfig>,
+}
+
+impl AccessControlRuntimeState {
+    pub fn init_runtime_config(
+        &self,
+        config: AccessControlConfig,
+        default_config: AccessControlConfig,
+    ) {
+        self.set_runtime_default_config(default_config);
+        self.update_runtime_config(config);
+    }
+
+    pub fn update_runtime_config(&self, config: AccessControlConfig) {
+        *recover_rwlock_write(&self.runtime_config, "access control runtime config") = config;
+    }
+
+    pub fn runtime_config(&self) -> AccessControlConfig {
+        recover_rwlock_read(&self.runtime_config, "access control runtime config").clone()
+    }
+
+    pub fn set_runtime_default_config(&self, config: AccessControlConfig) {
+        *recover_rwlock_write(
+            &self.runtime_default_config,
+            "access control runtime default config",
+        ) = config;
+    }
+
+    pub fn runtime_default_config(&self) -> AccessControlConfig {
+        recover_rwlock_read(
+            &self.runtime_default_config,
+            "access control runtime default config",
+        )
+        .clone()
+    }
+
+    pub fn request_actor(&self, request_chat_id: i64, sender_user_id: i64) -> Option<RequestActor> {
+        let config = self.runtime_config();
+        if config.banned_user_ids.contains(&sender_user_id) {
+            return None;
+        }
+
+        if is_effective_admin(&config, sender_user_id) {
+            if admin_request_chat_allowed(request_chat_id, sender_user_id) {
+                return Some(RequestActor {
+                    request_chat_id,
+                    user_id: sender_user_id,
+                    role: ActorRole::Admin,
+                });
+            }
+            return None;
+        }
+
+        if normal_user_request_allowed(&config, request_chat_id, sender_user_id) {
+            return Some(RequestActor {
+                request_chat_id,
+                user_id: sender_user_id,
+                role: ActorRole::User,
+            });
+        }
+
+        None
+    }
+}
+
+/// 判断用户是否属于当前生效管理员集合。
+///
+/// bootstrap admin 来自文件兜底，数据库管理员来自运行时配置；这里统一合并判断。
+fn is_effective_admin(config: &AccessControlConfig, sender_user_id: i64) -> bool {
+    config.bootstrap_admin_user_ids.contains(&sender_user_id)
+        || config.admin_user_ids.contains(&sender_user_id)
+}
+
+/// admin 也只能私聊 bot 操作。
+fn admin_request_chat_allowed(request_chat_id: i64, sender_user_id: i64) -> bool {
+    request_chat_id == sender_user_id
+}
+
+/// 普通用户只允许私聊，且必须在白名单中或开启 allow_all_private_users。
+fn normal_user_request_allowed(
+    config: &AccessControlConfig,
+    request_chat_id: i64,
+    sender_user_id: i64,
+) -> bool {
+    request_chat_id == sender_user_id
+        && (config.allow_all_private_users || config.allowed_user_ids.contains(&sender_user_id))
+}
+
+#[derive(Default)]
+pub struct HomeAnnouncementState {
+    announcement_text: RwLock<Option<String>>,
+}
+
+impl HomeAnnouncementState {
+    pub fn set_announcement_text(&self, announcement_text: Option<String>) {
+        *recover_rwlock_write(&self.announcement_text, "home announcement") = announcement_text;
+    }
+
+    pub fn announcement_text(&self) -> Option<String> {
+        recover_rwlock_read(&self.announcement_text, "home announcement").clone()
+    }
+}
+
+#[derive(Default)]
+pub struct BillingRuntimeState {
+    runtime_config: RwLock<BillingConfig>,
+    runtime_default_config: RwLock<BillingConfig>,
+}
+
+impl BillingRuntimeState {
+    pub fn init_runtime_config(&self, config: BillingConfig, default_config: BillingConfig) {
+        self.set_runtime_default_config(default_config);
+        self.update_runtime_config(config);
+    }
+
+    pub fn update_runtime_config(&self, config: BillingConfig) {
+        *recover_rwlock_write(&self.runtime_config, "billing runtime config") = config;
+    }
+
+    pub fn runtime_config(&self) -> BillingConfig {
+        recover_rwlock_read(&self.runtime_config, "billing runtime config").clone()
+    }
+
+    pub fn set_runtime_default_config(&self, config: BillingConfig) {
+        *recover_rwlock_write(
+            &self.runtime_default_config,
+            "billing runtime default config",
+        ) = config;
+    }
+
+    pub fn runtime_default_config(&self) -> BillingConfig {
+        recover_rwlock_read(
+            &self.runtime_default_config,
+            "billing runtime default config",
+        )
+        .clone()
     }
 }
 
@@ -58,6 +247,7 @@ impl SendCapabilities {
 #[derive(Default)]
 pub struct TransferRuntimeState {
     runtime_config: RwLock<TransferConfig>,
+    runtime_default_config: RwLock<TransferConfig>,
     tdlib_files_directories: RwLock<HashMap<ClientRole, PathBuf>>,
     active_transfer_jobs: AtomicUsize,
     transfer_slot_notify: tokio::sync::Notify,
@@ -69,8 +259,10 @@ impl TransferRuntimeState {
     pub fn init_runtime_config(
         &self,
         config: TransferConfig,
+        default_config: TransferConfig,
         tdlib_files_directories: HashMap<ClientRole, PathBuf>,
     ) {
+        self.set_runtime_default_config(default_config);
         self.update_runtime_config(config);
         self.update_tdlib_files_directories(tdlib_files_directories);
     }
@@ -82,6 +274,21 @@ impl TransferRuntimeState {
 
     pub fn runtime_config(&self) -> TransferConfig {
         recover_rwlock_read(&self.runtime_config, "transfer runtime config").clone()
+    }
+
+    pub fn set_runtime_default_config(&self, config: TransferConfig) {
+        *recover_rwlock_write(
+            &self.runtime_default_config,
+            "transfer runtime default config",
+        ) = config;
+    }
+
+    pub fn runtime_default_config(&self) -> TransferConfig {
+        recover_rwlock_read(
+            &self.runtime_default_config,
+            "transfer runtime default config",
+        )
+        .clone()
     }
 
     pub fn tdlib_files_directory_for(&self, role: ClientRole) -> Option<PathBuf> {

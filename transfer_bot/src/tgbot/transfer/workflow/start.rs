@@ -556,6 +556,7 @@ mod tests {
                 base_cost_points: 0,
                 item_cost_points: 0,
                 initial_user_points: 0,
+                announcement_text: None,
             },
             source_message_chat_id: None,
             source_message_id: None,

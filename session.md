@@ -12,6 +12,59 @@
 
 记录日期：2026-06-14
 
+更新记录：2026-06-16
+
+- `config.json` / `config.example.json` 已进一步瘦身：文件只保留启动必需配置和 `access_control.bootstrap_admin_user_ids` 兜底管理员。
+- `targets`、`access_control` 动态名单、`billing`、`transfer_config` 不再建议写在 JSON；运行时以数据库为准，通过 `/targets`、`/acl`、`/billing`、`/config` 或菜单管理。
+- `BotConfig` 已单独保留 `bootstrap_admin_user_ids` 运行时字段，避免文件只保留 bootstrap 后启动 seed 丢失管理员兜底。
+- `/menu` 管理页已把“目标配置 / 访问控制 / 计费配置”改成真正 callback 子页，不再只是复制命令入口。
+
+更新记录：2026-06-17
+
+- 启动后若数据库里还没有目标配置，或 ACL 仍是空库默认状态，会向 `bootstrap_admin_user_ids` 发送“初始化引导”卡片。
+- `targets / acl / billing / config` 四页已升级为完整输入式管理流：按钮可直接进入 ForceReply，回复参数后复用原命令写库。
+- `config` 也已补成输入式编辑流，不再只靠 `-1/+1` 调整；现支持按钮进入：
+  - 设并发
+  - 设删除
+  - 设 GC
+  - 设进度
+  - 设分页
+  - 设超时
+- 当前四个运行态管理页按钮层级已统一为：
+  - 主操作
+  - 输入/调整
+  - 刷新/重置/帮助
+  - 菜单
+  - 复制模板
+- README 已补：
+  - 四页管理输入流说明
+  - 首启初始化引导顺序
+  - 清库后如何重新配置数据库运行态
+- 本轮继续补了真实数据库启动链验证：
+  - `transfer_bot/src/lib.rs` 新增可复用的运行态数据库 bootstrap helper
+  - 启动链现在可同时验证 migration、`transfer/billing/targets/access_control` 四类运行态 seed 和回读
+  - `db::tests` 已新增 SQLite 启动链验证，并把 PostgreSQL 测试升级为走同一条真实启动链
+- 本轮继续收口四个运行态管理页：
+  - `config / targets / acl / billing` 的页头说明与帮助/菜单导航行已抽到公共 helper
+  - `billing` 已补齐数值输入入口：`设基础 / 设单项 / 设初始 / 设公告`
+  - 四页按钮层级进一步统一为“主操作 -> 输入/调整 -> 帮助/菜单 -> 复制”
+- 本轮新增可观察日志点：
+  - `ensuring runtime database schema`
+  - `runtime database schema ready`
+  - `runtime database state loaded`
+
+更新记录：2026-06-18
+
+- README 和 session 已补充当前开发阅读顺序，方便后续接手时直接从命令总线、菜单输入和四个运行态管理页开始看。
+- 四个运行态管理页的实现现在更明确地是“规格表驱动”：
+  - `ConfigFieldSpec`
+  - `TargetsInputSpec`
+  - `AclInputSpec`
+  - `BillingNumericSpec` / `BillingAnnouncementSpec`
+- 菜单输入分发已经不再在主流程里硬编码四套 action 分类，而是先按规格反查命令模块，再统一进入原命令入口。
+- `AdminInputAction::ALL` 已补测试专用全量覆盖，新增管理输入动作时更容易发现只加枚举、没接规格的遗漏。
+- `common.rs` 里已新增统一的运行态管理页错误卡片 helper，四页 callback 错误和编辑失败提示开始完全同源。
+
 当前分支：
 
 ```text
@@ -83,7 +136,15 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
     - `MenuPage` 新增 `TasksHub / AccountHub / AdminHub` 三个二级 hub。
     - 首页现在只保留高频动作和 hub 入口，不再直接承载所有细页导航。
     - 原首页关于状态快捷、账户入口、管理入口的测试也已迁移到各自 hub，菜单测试已和新结构对齐。
-    - 本轮继续把首页彻底“去任务化”：`recent_job_buttons` 与最近任务快捷控制已下沉到 `TasksHub`，首页不再同时承担任务面板职责。
+  - 本轮继续把首页彻底“去任务化”：`recent_job_buttons` 与最近任务快捷控制已下沉到 `TasksHub`，首页不再同时承担任务面板职责。
+  - 本轮继续打磨多级菜单：
+    - `TasksHub` 现在承接最近任务列表、状态快捷、任务控制与查询入口。
+    - `AccountHub` 现在承接余额、积分流水，admin 额外展示用户流水。
+    - `AdminHub` 现在承接运行配置、健康、缓存、用户流水，并补了普通用户的权限拒绝页测试。
+    - 本轮继续收口：
+      - 首页已彻底去任务化，只保留高频动作、hub 导航和 footer。
+      - 最近任务详情与快捷控制已稳定下沉到 `TasksHub`。
+      - 首页文案已改成 hub 语义，不再暗示首页直接承担任务面板职责。
   - 当前仍保留的复制按钮主要集中在：错误详情、结果链接/定位、`job_id`、`/cancel`、未命中 lookup 的转存命令、失败后的重试命令等必须由用户主动发送或复制的数据。
 - 本轮只新增了一个最小公共 helper：`build_return_menu_row`，用于那些没有合理刷新语义的页面，不继续机械抽象更多 helper。
 - 当前判断：下一处若还要继续优化交互，应优先看 `flow_callbacks.rs` 的高层状态表达，不建议先硬拆 `input/state.rs`。
@@ -96,7 +157,12 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - `transfer_bot/src/tgbot/send.rs` 现在只保留发送层入口转发，错误卡片排版细节已拆出。
 - `/balance` 与 `/points` 已拆成命令入口、流水渲染和 callback 子模块。
 - 新增恢复/查重专项测试：成功结果复用、重复活跃任务、同请求取消幂等、启动恢复扫描。
-- 最新验证：`cargo fmt --all -- --check`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 全部通过，`cargo test -p transfer_bot` 当前 `358 passed`。
+- 最新验证：`cargo fmt --all -- --check`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 全部通过，`cargo test -p transfer_bot` 当前 `406 passed`。
+- 最新补充验证：
+  - `cargo test -p transfer_bot db::tests -- --nocapture` 通过，当前 `8 passed`
+  - `cargo test -p transfer_bot billing::tests -- --nocapture` 通过
+  - `cargo test -p transfer_bot config_cmd::callback::tests -- --nocapture` 通过
+  - `cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 通过
 
 当前未提交改动较多，具体以 `git status --short` 为准；主要集中在：
 
@@ -144,7 +210,7 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - `config.json` 是本地敏感配置，已忽略，不要提交。
 - 当前同时在推进两条线：`AppContext` 架构重构，以及 bot 菜单/交互一致性优化。
 - 当前已经加入 admin/普通用户权限隔离和普通用户积分计费。
-- 独立 `migration` crate 已移除，启动时直接建表。
+- 独立 `migration` workspace crate 仍然不保留，但业务库已恢复为 `transfer_bot/src/db/migration/` 下的内置版本化迁移。
 - 当前业务库文件已删除；TDLib 的 `tg/user/db`、`tg/bot/db` 仍保留，不能删。
 
 ## 当前架构重构目标
@@ -201,7 +267,8 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - 积分账本使用 `request_chat_id + request_message_id` 生成幂等键，防止同一命令重复扣费。
 - 任务全部失败或用户停止时会全额退款，并通过 `billing_status = charged -> refunded` 保证幂等。
 - 部分成功会按失败条目占比退款；只要存在失败且扣过费，至少退 1 分，最多不超过本次扣费。
-- 业务数据库不再使用独立 `migration` crate。
+- 业务数据库不再使用独立 workspace `migration` crate。
+- 当前启动时会执行 `transfer_bot/src/db/migration/` 下的 SeaORM 版本化迁移。
 - 启动时直接 `db::ensure_runtime_schema(...)` 建当前完整表结构。
 - 开发期允许直接删除业务库，程序下次启动会自动重建。
 - 重复转存判断固定看 `source_link + target_chat_id`。
@@ -214,7 +281,7 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 
 ### 首页
 
-`/menu` 或 `/m` 打开首页。
+`/menu` 打开首页。
 
 首页内容：
 
@@ -323,12 +390,12 @@ cancel
 
 新增命令：
 
-- `/balance` / `/bal`：查看当前用户积分余额。
-- `/balance history [limit] [page]` / `/bal h [limit] [page]`：查看当前用户积分流水。
-- `/points show <user_id>` / `/pts s <user_id>`：admin 查看指定用户积分。
-- `/points history <user_id> [limit] [page]` / `/pts h <user_id> [limit] [page]`：admin 查看指定用户积分流水。
-- `/points add <user_id> <amount> [reason]` / `/pts a ...`：admin 加分。
-- `/points sub <user_id> <amount> [reason]` / `/pts sub ...`：admin 扣分。
+- `/balance`：查看当前用户积分余额。
+- `/balance history [limit] [page]`：查看当前用户积分流水。
+- `/points show <user_id>`：admin 查看指定用户积分。
+- `/points history <user_id> [limit] [page]`：admin 查看指定用户积分流水。
+- `/points add <user_id> <amount> [reason]`：admin 加分。
+- `/points sub <user_id> <amount> [reason]`：admin 扣分。
 
 本轮已修复：
 
@@ -359,8 +426,13 @@ cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
 结果：
 
 - `cargo fmt --all -- --check` 通过
-- `cargo test -p transfer_bot` 通过，`340 passed`
+- `cargo test -p transfer_bot` 通过，`406 passed`
 - `cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 通过
+
+额外验证：
+
+- `cargo test -p transfer_bot db::tests -- --nocapture` 通过
+- `cargo test -p transfer_bot test_postgres_migration_and_insert_when_env_is_present -- --nocapture` 在设置 `TEST_POSTGRES_DATABASE_URL` 时通过
 
 注意：
 

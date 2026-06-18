@@ -514,9 +514,17 @@ mod tests {
     use crate::config::{ActorRole, RequestActor};
     use crate::tgbot::transfer::command::menu::input::MenuJobAction;
 
+    async fn prepare_schema() -> anyhow::Result<tokio::sync::MutexGuard<'static, ()>> {
+        let guard = crate::db::TEST_DB_LOCK.lock().await;
+        let db = crate::db::get_db().await?;
+        crate::db::ensure_test_schema_current(db).await?;
+        Ok(guard)
+    }
+
     // 没有确认草稿时，执行按钮应走“empty”分支而不是 panic。
     #[tokio::test]
     async fn test_take_confirm_context_without_draft_returns_none() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
         let key = (990_003, 990_004);
         let result = take_confirm_context(key).await?;
 

@@ -19,7 +19,9 @@ mod upload;
 
 pub(super) use gc::run_file_gc_loop;
 pub(super) use guard::is_job_running_in_process;
-pub(super) use recovery::{recover_unfinished_jobs, resume_one_job};
+pub(super) use recovery::{
+    maybe_send_startup_setup_guide, recover_unfinished_jobs, resume_one_job,
+};
 pub(in crate::tgbot::transfer) use result_link::{
     refresh_stored_result_link, refresh_stored_result_messages,
 };

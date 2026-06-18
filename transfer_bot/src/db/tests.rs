@@ -8,19 +8,107 @@ use super::*;
 use crate::logs::init_tracing;
 use rand::RngExt;
 use rand::distr::SampleString;
-use sea_orm::ColumnTrait;
 use sea_orm::{ActiveModelTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, ConnectionTrait};
+use std::sync::LazyLock;
+
+#[cfg(test)]
+static POSTGRES_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 /// 统一生成 UTC+8 时间。
 fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
     chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
 }
 
-/// 测试前确保表结构已经准备好。
+/// 测试前确保业务 schema 已经是当前版本。
 async fn prepare_test_schema() -> anyhow::Result<&'static sea_orm::DatabaseConnection> {
     let db = get_db().await?;
     super::ensure_test_schema_current(db).await?;
     Ok(db)
+}
+
+fn test_postgres_database_url() -> Option<String> {
+    std::env::var("TEST_POSTGRES_DATABASE_URL")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn unique_pg_schema_name() -> String {
+    format!(
+        "tg_transfer_test_{}",
+        rand::distr::Alphanumeric
+            .sample_string(&mut rand::rng(), 12)
+            .to_lowercase()
+    )
+}
+
+async fn connect_postgres_test_db() -> anyhow::Result<Option<(sea_orm::DatabaseConnection, String)>>
+{
+    let Some(database_url) = test_postgres_database_url() else {
+        return Ok(None);
+    };
+    let schema = unique_pg_schema_name();
+    let connect_url = if database_url.contains('?') {
+        format!("{database_url}&search_path={schema}")
+    } else {
+        format!("{database_url}?search_path={schema}")
+    };
+
+    let db = sea_orm::Database::connect(connect_url).await?;
+    db.execute_unprepared(&format!(r#"CREATE SCHEMA IF NOT EXISTS "{schema}""#))
+        .await?;
+    Ok(Some((db, schema)))
+}
+
+async fn drop_postgres_test_schema(
+    db: &sea_orm::DatabaseConnection,
+    schema: &str,
+) -> anyhow::Result<()> {
+    db.execute_unprepared(&format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#))
+        .await?;
+    Ok(())
+}
+
+/// 构造最小默认运行态，供真实启动数据库链测试复用。
+fn test_bootstrap_defaults() -> (
+    crate::config::TransferConfig,
+    crate::config::BillingConfig,
+    crate::config::TargetsConfig,
+    crate::config::AccessControlConfig,
+) {
+    (
+        crate::config::TransferConfig {
+            job_concurrency: 4,
+            file_delete_delay_minutes: 6,
+            file_gc_interval_seconds: 120,
+            progress_edit_interval_seconds: 7,
+            downloads_default_page_size: 9,
+            menu_input_timeout_seconds: 800,
+        },
+        crate::config::BillingConfig {
+            enabled: true,
+            base_cost_points: 2,
+            item_cost_points: 3,
+            initial_user_points: 5,
+            announcement_text: Some("hello".to_owned()),
+        },
+        crate::config::TargetsConfig {
+            default_chat_id: -1001234567890,
+            by_request_chat_id: std::collections::HashMap::from([(900004, -1002234567890)]),
+            aliases: std::collections::HashMap::from([("archive".to_owned(), -1001234567890)]),
+        },
+        crate::config::AccessControlConfig {
+            bootstrap_admin_user_ids: vec![900001],
+            admin_user_ids: Vec::new(),
+            allowed_user_ids: vec![900002],
+            allow_all_private_users: false,
+            banned_user_ids: vec![900003],
+            allowed_request_chat_ids: vec![900004],
+            allowed_target_chat_ids: vec![-1001234567890],
+        },
+    )
 }
 
 /// 构造 transfer_job 测试数据。
@@ -146,6 +234,53 @@ async fn test_schema_rebuild() -> anyhow::Result<()> {
     ensure_runtime_schema(db).await?;
     rebuild_test_schema(db).await?;
     assert!(test_schema_has_required_columns(db).await?);
+    Ok(())
+}
+
+/// migration 执行后应包含成功结果复用索引。
+#[tokio::test]
+async fn test_migrator_creates_success_lookup_index() -> anyhow::Result<()> {
+    let _guard = super::TEST_DB_LOCK.lock().await;
+    init_tracing();
+    let db = get_db().await?;
+    rebuild_test_schema(db).await?;
+    super::ensure_runtime_schema(db).await?;
+
+    let index_exists = match db.get_database_backend() {
+        sea_orm::DatabaseBackend::Sqlite => {
+            let statement = sea_orm::Statement::from_string(
+                sea_orm::DatabaseBackend::Sqlite,
+                "PRAGMA index_list('transfer_job')".to_owned(),
+            );
+            let rows = db.query_all_raw(statement).await?;
+            rows.into_iter().any(|row| {
+                row.try_get::<String>("", "name")
+                    .is_ok_and(|name| name == "transfer_job_success_lookup_idx")
+            })
+        }
+        sea_orm::DatabaseBackend::Postgres => {
+            let statement = super::raw_statement_for_backend(
+                sea_orm::DatabaseBackend::Postgres,
+                "",
+                r#"
+                SELECT 1
+                FROM pg_indexes
+                WHERE schemaname = current_schema()
+                  AND tablename = $1
+                  AND indexname = $2
+                LIMIT 1
+                "#,
+                vec![
+                    "transfer_job".into(),
+                    "transfer_job_success_lookup_idx".into(),
+                ],
+            )?;
+            !db.query_all_raw(statement).await?.is_empty()
+        }
+        backend => anyhow::bail!("unsupported database backend for index probe: {backend:?}"),
+    };
+
+    assert!(index_exists);
     Ok(())
 }
 
@@ -297,5 +432,111 @@ async fn test_file_cache_dedup_insert() -> anyhow::Result<()> {
         .all(db)
         .await?;
     assert_eq!(rows.len(), 1);
+    Ok(())
+}
+
+/// SQLite 启动链验证：
+/// - 走和 `run()` 相同的数据库 bootstrap helper
+/// - 确认 migration 后四类运行态 seed 都会落库并可回读
+#[tokio::test]
+async fn test_runtime_bootstrap_helper_seeds_sqlite_runtime_state() -> anyhow::Result<()> {
+    let _guard = super::TEST_DB_LOCK.lock().await;
+    init_tracing();
+    let db = get_db().await?;
+    rebuild_test_schema(db).await?;
+
+    let (transfer_default, billing_default, targets_default, access_control_default) =
+        test_bootstrap_defaults();
+    let seeded = crate::bootstrap_runtime_database_state_on(
+        db,
+        super::connection::runtime_database_url(),
+        &transfer_default,
+        &billing_default,
+        &targets_default,
+        &access_control_default,
+    )
+    .await?;
+
+    assert_eq!(seeded.transfer_config.job_concurrency, 4);
+    assert_eq!(seeded.transfer_config.file_delete_delay_minutes, 6);
+    assert_eq!(seeded.billing_config.base_cost_points, 2);
+    assert_eq!(seeded.billing_config.item_cost_points, 3);
+    assert_eq!(seeded.targets_config.default_chat_id, -1001234567890);
+    assert_eq!(
+        seeded.targets_config.by_request_chat_id.get(&900004),
+        Some(&-1002234567890)
+    );
+    assert_eq!(
+        seeded.access_control_config.allowed_target_chat_ids,
+        vec![-1001234567890]
+    );
+
+    let runtime_row = crate::tgbot::transfer::load_transfer_runtime_config()
+        .await?
+        .expect("runtime config row");
+    assert_eq!(runtime_row.job_concurrency, 4);
+    assert_eq!(runtime_row.menu_input_timeout_seconds, 800);
+    Ok(())
+}
+
+/// PostgreSQL 路径验证：
+/// - 独立 schema 创建
+/// - 走真实启动数据库链（migration + 四类运行态 seed）
+/// - 关键列探测
+/// - 基础插入
+///
+/// 仅当设置 `TEST_POSTGRES_DATABASE_URL` 时执行；默认开发环境仍只跑 SQLite。
+#[tokio::test]
+async fn test_postgres_migration_and_insert_when_env_is_present() -> anyhow::Result<()> {
+    let _guard = POSTGRES_TEST_LOCK.lock().await;
+    init_tracing();
+    let Some((db, schema)) = connect_postgres_test_db().await? else {
+        return Ok(());
+    };
+
+    let result = async {
+        let (transfer_default, billing_default, targets_default, access_control_default) =
+            test_bootstrap_defaults();
+        let seeded = crate::bootstrap_runtime_database_state_on(
+            &db,
+            &format!("postgresql://<hidden>?search_path={schema}"),
+            &transfer_default,
+            &billing_default,
+            &targets_default,
+            &access_control_default,
+        )
+        .await?;
+
+        assert!(test_schema_has_required_columns(&db).await?);
+        assert_eq!(seeded.transfer_config.job_concurrency, 4);
+        assert_eq!(seeded.billing_config.base_cost_points, 2);
+        assert_eq!(seeded.targets_config.default_chat_id, -1001234567890);
+        assert_eq!(seeded.access_control_config.admin_user_ids.len(), 0);
+
+        let job = get_transfer_job().await.insert(&db).await?;
+        transfer_item::Entity::insert(get_transfer_item(job.id).await)
+            .on_conflict_do_nothing()
+            .exec(&db)
+            .await?;
+        menu_input_draft::Entity::insert(get_menu_input_draft().await)
+            .on_conflict_do_nothing()
+            .exec(&db)
+            .await?;
+
+        let inserted_jobs = transfer_job::Entity::find().all(&db).await?;
+        assert_eq!(inserted_jobs.len(), 1);
+        let runtime_row = crate::tgbot::transfer::load_transfer_runtime_config_on(&db)
+            .await?
+            .expect("runtime config row");
+        assert_eq!(runtime_row.job_concurrency, 4);
+        anyhow::Ok(())
+    }
+    .await;
+
+    let cleanup_result = drop_postgres_test_schema(&db, &schema).await;
+    db.close().await?;
+
+    result?;
+    cleanup_result?;
     Ok(())
 }

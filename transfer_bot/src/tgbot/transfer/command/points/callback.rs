@@ -41,19 +41,91 @@ pub(in crate::tgbot::transfer::command) async fn points_callback_query(
 
     let callback_tip = match action {
         super::LedgerCallbackAction::Refresh => Some("已刷新"),
+        super::LedgerCallbackAction::BalanceHome => Some("已返回余额"),
         super::LedgerCallbackAction::Page => None,
     };
     send::answer_callback_query(update.id, callback_tip, client_id).await?;
 
-    let rendered = match render_ledger_panel(
-        request.kind,
-        effective_user_id,
-        request.limit,
-        request.page,
-        matches!(request.kind, super::LedgerCommandKind::Points),
-    )
-    .await
-    {
+    let rendered = match action {
+        super::LedgerCallbackAction::BalanceHome => {
+            let account =
+                match crate::tgbot::transfer::store::get_user_account(effective_user_id).await {
+                    Ok(Some(account)) => account,
+                    Ok(None) => {
+                        let err = anyhow::anyhow!("user account not found: {}", effective_user_id);
+                        send_points_callback_error(update.chat_id, client_id, &err).await?;
+                        return Err(err);
+                    }
+                    Err(err) => {
+                        send_points_callback_error(update.chat_id, client_id, &err).await?;
+                        return Err(err);
+                    }
+                };
+            let mut panel = send::ReplyPanel::card(super::format_balance_text(&account));
+            if matches!(request.kind, super::LedgerCommandKind::Points) {
+                panel = panel
+                    .row(vec![
+                        send::build_callback_button(
+                            "查看流水",
+                            &super::build_points_history_home_callback_data(
+                                effective_user_id,
+                                10,
+                                1,
+                            ),
+                            tdlib_rs::enums::ButtonStyle::Primary,
+                        ),
+                        send::build_callback_button(
+                            "菜单",
+                            &super::build_menu_home_button_data(),
+                            tdlib_rs::enums::ButtonStyle::Default,
+                        ),
+                    ])
+                    .row(vec![
+                        send::build_copy_button(
+                            "复制加分",
+                            &format!("/points add {} 10 admin_adjust", effective_user_id),
+                            tdlib_rs::enums::ButtonStyle::Default,
+                        ),
+                        send::build_copy_button(
+                            "复制扣分",
+                            &format!("/points sub {} 10 admin_adjust", effective_user_id),
+                            tdlib_rs::enums::ButtonStyle::Default,
+                        ),
+                    ]);
+            } else {
+                panel = panel
+                    .row(vec![
+                        send::build_callback_button(
+                            "查看流水",
+                            &super::build_balance_history_home_callback_data(10, 1),
+                            tdlib_rs::enums::ButtonStyle::Primary,
+                        ),
+                        send::build_callback_button(
+                            "菜单",
+                            &super::build_menu_home_button_data(),
+                            tdlib_rs::enums::ButtonStyle::Default,
+                        ),
+                    ])
+                    .row(vec![send::build_copy_button(
+                        "复制 /balance",
+                        "/balance",
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    )]);
+            }
+            Ok(panel)
+        }
+        _ => {
+            render_ledger_panel(
+                request.kind,
+                effective_user_id,
+                request.limit,
+                request.page,
+                matches!(request.kind, super::LedgerCommandKind::Points),
+            )
+            .await
+        }
+    };
+    let rendered = match rendered {
         Ok(panel) => panel,
         Err(err) => {
             send_points_callback_error(update.chat_id, client_id, &err).await?;

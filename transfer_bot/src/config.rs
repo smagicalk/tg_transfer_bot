@@ -2,11 +2,11 @@
 // 负责 JSON <-> Rust 结构体映射。
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // 运行时配置文件路径：
 // - 主程序启动时写入
-// - `/config` 命令读取/保存配置时复用
+// - 目前只保留给需要知道“当前配置文件来自哪里”的流程使用
 static CONFIG_FILE_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 // TDLib client 角色。
@@ -70,7 +70,7 @@ pub struct TransferConfig {
     pub file_gc_interval_seconds: u64,
 
     // 进度消息编辑间隔（秒）。
-    // 默认值与旧代码常量保持一致，后续可通过 `/cfg` 开放动态修改。
+    // 默认值与旧代码常量保持一致，后续可通过运行态管理命令动态修改。
     #[serde(default = "default_progress_edit_interval_seconds")]
     pub progress_edit_interval_seconds: u64,
 
@@ -93,6 +93,48 @@ impl Default for TransferConfig {
             downloads_default_page_size: default_downloads_page_size(),
             menu_input_timeout_seconds: default_menu_input_timeout_seconds(),
         }
+    }
+}
+
+impl TransferConfig {
+    /// 转成数据库单行配置使用的整数视图。
+    pub fn to_db_row(
+        &self,
+        now: chrono::DateTime<chrono::FixedOffset>,
+    ) -> crate::db::transfer_runtime_config::ActiveModel {
+        crate::db::transfer_runtime_config::ActiveModel {
+            id: sea_orm::ActiveValue::Set(1),
+            job_concurrency: sea_orm::ActiveValue::Set(self.job_concurrency as i64),
+            file_delete_delay_minutes: sea_orm::ActiveValue::Set(self.file_delete_delay_minutes),
+            file_gc_interval_seconds: sea_orm::ActiveValue::Set(
+                self.file_gc_interval_seconds as i64,
+            ),
+            progress_edit_interval_seconds: sea_orm::ActiveValue::Set(
+                self.progress_edit_interval_seconds as i64,
+            ),
+            downloads_default_page_size: sea_orm::ActiveValue::Set(
+                self.downloads_default_page_size as i64,
+            ),
+            menu_input_timeout_seconds: sea_orm::ActiveValue::Set(
+                self.menu_input_timeout_seconds as i64,
+            ),
+            created_at: sea_orm::ActiveValue::Set(now),
+            updated_at: sea_orm::ActiveValue::Set(now),
+        }
+    }
+
+    /// 从数据库单行配置恢复运行时配置。
+    pub fn from_db_model(
+        model: &crate::db::transfer_runtime_config::Model,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            job_concurrency: usize::try_from(model.job_concurrency)?,
+            file_delete_delay_minutes: model.file_delete_delay_minutes,
+            file_gc_interval_seconds: u64::try_from(model.file_gc_interval_seconds)?,
+            progress_edit_interval_seconds: u64::try_from(model.progress_edit_interval_seconds)?,
+            downloads_default_page_size: u64::try_from(model.downloads_default_page_size)?,
+            menu_input_timeout_seconds: u64::try_from(model.menu_input_timeout_seconds)?,
+        })
     }
 }
 
@@ -337,6 +379,8 @@ pub struct BillingConfig {
     pub item_cost_points: i64,
     #[serde(default)]
     pub initial_user_points: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub announcement_text: Option<String>,
 }
 
 impl Default for BillingConfig {
@@ -346,6 +390,7 @@ impl Default for BillingConfig {
             base_cost_points: default_billing_base_cost_points(),
             item_cost_points: default_billing_item_cost_points(),
             initial_user_points: 0,
+            announcement_text: None,
         }
     }
 }
@@ -361,12 +406,43 @@ impl BillingConfig {
             .saturating_add(self.item_cost_points.saturating_mul(item_count))
             .max(0)
     }
+
+    /// 转成数据库单行配置。
+    pub fn to_db_row(
+        &self,
+        now: chrono::DateTime<chrono::FixedOffset>,
+    ) -> crate::db::billing_runtime_config::ActiveModel {
+        crate::db::billing_runtime_config::ActiveModel {
+            id: sea_orm::ActiveValue::Set(1),
+            enabled: sea_orm::ActiveValue::Set(self.enabled),
+            base_cost_points: sea_orm::ActiveValue::Set(self.base_cost_points),
+            item_cost_points: sea_orm::ActiveValue::Set(self.item_cost_points),
+            initial_user_points: sea_orm::ActiveValue::Set(self.initial_user_points),
+            announcement_text: sea_orm::ActiveValue::Set(self.announcement_text.clone()),
+            created_at: sea_orm::ActiveValue::Set(now),
+            updated_at: sea_orm::ActiveValue::Set(now),
+        }
+    }
+
+    /// 从数据库单行配置恢复计费配置。
+    pub fn from_db_model(model: &crate::db::billing_runtime_config::Model) -> Self {
+        Self {
+            enabled: model.enabled,
+            base_cost_points: model.base_cost_points,
+            item_cost_points: model.item_cost_points,
+            initial_user_points: model.initial_user_points,
+            announcement_text: model.announcement_text.clone(),
+        }
+    }
 }
 
 // 访问控制配置。
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct AccessControlConfig {
+    #[serde(default)]
+    pub bootstrap_admin_user_ids: Vec<i64>,
+    #[serde(default)]
     pub admin_user_ids: Vec<i64>,
     #[serde(default)]
     pub allowed_user_ids: Vec<i64>,
@@ -384,6 +460,9 @@ impl AccessControlConfig {
     /// 兼容旧代码的 admin_ids 判断：同时包含“允许发命令的 chat”和“管理员用户”。
     fn merged_admin_ids(&self) -> Vec<i64> {
         let mut ids = BTreeSet::new();
+        for id in &self.bootstrap_admin_user_ids {
+            ids.insert(*id);
+        }
         for id in &self.admin_user_ids {
             ids.insert(*id);
         }
@@ -407,12 +486,31 @@ pub struct TargetsConfig {
 
 impl TargetsConfig {
     /// 兼容旧命令层 target_map：request_chat_id -> target_chat_id，0 表示全局兜底。
-    fn to_target_map(&self) -> HashMap<i64, i64> {
+    pub(crate) fn to_target_map(&self) -> HashMap<i64, i64> {
         let mut target_map = self.by_request_chat_id.clone();
         if self.default_chat_id != 0 {
             target_map.entry(0).or_insert(self.default_chat_id);
         }
         target_map
+    }
+
+    /// 从运行时 target_map + aliases 恢复为原始目标配置视图。
+    pub fn from_runtime_target_state(
+        target_map: &HashMap<i64, i64>,
+        aliases: &HashMap<String, i64>,
+    ) -> Self {
+        let mut by_request_chat_id = target_map.clone();
+        let default_chat_id = by_request_chat_id.remove(&0).unwrap_or(0);
+        Self {
+            default_chat_id,
+            by_request_chat_id,
+            aliases: aliases.clone(),
+        }
+    }
+
+    /// 判断 targets 默认值是否为空。
+    pub fn is_empty(&self) -> bool {
+        self.default_chat_id == 0 && self.by_request_chat_id.is_empty() && self.aliases.is_empty()
     }
 }
 
@@ -429,7 +527,9 @@ pub struct BotConfigV2 {
     pub workflow: WorkflowConfig,
     #[serde(default, skip_serializing_if = "DeduplicateConfig::is_fixed")]
     pub deduplicate: DeduplicateConfig,
+    #[serde(default)]
     pub access_control: AccessControlConfig,
+    #[serde(default)]
     pub targets: TargetsConfig,
     #[serde(default)]
     pub billing: BillingConfig,
@@ -519,6 +619,9 @@ pub struct BotConfig {
     // 兼容旧代码的管理员 chat/user id 白名单。
     pub admin_ids: Vec<i64>,
 
+    // 文件兜底管理员用户 ID。数据库访问控制损坏或为空时，仍允许这些用户进入管理命令。
+    pub bootstrap_admin_user_ids: Vec<i64>,
+
     // 明确的管理员用户 ID；权限判断以 sender_user_id 为准，不再只看 chat_id。
     pub admin_user_ids: Vec<i64>,
 
@@ -542,7 +645,7 @@ pub struct BotConfig {
     // 可使用 key=0 作为兜底目标。
     pub target_map: HashMap<i64, i64>,
 
-    // 目标 chat 别名：命令里可以用 `/t <link> archive` 替代数字 chat_id。
+    // 目标 chat 别名：命令里可以用 `/transfer <link> archive` 替代数字 chat_id。
     pub target_aliases: HashMap<String, i64>,
 
     // 允许作为转存目标的 chat 白名单。
@@ -577,6 +680,7 @@ impl Default for BotConfig {
             tdlib_config: TdlibConfig::default(),
             storage: StorageConfig::default(),
             admin_ids: Vec::new(),
+            bootstrap_admin_user_ids: Vec::new(),
             admin_user_ids: Vec::new(),
             allowed_request_chat_ids: Vec::new(),
             allowed_user_ids: Vec::new(),
@@ -689,7 +793,9 @@ impl BotConfig {
             return None;
         }
 
-        if self.admin_user_ids.contains(&sender_user_id) {
+        if self.bootstrap_admin_user_ids.contains(&sender_user_id)
+            || self.admin_user_ids.contains(&sender_user_id)
+        {
             if self.admin_request_chat_allowed(request_chat_id, sender_user_id) {
                 return Some(RequestActor {
                     request_chat_id,
@@ -767,6 +873,7 @@ impl BotConfig {
             tdlib_config: interaction_runtime.tdlib_config.clone(),
             storage: config.storage,
             admin_ids: config.access_control.merged_admin_ids(),
+            bootstrap_admin_user_ids: config.access_control.bootstrap_admin_user_ids,
             admin_user_ids: config.access_control.admin_user_ids,
             allowed_request_chat_ids: config.access_control.allowed_request_chat_ids,
             allowed_user_ids: config.access_control.allowed_user_ids,
@@ -860,45 +967,9 @@ impl BotConfigV2 {
     }
 }
 
-// 旧版 config.json 结构。
-// 启动配置已要求 v2；这里仅用于 `/cfg` 写回旧 transfer_config 片段时保持兼容。
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
-#[serde(rename_all = "snake_case")]
-struct LegacyBotConfig {
-    #[serde(default)]
-    pub storage: StorageConfig,
-    pub tdlib_config: TdlibConfig,
-    pub admin_ids: Vec<i64>,
-    #[serde(default)]
-    pub target_map: HashMap<i64, i64>,
-    #[serde(default)]
-    pub transfer_config: TransferConfig,
-    pub login_info: LoginInfo,
-}
-
 /// 初始化运行时配置文件路径。
 pub fn init_runtime_config_path(path: impl Into<PathBuf>) {
     let _ = CONFIG_FILE_PATH.set(path.into());
-}
-
-/// 加载当前运行所使用的配置文件。
-/// 仅支持明文 JSON 配置，不支持直接改写加密配置文件。
-pub async fn load_runtime_bot_config() -> anyhow::Result<BotConfig> {
-    let path = runtime_config_path()?;
-    validate_runtime_config_path(path)?;
-    let text = tokio::fs::read_to_string(path).await?;
-    BotConfig::from_json_str(&text)
-}
-
-/// 保存当前运行所使用的配置文件。
-/// 只写回允许动态修改的 `transfer_config`，避免把 v2 原始配置序列化成运行时视图。
-pub async fn save_runtime_bot_config(config: &BotConfig) -> anyhow::Result<()> {
-    let path = runtime_config_path()?;
-    validate_runtime_config_path(path)?;
-    let text = tokio::fs::read_to_string(path).await?;
-    let text = update_runtime_transfer_config_in_text(&text, &config.transfer_config)?;
-    tokio::fs::write(path, text).await?;
-    Ok(())
 }
 
 /// 判断配置文件是否是 v2 结构。
@@ -908,45 +979,6 @@ fn is_v2_config(text: &str) -> anyhow::Result<bool> {
         .get("config_version")
         .and_then(|v| v.as_i64())
         .is_some_and(|version| version >= 2))
-}
-
-/// 在原始 JSON 文本中只替换 `transfer_config` 字段。
-///
-/// `/cfg` 属于运行时安全参数修改，不能顺手重写 token、TDLib 目录等敏感结构。
-fn update_runtime_transfer_config_in_text(
-    text: &str,
-    transfer_config: &TransferConfig,
-) -> anyhow::Result<String> {
-    if is_v2_config(text)? {
-        let mut config = serde_json::from_str::<BotConfigV2>(text)?;
-        config.transfer_config = transfer_config.clone();
-        return Ok(serde_json::to_string_pretty(&config)?);
-    }
-
-    let mut config = serde_json::from_str::<LegacyBotConfig>(text)?;
-    config.transfer_config = transfer_config.clone();
-    Ok(serde_json::to_string_pretty(&config)?)
-}
-
-/// 获取运行时配置文件路径。
-fn runtime_config_path() -> anyhow::Result<&'static PathBuf> {
-    CONFIG_FILE_PATH
-        .get()
-        .ok_or_else(|| anyhow::anyhow!("runtime config path not initialized"))
-}
-
-/// 校验当前配置文件是否允许运行时写回。
-/// 目前只允许明文 JSON 文件，避免把 `.enc` 覆盖成明文。
-fn validate_runtime_config_path(path: &Path) -> anyhow::Result<()> {
-    let is_encrypted = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("enc"))
-        .unwrap_or(false);
-    if is_encrypted {
-        anyhow::bail!("encrypted config doesn't support runtime update")
-    }
-    Ok(())
 }
 
 // 默认后台转存并发数。
@@ -1093,8 +1125,6 @@ mod tests {
             config.required_client_roles(),
             vec![ClientRole::User, ClientRole::Bot]
         );
-        assert_eq!(config.target_map.get(&0), Some(&-100));
-        assert_eq!(config.target_map.get(&123), Some(&-200));
         assert!(matches!(config.login_info, LoginInfo::Token(_)));
         assert!(config.supports_reply_markup());
         assert!(config.runtime_client(ClientRole::User).is_ok());
@@ -1103,8 +1133,16 @@ mod tests {
             config.storage.database_url,
             "sqlite://tg/app/transfer.sqlite?mode=rwc"
         );
-        assert_eq!(config.billing.base_cost_points, 1);
-        assert_eq!(config.billing.item_cost_points, 1);
+        assert!(config.target_map.is_empty());
+        assert!(config.allowed_target_chat_ids.is_empty());
+        assert_eq!(
+            config.billing.base_cost_points,
+            default_billing_base_cost_points()
+        );
+        assert_eq!(
+            config.billing.item_cost_points,
+            default_billing_item_cost_points()
+        );
         assert!(config.request_actor(123, 1).is_none());
         assert!(
             config
@@ -1112,12 +1150,35 @@ mod tests {
                 .is_some_and(|actor| actor.is_admin())
         );
         assert!(config.request_actor(999, 1).is_none());
-        assert!(
-            config
-                .request_actor(2, 2)
-                .is_some_and(|actor| !actor.is_admin())
-        );
+        assert!(config.request_actor(2, 2).is_none());
         assert!(config.request_actor(3, 3).is_none());
+    }
+
+    // 文件配置只保留启动级字段时仍可启动；targets / billing / transfer_config 后续由数据库运行态接管。
+    #[test]
+    fn test_v2_config_accepts_database_owned_runtime_defaults() {
+        let config = BotConfig::from_json_str(v2_config_text()).unwrap();
+
+        assert_eq!(config.bootstrap_admin_user_ids, vec![1]);
+        assert!(config.admin_user_ids.is_empty());
+        assert!(config.allowed_user_ids.is_empty());
+        assert!(config.target_map.is_empty());
+        assert!(config.target_aliases.is_empty());
+        assert_eq!(
+            config.transfer_config.job_concurrency,
+            default_transfer_job_concurrency()
+        );
+        assert_eq!(config.billing.enabled, BillingConfig::default().enabled);
+        assert_eq!(
+            config.billing.base_cost_points,
+            default_billing_base_cost_points()
+        );
+        assert_eq!(
+            config.billing.item_cost_points,
+            default_billing_item_cost_points()
+        );
+        assert_eq!(config.billing.initial_user_points, 0);
+        assert!(config.billing.announcement_text.is_none());
     }
 
     // 同一个链接转到同一个目标是否复用由数据库层 source_link + target_chat_id 决定，
@@ -1284,33 +1345,6 @@ mod tests {
         );
     }
 
-    // `/cfg` 写回只能替换 transfer_config，不能把 v2 结构写成运行时视图。
-    #[test]
-    fn test_update_runtime_transfer_config_keeps_v2_shape() {
-        let mut runtime = BotConfig::from_json_str(v2_config_text()).unwrap();
-        runtime.transfer_config.job_concurrency = 5;
-        runtime.transfer_config.file_delete_delay_minutes = 7;
-
-        let updated =
-            update_runtime_transfer_config_in_text(v2_config_text(), &runtime.transfer_config)
-                .unwrap();
-        let raw: BotConfigV2 = serde_json::from_str(&updated).unwrap();
-
-        assert_eq!(raw.config_version, 2);
-        assert_eq!(
-            raw.clients.bot.token,
-            "123456789:abcdefghijklmnopqrstuvwxyzABCDEF"
-        );
-        assert!(raw.clients.bot.enabled);
-        assert_eq!(raw.transfer_config.job_concurrency, 5);
-        assert_eq!(raw.transfer_config.file_delete_delay_minutes, 7);
-        assert!(raw.billing.enabled);
-        assert!(!updated.contains("\"bot\": {\n      \"enabled\": true"));
-        assert!(!updated.contains("\"interaction_client\""));
-        assert!(!updated.contains("\"download_client\""));
-        assert!(!updated.contains("\"deduplicate\""));
-    }
-
     // bot token 明显不是 BotFather 格式时应在配置阶段失败，避免 TDLib 登录阶段无明确反馈。
     #[test]
     fn test_v2_rejects_invalid_bot_token_shape() {
@@ -1398,35 +1432,7 @@ mod tests {
             "return_finished_result": true
           },
           "access_control": {
-            "admin_user_ids": [1],
-            "allowed_user_ids": [2],
-            "allow_all_private_users": false,
-            "banned_user_ids": [],
-            "allowed_request_chat_ids": [123],
-            "allowed_target_chat_ids": [-100]
-          },
-          "targets": {
-            "default_chat_id": -100,
-            "by_request_chat_id": {
-              "123": -200
-            },
-            "aliases": {
-              "archive": -100
-            }
-          },
-          "billing": {
-            "enabled": true,
-            "base_cost_points": 1,
-            "item_cost_points": 1,
-            "initial_user_points": 0
-          },
-          "transfer_config": {
-            "job_concurrency": 2,
-            "file_delete_delay_minutes": 2,
-            "file_gc_interval_seconds": 60,
-            "progress_edit_interval_seconds": 2,
-            "downloads_default_page_size": 8,
-            "menu_input_timeout_seconds": 600
+            "bootstrap_admin_user_ids": [1]
           }
         }"#
     }

@@ -722,8 +722,8 @@ mod tests {
     fn test_help_like_message_response_can_deserialize() {
         let keyboard = build_inline_keyboard(vec![
             vec![build_copy_button(
-                "复制 /t",
-                "/t ",
+                "复制 /transfer",
+                "/transfer ",
                 tdlib_rs::enums::ButtonStyle::Primary,
             )],
             vec![build_callback_button(
@@ -803,8 +803,8 @@ mod tests {
         };
         let keyboard = build_inline_keyboard(vec![
             vec![build_copy_button(
-                "复制 /t",
-                "/t ",
+                "复制 /transfer",
+                "/transfer ",
                 tdlib_rs::enums::ButtonStyle::Primary,
             )],
             vec![build_callback_button(
@@ -1063,8 +1063,8 @@ mod tests {
     fn test_help_like_send_succeeded_update_can_deserialize() {
         let keyboard = build_inline_keyboard(vec![
             vec![build_copy_button(
-                "复制 /t",
-                "/t ",
+                "复制 /transfer",
+                "/transfer ",
                 tdlib_rs::enums::ButtonStyle::Primary,
             )],
             vec![build_callback_button(

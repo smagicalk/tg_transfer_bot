@@ -226,7 +226,10 @@ pub async fn handle_update(
             return Ok(());
         }
 
-        let Some(actor) = config.request_actor(chat_id, sender_id) else {
+        let Some(actor) = crate::app_context::app_context()
+            .access_control_runtime
+            .request_actor(chat_id, sender_id)
+        else {
             tracing::debug!(
                 chat_id,
                 sender_id,
@@ -235,8 +238,11 @@ pub async fn handle_update(
             );
             return Ok(());
         };
-        tgbot::transfer::ensure_user_account_for_actor(actor, config.billing.initial_user_points)
-            .await?;
+        tgbot::transfer::ensure_user_account_for_actor(
+            actor,
+            tgbot::transfer::billing_runtime_config().initial_user_points,
+        )
+        .await?;
 
         let request_message = message.clone();
         let message_content = message.content;
@@ -359,6 +365,22 @@ pub async fn handle_update(
                         tgbot::transfer::config_command(text, chat_id, interaction_client_id).await
                     }
                     "/config" => {
+                        send_permission_denied_message(chat_id, interaction_client_id).await
+                    }
+                    "/targets" if actor.is_admin() => {
+                        tgbot::transfer::targets_command(text, chat_id, interaction_client_id).await
+                    }
+                    "/targets" => {
+                        send_permission_denied_message(chat_id, interaction_client_id).await
+                    }
+                    "/acl" if actor.is_admin() => {
+                        tgbot::transfer::acl_command(text, chat_id, interaction_client_id).await
+                    }
+                    "/acl" => send_permission_denied_message(chat_id, interaction_client_id).await,
+                    "/billing" if actor.is_admin() => {
+                        tgbot::transfer::billing_command(text, chat_id, interaction_client_id).await
+                    }
+                    "/billing" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
                     }
                     // /health 命令入口。
@@ -565,10 +587,13 @@ pub async fn handle_update(
             return Ok(());
         }
 
-        let Some(actor) = config.request_actor(
-            update_callback_query.chat_id,
-            update_callback_query.sender_user_id,
-        ) else {
+        let Some(actor) = crate::app_context::app_context()
+            .access_control_runtime
+            .request_actor(
+                update_callback_query.chat_id,
+                update_callback_query.sender_user_id,
+            )
+        else {
             tracing::debug!(
                 chat_id = update_callback_query.chat_id,
                 sender_user_id = update_callback_query.sender_user_id,
@@ -577,8 +602,11 @@ pub async fn handle_update(
             );
             return Ok(());
         };
-        tgbot::transfer::ensure_user_account_for_actor(actor, config.billing.initial_user_points)
-            .await?;
+        tgbot::transfer::ensure_user_account_for_actor(
+            actor,
+            tgbot::transfer::billing_runtime_config().initial_user_points,
+        )
+        .await?;
 
         tracing::debug!(
             chat_id = update_callback_query.chat_id,

@@ -15,6 +15,9 @@ fn test_build_help_index_text_contains_commands() {
     assert!(text.contains("/transfer"));
     assert!(text.contains("/lookup"));
     assert!(text.contains("/config"));
+    assert!(text.contains("/targets"));
+    assert!(text.contains("/acl"));
+    assert!(text.contains("/billing"));
     assert!(text.contains("/downloads"));
     assert!(text.contains("/balance"));
     assert!(text.contains("/points show"));
@@ -34,6 +37,9 @@ fn test_build_help_index_text_for_user_hides_admin_commands() {
     assert!(text.contains("/balance"));
     assert!(text.contains("/job"));
     assert!(!text.contains("/config"));
+    assert!(!text.contains("/targets"));
+    assert!(!text.contains("/acl"));
+    assert!(!text.contains("/billing"));
     assert!(!text.contains("/health"));
     assert!(!text.contains("/cache"));
     assert!(!text.contains("管理员示例"));
@@ -73,14 +79,29 @@ fn test_build_help_detail_text() {
     assert!(job.contains("/job status 123"));
 
     let config = build_help_detail_text("config").unwrap();
+    assert!(config.contains("/config reset"));
     assert!(config.contains("/config set job_concurrency 4"));
     assert!(config.contains("progress_edit_interval_seconds"));
     assert!(config.contains("downloads_default_page_size"));
     assert!(config.contains("menu_input_timeout_seconds"));
+    assert!(config.contains("输入流"));
+
+    let targets = build_help_detail_text("targets").unwrap();
+    assert!(targets.contains("/targets set-default -1001234567890"));
+    assert!(targets.contains("设默认：回复 target_chat_id"));
+
+    let acl = build_help_detail_text("acl").unwrap();
+    assert!(acl.contains("/acl add-admin 123456789"));
+    assert!(acl.contains("加管理员 / 删管理员"));
+
+    let billing = build_help_detail_text("billing").unwrap();
+    assert!(billing.contains("/billing set enabled true"));
+    assert!(billing.contains("设公告：进入输入流"));
 
     let menu = build_help_detail_text("menu").unwrap();
     assert!(menu.contains("/menu"));
     assert!(menu.contains("/cancel"));
+    assert!(menu.contains("ForceReply"));
 
     assert!(build_help_detail_text("unknown").is_err());
 }
@@ -157,7 +178,11 @@ fn test_help_index_buttons_keep_shortcuts_compact() {
         .collect::<Vec<_>>();
 
     assert!(labels.contains(&"复制流水"));
+    assert!(labels.contains(&"复制 /config reset"));
     assert!(labels.contains(&"复制 /config show"));
+    assert!(labels.contains(&"目标配置"));
+    assert!(labels.contains(&"访问控制"));
+    assert!(labels.contains(&"计费配置"));
     assert!(labels.contains(&"复制 /cache"));
     assert!(!labels.contains(&"复制 /t"));
     assert!(!labels.contains(&"复制 /d"));
@@ -189,6 +214,7 @@ fn test_help_index_buttons_follow_row_hierarchy() {
     assert_eq!(admin_refresh_row[2].text, "菜单");
     assert!(admin_labels.contains(&"复制流水"));
     assert!(admin_labels.contains(&"复制 /health"));
+    assert!(admin_labels.contains(&"复制 /config reset"));
     assert!(admin_labels.contains(&"复制 /cache"));
 
     assert_eq!(user[0][0].text, "转存");
@@ -224,8 +250,12 @@ fn test_help_index_buttons_for_user_hide_admin_entries() {
         .collect::<Vec<_>>();
 
     assert!(labels.contains(&"复制流水"));
+    assert!(!labels.contains(&"复制 /config reset"));
     assert!(labels.contains(&"积分账户"));
     assert!(!labels.contains(&"复制 /config show"));
+    assert!(!labels.contains(&"目标配置"));
+    assert!(!labels.contains(&"访问控制"));
+    assert!(!labels.contains(&"计费配置"));
     assert!(!labels.contains(&"复制 /health"));
     assert!(!labels.contains(&"复制 /cache"));
     assert!(!labels.contains(&"运行配置"));
