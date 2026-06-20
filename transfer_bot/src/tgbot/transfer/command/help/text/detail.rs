@@ -21,13 +21,14 @@ use crate::tgbot::transfer::card;
 /// 构造命令详细帮助。
 pub(in crate::tgbot::transfer::command::help) fn build_help_detail_text(
     command_name: &str,
+    is_admin: bool,
 ) -> anyhow::Result<String> {
     let command_name = normalize_help_topic(command_name)?;
     let text = match command_name {
         "help" => build_help_detail(),
         "transfer" => build_transfer_detail(),
         "lookup" => build_lookup_detail(),
-        "points" => build_points_detail(),
+        "points" => build_points_detail(is_admin),
         "health" => build_health_detail(),
         "cache" => build_cache_detail(),
         "config" => build_config_detail(),
@@ -59,37 +60,56 @@ fn build_help_detail() -> String {
 }
 
 /// 构造 `/balance` 和 `/points` 的说明。
-fn build_points_detail() -> String {
-    [
+fn build_points_detail(is_admin: bool) -> String {
+    let mut lines = vec![
         "points".to_owned(),
-        "用途：查看余额、查询积分流水，或由管理员调整普通用户积分。".to_owned(),
-        "说明：普通用户创建转存任务前会按消息数量扣积分；admin 不扣积分；失败/取消会按规则退款并写入流水。".to_owned(),
+        if is_admin {
+            "用途：查看余额、查询积分流水，或由管理员调整普通用户积分。".to_owned()
+        } else {
+            "用途：查看余额和当前用户积分流水。".to_owned()
+        },
+        "说明：普通用户创建转存任务前会按消息数量扣积分；管理员不扣积分；失败/取消会按规则退款并写入流水。"
+            .to_owned(),
         card::DIVIDER.to_owned(),
         "普通用户命令：".to_owned(),
         balance_command(CommandStyle::Long),
         balance_history_command(10, 1, CommandStyle::Long),
-        String::new(),
-        "管理员命令：".to_owned(),
-        format!(
-            "{} <show|history|add|sub> <user_id> [amount|limit] [reason|page]",
-            command_root("points", CommandStyle::Long)
-        ),
-        String::new(),
-        "动作：".to_owned(),
-        format!("{}：查看指定用户积分。", card::code("show | s")),
-        format!("{}：分页查看指定用户积分流水。", card::code("history | h")),
-        format!("{}：给指定用户增加积分。", card::code("add | a")),
-        format!("{}：扣除指定用户积分。", card::code("sub")),
+    ];
+
+    if is_admin {
+        lines.extend([
+            String::new(),
+            "管理员命令：".to_owned(),
+            format!(
+                "{} <show|history|add|sub> <user_id> [amount|limit] [reason|page]",
+                command_root("points", CommandStyle::Long)
+            ),
+            String::new(),
+            "动作：".to_owned(),
+            format!("{}：查看指定用户积分。", card::code("show | s")),
+            format!("{}：分页查看指定用户积分流水。", card::code("history | h")),
+            format!("{}：给指定用户增加积分。", card::code("add | a")),
+            format!("{}：扣除指定用户积分。", card::code("sub")),
+        ]);
+    }
+
+    lines.extend([
         String::new(),
         "示例：".to_owned(),
         balance_command(CommandStyle::Long),
-        balance_history_command(10, 1, CommandStyle::Long),
-        points_show_command(123456789, CommandStyle::Long),
-        points_history_command(123456789, 10, 1, CommandStyle::Long),
-        points_change_command("add", 123456789, 10, "admin_adjust", CommandStyle::Long),
-        points_change_command("sub", 123456789, 10, "admin_adjust", CommandStyle::Long),
-    ]
-    .join("\n")
+    ]);
+    lines.push(balance_history_command(10, 1, CommandStyle::Long));
+
+    if is_admin {
+        lines.extend([
+            points_show_command(123456789, CommandStyle::Long),
+            points_history_command(123456789, 10, 1, CommandStyle::Long),
+            points_change_command("add", 123456789, 10, "admin_adjust", CommandStyle::Long),
+            points_change_command("sub", 123456789, 10, "admin_adjust", CommandStyle::Long),
+        ]);
+    }
+
+    lines.join("\n")
 }
 
 /// 构造 `/health` 的说明。
@@ -131,7 +151,9 @@ fn build_transfer_detail() -> String {
     [
         "transfer".to_owned(),
         "用途：转存单条消息或相册链接。".to_owned(),
-        "说明：target 可填数字 chat_id 或配置里的别名；不传时使用 targets 默认目标。".to_owned(),
+        "说明：target 可填数字 chat_id 或配置里的别名；不传时使用预先配置的目标。".to_owned(),
+        "说明：普通用户只能把内容转到 ACL 允许的目标 chat；不能借 user fallback 读取私有源。"
+            .to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
         transfer_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
@@ -150,6 +172,7 @@ fn build_lookup_detail() -> String {
         "lookup".to_owned(),
         "用途：按源链接查询历史转存结果。".to_owned(),
         "说明：target 可填数字 chat_id 或配置里的别名；命中成功任务时会返回目标消息入口或定位信息。".to_owned(),
+        "说明：普通用户只会命中自己名下的历史结果或进行中任务。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
         lookup_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
@@ -248,6 +271,7 @@ fn build_downloads_detail() -> String {
     vec![
         "downloads".to_owned(),
         "用途：查看任务列表、状态和真实下载进度。".to_owned(),
+        "说明：普通用户只查看自己的任务；管理员可查看全部任务。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
         format!(
@@ -275,6 +299,7 @@ fn build_job_detail() -> String {
     vec![
         "job".to_owned(),
         "用途：手动控制转存任务。".to_owned(),
+        "说明：普通用户只能控制自己的任务；管理员可控制全部任务。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
         format!(
@@ -316,15 +341,16 @@ fn build_menu_detail() -> String {
         "用途：打开转存菜单。".to_owned(),
         "说明：bot token 模式使用 inline keyboard；手机号/OCR 用户号模式会自动降级为文本命令菜单。"
             .to_owned(),
+        "说明：普通用户菜单只开放转存、查询、任务、账户和帮助；管理页仅管理员可见。".to_owned(),
         card::DIVIDER.to_owned(),
         "命令：".to_owned(),
         menu_command(CommandStyle::Long),
         String::new(),
         "可做操作：".to_owned(),
-        "转存：按钮引导输入源链接、目标和确认；需要手输时只展示长命令模板。".to_owned(),
-        "查询：按钮引导输入源链接和目标；需要手输时只展示长命令模板。".to_owned(),
-        "下载：覆盖全部筛选参数，并可进入分页列表。".to_owned(),
-        "任务：从列表进入详情后可暂停、恢复、停止、刷新。".to_owned(),
+        "转存：按钮引导输入源链接、目标和确认；默认目标来自预先配置。".to_owned(),
+        "查询：按钮引导输入源链接和目标；普通用户只查询自己的结果。".to_owned(),
+        "下载：覆盖全部筛选参数，并可进入分页列表；普通用户只看自己的任务。".to_owned(),
+        "任务：从列表进入详情后可暂停、恢复、停止、刷新；普通用户只操作自己的任务。".to_owned(),
         "配置：config / targets / acl / billing 都支持按钮 + 输入流混合操作。".to_owned(),
         "帮助：覆盖所有 help topic，可原地切换详情页。".to_owned(),
         String::new(),

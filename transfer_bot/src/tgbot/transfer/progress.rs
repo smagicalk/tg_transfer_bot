@@ -87,9 +87,7 @@ pub(super) async fn update_transfer_progress_message(
         }
 
         // 进度编辑间隔从运行时配置读取，避免频繁 editMessageText 触发 Telegram 限流。
-        let interval = app_context
-            .transfer_runtime
-            .runtime_config()
+        let interval = crate::tgbot::transfer::runtime_config_on(app_context.as_ref())
             .progress_edit_interval_seconds
             .max(1);
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;

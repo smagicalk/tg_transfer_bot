@@ -119,6 +119,7 @@ pub(super) fn build_help_index_buttons(
 /// 详细帮助页按钮。
 pub(super) fn build_help_detail_buttons(
     command_name: &str,
+    is_admin: bool,
 ) -> anyhow::Result<Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>> {
     let command_name = normalize_help_topic(command_name)?;
     let rows = match command_name {
@@ -146,39 +147,61 @@ pub(super) fn build_help_detail_buttons(
             )),
             build_return_menu_row(help_index_button(), menu_home_button()),
         ],
-        "points" => vec![
-            build_copy_only_row(send::build_copy_button(
-                "复制 /balance",
-                &balance_command(CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制查看余额",
-                &points_show_command(123456789, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制账户流水",
-                &balance_history_command(10, 1, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制用户流水",
-                &points_history_command(123456789, 10, 1, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制加分命令",
-                &points_change_command("add", 123456789, 10, "admin_adjust", CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制扣分命令",
-                &points_change_command("sub", 123456789, 10, "admin_adjust", CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
-            build_return_menu_row(help_index_button(), menu_home_button()),
-        ],
+        "points" => {
+            let mut rows = vec![
+                build_copy_only_row(send::build_copy_button(
+                    "复制 /balance",
+                    &balance_command(CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                )),
+                build_copy_only_row(send::build_copy_button(
+                    "复制账户流水",
+                    &balance_history_command(10, 1, CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                )),
+            ];
+            if is_admin {
+                rows.extend([
+                    build_copy_only_row(send::build_copy_button(
+                        "复制查看余额",
+                        &points_show_command(123456789, CommandStyle::Long),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    )),
+                    build_copy_only_row(send::build_copy_button(
+                        "复制用户流水",
+                        &points_history_command(123456789, 10, 1, CommandStyle::Long),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    )),
+                    build_copy_only_row(send::build_copy_button(
+                        "复制加分命令",
+                        &points_change_command(
+                            "add",
+                            123456789,
+                            10,
+                            "admin_adjust",
+                            CommandStyle::Long,
+                        ),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    )),
+                    build_copy_only_row(send::build_copy_button(
+                        "复制扣分命令",
+                        &points_change_command(
+                            "sub",
+                            123456789,
+                            10,
+                            "admin_adjust",
+                            CommandStyle::Long,
+                        ),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    )),
+                ]);
+            }
+            rows.push(build_return_menu_row(
+                help_index_button(),
+                menu_home_button(),
+            ));
+            rows
+        }
         "health" => vec![
             build_copy_only_row(send::build_copy_button(
                 "复制 /health",
@@ -310,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_help_detail_buttons_put_navigation_on_last_row() -> anyhow::Result<()> {
-        let rows = build_help_detail_buttons("transfer")?;
+        let rows = build_help_detail_buttons("transfer", false)?;
         let last = rows.last().expect("last row");
 
         assert_eq!(last[0].text, "返回目录");
@@ -320,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_help_detail_buttons_use_single_copy_rows() -> anyhow::Result<()> {
-        let rows = build_help_detail_buttons("job")?;
+        let rows = build_help_detail_buttons("job", true)?;
 
         assert_eq!(rows[0][0].text, "复制暂停命令");
         assert_eq!(rows[1][0].text, "复制恢复命令");
@@ -333,7 +356,7 @@ mod tests {
 
     #[test]
     fn test_config_help_detail_buttons_cover_runtime_entry_points() -> anyhow::Result<()> {
-        let rows = build_help_detail_buttons("config")?;
+        let rows = build_help_detail_buttons("config", true)?;
         let labels = rows
             .iter()
             .flatten()

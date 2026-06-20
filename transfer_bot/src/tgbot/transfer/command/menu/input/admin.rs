@@ -55,7 +55,9 @@ pub(super) fn parse_admin_input_payload(
 
     match action {
         AdminInputAction::TargetsSetDefault
+        | AdminInputAction::TargetsPickDefault
         | AdminInputAction::TargetsSetRoute
+        | AdminInputAction::TargetsPickRoute
         | AdminInputAction::TargetsDelRoute
         | AdminInputAction::TargetsSetAlias
         | AdminInputAction::TargetsDelAlias => {
@@ -128,42 +130,46 @@ pub(super) fn parse_admin_input_payload(
 
 /// 调用已有 `/targets` 命令入口。
 pub(super) async fn run_existing_targets_command(
+    app: &crate::app_context::AppContext,
     command_owned: Vec<String>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
-    targets::targets_command(command_refs, request_chat_id, client_id).await
+    targets::targets_command_on(app, command_refs, request_chat_id, client_id).await
 }
 
 /// 调用已有 `/acl` 命令入口。
 pub(super) async fn run_existing_acl_command(
+    app: &crate::app_context::AppContext,
     command_owned: Vec<String>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
-    acl::acl_command(command_refs, request_chat_id, client_id).await
+    acl::acl_command_on(app, command_refs, request_chat_id, client_id).await
 }
 
 /// 调用已有 `/billing` 命令入口。
 pub(super) async fn run_existing_billing_command(
+    app: &crate::app_context::AppContext,
     command_owned: Vec<String>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
-    billing::billing_command(command_refs, request_chat_id, client_id).await
+    billing::billing_command_on(app, command_refs, request_chat_id, client_id).await
 }
 
 /// 调用已有 `/config` 命令入口。
 pub(super) async fn run_existing_config_command(
+    app: &crate::app_context::AppContext,
     command_owned: Vec<String>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
-    config_cmd::config_command(command_refs, request_chat_id, client_id).await
+    config_cmd::config_command_on(app, command_refs, request_chat_id, client_id).await
 }
 
 #[cfg(test)]

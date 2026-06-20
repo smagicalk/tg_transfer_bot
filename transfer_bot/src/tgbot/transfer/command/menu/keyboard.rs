@@ -20,7 +20,25 @@ use home::home_buttons;
 use hubs::{account_hub_buttons, admin_hub_buttons, tasks_hub_buttons};
 
 /// 构建当前菜单页按钮。
+#[cfg(test)]
 pub(super) fn build_menu_buttons(
+    page: MenuPage,
+    recent_jobs: &[store::JobProgressSnapshot],
+    is_admin: bool,
+    draft_summary: Option<&MenuDraftSummary>,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    build_menu_buttons_on(
+        crate::app_context::app_context().as_ref(),
+        page,
+        recent_jobs,
+        is_admin,
+        draft_summary,
+    )
+}
+
+/// 构建当前菜单页按钮的上下文版本。
+pub(super) fn build_menu_buttons_on(
+    app: &crate::app_context::AppContext,
     page: MenuPage,
     recent_jobs: &[store::JobProgressSnapshot],
     is_admin: bool,
@@ -36,13 +54,13 @@ pub(super) fn build_menu_buttons(
         MenuPage::Downloads => downloads_buttons(),
         MenuPage::Jobs => jobs_buttons(),
         MenuPage::Lookup => lookup_buttons(),
-        MenuPage::Config if is_admin => config_buttons(),
+        MenuPage::Config if is_admin => super::super::config_cmd::build_config_buttons_on(app),
         MenuPage::Config => user_home_fallback_buttons(MenuPage::Config),
-        MenuPage::Targets if is_admin => super::super::targets::build_targets_buttons(),
+        MenuPage::Targets if is_admin => super::super::targets::build_targets_buttons_on(app),
         MenuPage::Targets => user_home_fallback_buttons(MenuPage::Targets),
-        MenuPage::Acl if is_admin => super::super::acl::build_acl_buttons(),
+        MenuPage::Acl if is_admin => super::super::acl::build_acl_buttons_on(app),
         MenuPage::Acl => user_home_fallback_buttons(MenuPage::Acl),
-        MenuPage::Billing if is_admin => super::super::billing::build_billing_buttons(),
+        MenuPage::Billing if is_admin => super::super::billing::build_billing_buttons_on(app),
         MenuPage::Billing => user_home_fallback_buttons(MenuPage::Billing),
         MenuPage::Help => help_buttons(is_admin),
     }
@@ -233,11 +251,6 @@ fn lookup_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
             ),
         ),
     ]
-}
-
-/// 配置页按钮。
-fn config_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    super::super::config_cmd::build_config_buttons()
 }
 
 /// 帮助页按钮。

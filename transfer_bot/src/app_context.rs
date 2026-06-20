@@ -16,6 +16,7 @@ pub(crate) fn app_context() -> Arc<AppContext> {
     APP_CONTEXT.clone()
 }
 
+#[derive(Clone)]
 pub struct AppContext {
     pub(crate) transfer_runtime: Arc<TransferRuntimeState>,
     pub(crate) billing_runtime: Arc<BillingRuntimeState>,

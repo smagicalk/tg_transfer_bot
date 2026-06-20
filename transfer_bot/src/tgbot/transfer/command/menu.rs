@@ -17,7 +17,7 @@ mod text;
 
 use callback::{MenuPage, MenuRequestAction, parse_menu_callback_data};
 use input::MenuInputKind;
-use keyboard::build_menu_buttons;
+use keyboard::build_menu_buttons_on;
 use text::{
     MenuHomeSummary, build_menu_home_text, build_menu_no_pending_input_text,
     build_menu_status_text, build_menu_text, build_permission_denied_menu_text,
@@ -72,13 +72,6 @@ pub(super) fn build_menu_billing_callback_data() -> String {
     callback::menu_page_callback_data(MenuPage::Billing)
 }
 
-/// 生成管理单步输入 callback 数据。
-pub(in crate::tgbot::transfer::command) fn build_menu_admin_input_button_data(
-    action: AdminInputAction,
-) -> String {
-    callback::admin_input_callback_data(action)
-}
-
 /// 启动管理配置单步输入。
 pub(super) async fn start_admin_input_callback(
     callback_query_id: i64,
@@ -99,10 +92,9 @@ pub(super) async fn start_admin_input_callback(
     .await
 }
 
-/// `/menu` 命令入口。
-///
-/// 默认返回首页；菜单本身不要求用户记命令参数，复杂输入交给 ForceReply 引导。
-pub async fn menu_command(
+/// 在指定上下文上执行 `/menu` 命令。
+pub async fn menu_command_on(
+    app: &crate::app_context::AppContext,
     _text: Vec<&str>,
     actor: crate::config::RequestActor,
     client_id: i32,
@@ -118,13 +110,22 @@ pub async fn menu_command(
             .await;
     }
 
-    send_menu_page(MenuPage::Home, actor, client_id).await
+    if actor.is_admin()
+        && let Some((text, rows)) =
+            crate::tgbot::transfer::workflow::startup_setup_guide_page_on(app)
+    {
+        return send::ReplyPanel::card(text)
+            .rows(rows)
+            .send(actor.request_chat_id, client_id)
+            .await;
+    }
+
+    send_menu_page_on(app, MenuPage::Home, actor, client_id).await
 }
 
-/// `/menu` inline keyboard 回调入口。
-///
-/// 菜单 callback 只处理自身页面切换和“开始输入”；下载/任务/帮助按钮会走各自模块的 callback。
-pub async fn menu_callback_query(
+/// 在指定上下文上处理 `/menu` callback。
+pub async fn menu_callback_query_on(
+    app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     config: Arc<BotConfig>,
     actor: crate::config::RequestActor,
@@ -162,10 +163,37 @@ pub async fn menu_callback_query(
 
     let route = route_menu_callback_action(action);
 
+    if actor.is_admin()
+        && !matches!(
+            route,
+            MenuCallbackRoute::Page(MenuPage::Home)
+                | MenuCallbackRoute::Page(MenuPage::Targets)
+                | MenuCallbackRoute::Page(MenuPage::Acl)
+                | MenuCallbackRoute::Page(MenuPage::Billing)
+                | MenuCallbackRoute::Page(MenuPage::Config)
+                | MenuCallbackRoute::Page(MenuPage::AdminHub)
+        )
+        && let Some((text, rows)) =
+            crate::tgbot::transfer::workflow::startup_setup_guide_page_on(app)
+    {
+        send::answer_callback_query(update.id, Some("请先完成初始化"), client_id).await?;
+        let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
+        return send::edit_interaction_card_or_error(
+            text,
+            update.chat_id,
+            update.message_id,
+            keyboard,
+            client_id,
+            "初始化引导刷新失败",
+            "初始化引导已生成，但原消息编辑失败；请复制错误或重新发送 /menu。",
+        )
+        .await;
+    }
+
     match route {
         MenuCallbackRoute::Page(page) => {
             send::answer_callback_query(update.id, Some(page.title()), client_id).await?;
-            let (text, rows) = match build_menu_page(page, actor).await {
+            let (text, rows) = match build_menu_page_on(app, page, actor).await {
                 Ok(page) => page,
                 Err(err) => {
                     send_menu_callback_error(update.chat_id, client_id, &err).await?;
@@ -208,7 +236,8 @@ pub async fn menu_callback_query(
         }
         MenuCallbackRoute::ContinueInput => {
             send::answer_callback_query(update.id, Some("继续输入"), client_id).await?;
-            let continued = input::continue_current_input(
+            let continued = input::continue_current_input_on(
+                app,
                 update.chat_id,
                 update.sender_user_id,
                 config,
@@ -230,6 +259,7 @@ pub async fn menu_callback_query(
         MenuCallbackRoute::Forward(action) => match action {
             MenuRequestAction::TargetDefault => {
                 input::target_default_callback_query(
+                    app,
                     update.id,
                     update.chat_id,
                     update.message_id,
@@ -241,6 +271,7 @@ pub async fn menu_callback_query(
             }
             MenuRequestAction::TargetManual => {
                 input::target_manual_callback_query(
+                    app,
                     update.id,
                     update.chat_id,
                     update.message_id,
@@ -251,6 +282,7 @@ pub async fn menu_callback_query(
             }
             MenuRequestAction::TargetRequestChat => {
                 input::target_request_chat_callback_query(
+                    app,
                     update.id,
                     update.chat_id,
                     update.message_id,
@@ -261,6 +293,7 @@ pub async fn menu_callback_query(
             }
             MenuRequestAction::TargetAlias(target_chat_id) => {
                 input::target_alias_callback_query(
+                    app,
                     update.id,
                     update.chat_id,
                     update.message_id,
@@ -273,6 +306,7 @@ pub async fn menu_callback_query(
             }
             MenuRequestAction::TargetConfirm => {
                 input::target_confirm_callback_query(
+                    app,
                     update.id,
                     update.chat_id,
                     update.message_id,
@@ -285,6 +319,7 @@ pub async fn menu_callback_query(
             }
             MenuRequestAction::TargetBack => {
                 input::target_back_callback_query(
+                    app,
                     update.id,
                     update.chat_id,
                     update.message_id,
@@ -557,40 +592,37 @@ pub(super) async fn start_transfer_input_from_command(
     Ok(())
 }
 
-/// 处理菜单 ForceReply 输入。
-///
-/// 返回 `true` 表示本条普通文本已被菜单输入流消费，上层不应继续按未知文本处理。
-pub async fn handle_menu_text_input(
+/// 在指定上下文上处理菜单 ForceReply 输入。
+pub(in crate::tgbot) async fn handle_menu_text_input_on(
+    app: &crate::app_context::AppContext,
     text: &str,
     config: Arc<BotConfig>,
-    request_chat_id: i64,
+    key: (i64, i64),
     request_message_id: i64,
-    sender_user_id: i64,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<bool> {
-    input::handle_menu_input(
-        text,
-        config,
-        request_chat_id,
-        request_message_id,
-        sender_user_id,
-        actor,
-        client_id,
-    )
-    .await
+    input::handle_menu_input_on(app, text, config, key, request_message_id, actor, client_id).await
 }
 
-/// 处理 Telegram 原生选群结果。
-pub async fn handle_menu_shared_chat_input(
+/// 在指定上下文上处理 Telegram 原生选群结果。
+pub(in crate::tgbot) async fn handle_menu_shared_chat_input_on(
+    app: &crate::app_context::AppContext,
     shared: &tdlib_rs::types::MessageChatShared,
     config: Arc<BotConfig>,
     request_chat_id: i64,
     sender_user_id: i64,
     client_id: i32,
 ) -> anyhow::Result<bool> {
-    input::handle_shared_chat_input(shared, config, request_chat_id, sender_user_id, client_id)
-        .await
+    input::handle_shared_chat_input_on(
+        app,
+        shared,
+        config,
+        request_chat_id,
+        sender_user_id,
+        client_id,
+    )
+    .await
 }
 
 /// 丢弃当前聊天里的菜单输入草稿。
@@ -663,39 +695,40 @@ pub async fn cancel_menu_input(
     Ok(true)
 }
 
-/// 发送一个菜单页。
-async fn send_menu_page(
+/// 在指定上下文上发送一个菜单页。
+async fn send_menu_page_on(
+    app: &crate::app_context::AppContext,
     page: MenuPage,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let (text, rows) = build_menu_page(page, actor).await?;
+    let (text, rows) = build_menu_page_on(app, page, actor).await?;
     send::ReplyPanel::card(text)
         .rows(rows)
         .send(actor.request_chat_id, client_id)
         .await
 }
 
-/// 构造一个菜单页的正文和按钮。
-///
-/// 首页需要读取最近任务作为快捷入口；配置页直接复用 `/config` 的实时配置卡片，
-/// 这样菜单里的“运行配置”和直接发送 `/config` 展示的是同一套运行参数。
-async fn build_menu_page(
+/// 在指定上下文上构造一个菜单页的正文和按钮。
+async fn build_menu_page_on(
+    app: &crate::app_context::AppContext,
     page: MenuPage,
     actor: crate::config::RequestActor,
 ) -> anyhow::Result<(String, Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>)> {
+    if actor.is_admin()
+        && page != MenuPage::Targets
+        && page != MenuPage::Acl
+        && page != MenuPage::Billing
+        && page != MenuPage::Config
+        && let Some(page) = crate::tgbot::transfer::workflow::startup_setup_guide_page_on(app)
+    {
+        return Ok(page);
+    }
+
     let (recent_jobs, health, draft_summary) = if page == MenuPage::Home {
-        let recent_jobs = store::list_recent_job_snapshots_for_actor(
-            crate::app_context::app_context().as_ref(),
-            actor,
-            5,
-        )
-        .await?;
+        let recent_jobs = store::list_recent_job_snapshots_for_actor(app, actor, 5).await?;
         let health = if actor.is_admin() {
-            Some(
-                store::list_transfer_health_snapshot(crate::app_context::app_context().as_ref())
-                    .await?,
-            )
+            Some(store::list_transfer_health_snapshot(app).await?)
         } else {
             None
         };
@@ -706,13 +739,13 @@ async fn build_menu_page(
         (Vec::new(), None, None)
     };
     let text = if page == MenuPage::Config && actor.is_admin() {
-        config_cmd::format_current_transfer_config_text("当前可调配置")
+        config_cmd::format_current_transfer_config_text_on(app, "当前可调配置")
     } else if page == MenuPage::Targets && actor.is_admin() {
-        super::targets::format_targets_text("当前目标配置")
+        super::targets::format_targets_text_on(app, "当前目标配置")
     } else if page == MenuPage::Acl && actor.is_admin() {
-        super::acl::format_acl_text("当前访问控制")
+        super::acl::format_acl_text_on(app, "当前访问控制")
     } else if page == MenuPage::Billing && actor.is_admin() {
-        super::billing::format_billing_text("当前计费配置")
+        super::billing::format_billing_text_on(app, "当前计费配置")
     } else if page == MenuPage::Config {
         build_permission_denied_menu_text(
             "运行配置",
@@ -735,9 +768,7 @@ async fn build_menu_page(
                 .map_or(0, |health| health.file_cache_failed_rows),
             recent_jobs: recent_jobs.len(),
             pending_input: draft_summary.as_ref().map(|draft| draft.title),
-            announcement_text: crate::app_context::app_context()
-                .home_announcement
-                .announcement_text(),
+            announcement_text: app.home_announcement.announcement_text(),
             is_admin: actor.is_admin(),
         })
     } else {
@@ -745,7 +776,13 @@ async fn build_menu_page(
     };
     Ok((
         text,
-        build_menu_buttons(page, &recent_jobs, actor.is_admin(), draft_summary.as_ref()),
+        build_menu_buttons_on(
+            app,
+            page,
+            &recent_jobs,
+            actor.is_admin(),
+            draft_summary.as_ref(),
+        ),
     ))
 }
 
@@ -794,6 +831,22 @@ mod tests {
             user_id: 992,
             role: crate::config::ActorRole::Admin,
         };
+        let app_context = crate::app_context::app_context();
+        crate::tgbot::transfer::update_targets_runtime_config_on(
+            app_context.as_ref(),
+            crate::config::TargetsConfig {
+                default_chat_id: -1001234567890,
+                ..Default::default()
+            },
+        );
+        crate::tgbot::transfer::update_access_control_runtime_config_on(
+            app_context.as_ref(),
+            crate::config::AccessControlConfig {
+                bootstrap_admin_user_ids: vec![actor.user_id],
+                admin_user_ids: vec![actor.user_id],
+                ..Default::default()
+            },
+        );
 
         input::start_menu_input(
             actor.request_chat_id,
@@ -802,11 +855,46 @@ mod tests {
         )
         .await?;
 
-        let (text, _rows) = build_menu_page(MenuPage::Home, actor).await?;
+        let (text, _rows) = build_menu_page_on(app_context.as_ref(), MenuPage::Home, actor).await?;
 
         assert!(text.contains("当前有未完成输入"));
         assert!(text.contains("‹转存源链接›"));
         input::cancel_menu_input(actor.request_chat_id, actor.user_id).await?;
+        Ok(())
+    }
+
+    // 数据库 targets/acl 尚未初始化完成时，admin 首页应直接显示初始化引导，而不是普通菜单。
+    #[tokio::test]
+    async fn test_build_menu_page_home_redirects_to_startup_setup_when_uninitialized()
+    -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let actor = crate::config::RequestActor {
+            request_chat_id: 1991,
+            user_id: 1992,
+            role: crate::config::ActorRole::Admin,
+        };
+        let app_context = crate::app_context::app_context();
+        crate::tgbot::transfer::update_targets_runtime_config_on(
+            app_context.as_ref(),
+            crate::config::TargetsConfig::default(),
+        );
+        crate::tgbot::transfer::update_access_control_runtime_config_on(
+            app_context.as_ref(),
+            crate::config::AccessControlConfig {
+                bootstrap_admin_user_ids: vec![actor.user_id],
+                ..Default::default()
+            },
+        );
+
+        let (text, rows) = build_menu_page_on(app_context.as_ref(), MenuPage::Home, actor).await?;
+
+        assert!(text.contains("初始化引导"));
+        assert!(
+            rows.iter()
+                .flatten()
+                .any(|button| button.text == "目标配置")
+        );
+        assert!(!text.contains("运行摘要"));
         Ok(())
     }
 
@@ -819,7 +907,9 @@ mod tests {
             role: crate::config::ActorRole::User,
         };
 
-        let (text, rows) = build_menu_page(MenuPage::Config, actor).await?;
+        let app_context = crate::app_context::app_context();
+        let (text, rows) =
+            build_menu_page_on(app_context.as_ref(), MenuPage::Config, actor).await?;
 
         assert!(text.contains("没有权限"));
         assert!(!text.contains("job_concurrency"));
@@ -837,7 +927,9 @@ mod tests {
             role: crate::config::ActorRole::User,
         };
 
-        let (text, rows) = build_menu_page(MenuPage::AdminHub, actor).await?;
+        let app_context = crate::app_context::app_context();
+        let (text, rows) =
+            build_menu_page_on(app_context.as_ref(), MenuPage::AdminHub, actor).await?;
 
         assert!(text.contains("没有权限"));
         assert!(!text.contains("文件缓存"));

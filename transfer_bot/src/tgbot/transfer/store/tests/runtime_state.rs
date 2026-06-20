@@ -6,14 +6,14 @@ use super::super::{
     load_targets_runtime_config, save_access_control_runtime_config, save_billing_runtime_config,
     save_targets_runtime_config,
 };
-use super::fixtures::prepare_test_schema;
+use super::fixtures::rebuild_empty_test_schema;
 use crate::config::{AccessControlConfig, BillingConfig, TargetsConfig};
 use crate::db;
 
 #[tokio::test]
 async fn test_ensure_targets_runtime_config_seeds_default_once() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
-    prepare_test_schema().await?;
+    rebuild_empty_test_schema().await?;
 
     let default_config = TargetsConfig {
         default_chat_id: -100,
@@ -36,7 +36,7 @@ async fn test_ensure_targets_runtime_config_seeds_default_once() -> anyhow::Resu
 #[tokio::test]
 async fn test_save_targets_runtime_config_overwrites_existing_rows() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
-    prepare_test_schema().await?;
+    rebuild_empty_test_schema().await?;
 
     ensure_targets_runtime_config(&TargetsConfig {
         default_chat_id: -100,
@@ -66,7 +66,7 @@ async fn test_save_targets_runtime_config_overwrites_existing_rows() -> anyhow::
 #[tokio::test]
 async fn test_ensure_access_control_runtime_config_seeds_default_once() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
-    prepare_test_schema().await?;
+    rebuild_empty_test_schema().await?;
 
     let default_config = AccessControlConfig {
         bootstrap_admin_user_ids: vec![1],
@@ -97,7 +97,7 @@ async fn test_ensure_access_control_runtime_config_seeds_default_once() -> anyho
 #[tokio::test]
 async fn test_save_access_control_runtime_config_overwrites_existing_rows() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
-    prepare_test_schema().await?;
+    rebuild_empty_test_schema().await?;
 
     ensure_access_control_runtime_config(&AccessControlConfig {
         bootstrap_admin_user_ids: vec![1],
@@ -136,7 +136,7 @@ async fn test_save_access_control_runtime_config_overwrites_existing_rows() -> a
 #[tokio::test]
 async fn test_ensure_billing_runtime_config_seeds_default_once() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
-    prepare_test_schema().await?;
+    rebuild_empty_test_schema().await?;
 
     let default_config = BillingConfig {
         enabled: true,
@@ -163,7 +163,7 @@ async fn test_ensure_billing_runtime_config_seeds_default_once() -> anyhow::Resu
 #[tokio::test]
 async fn test_save_billing_runtime_config_overwrites_existing_row() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
-    prepare_test_schema().await?;
+    rebuild_empty_test_schema().await?;
 
     ensure_billing_runtime_config(&BillingConfig {
         enabled: true,

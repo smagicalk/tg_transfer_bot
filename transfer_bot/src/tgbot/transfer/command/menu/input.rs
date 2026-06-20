@@ -18,10 +18,10 @@ use self::admin::{
     AdminCommandKind, admin_command_kind, parse_admin_input_payload, run_existing_acl_command,
     run_existing_billing_command, run_existing_config_command, run_existing_targets_command,
 };
-pub(super) use self::flow_callbacks::handle_shared_chat_input;
-use self::flow_callbacks::{FlowRequestContext, continue_flow_input, handle_flow_input};
+pub(in crate::tgbot::transfer::command::menu) use self::flow_callbacks::handle_shared_chat_input_on;
+use self::flow_callbacks::{FlowRequestContext, continue_flow_input_on, handle_flow_input};
 use self::simple::{
-    expired_input_detail, is_cancel_text, parse_job_id_input, parse_user_id_input,
+    expired_input_detail_on, is_cancel_text, parse_job_id_input, parse_user_id_input,
     run_existing_job_command, run_existing_points_history_command, send_cancelled_notice,
 };
 use super::text::{build_menu_recovery_text, build_step_prompt_text};
@@ -40,10 +40,16 @@ pub(super) use state::{
     MenuInputKind, MenuJobAction, cancel_menu_input, cancel_menu_input_with_state, start_menu_input,
 };
 
+use self::callbacks_simple::send_targets_chat_picker_prompt;
+
 /// Telegram 原生选群按钮 ID。
 ///
 /// 同一私聊里同时只保留一个草稿，因此固定 ID 足够；收到 `MessageChatShared` 时仍会校验这个 ID。
 const TARGET_CHAT_REQUEST_BUTTON_ID: i32 = 7001;
+/// `/targets` 配置页“选择默认目标”按钮 ID。
+pub(super) const TARGETS_DEFAULT_REQUEST_BUTTON_ID: i32 = 7101;
+/// `/targets` 配置页“选择请求路由目标”按钮 ID。
+pub(super) const TARGETS_ROUTE_REQUEST_BUTTON_ID: i32 = 7102;
 
 /// 当前输入草稿的首页摘要。
 #[derive(Debug, Clone)]
@@ -72,8 +78,14 @@ fn continue_input_decision(result: DraftTakeResult) -> ContinueInputDecision {
 }
 
 /// 构造“继续输入时已过期”的恢复文案。
+fn build_continue_input_expired_text_on(app: &crate::app_context::AppContext) -> String {
+    build_menu_recovery_text("输入已过期", "expired", &expired_input_detail_on(app))
+}
+
+#[cfg(test)]
 fn build_continue_input_expired_text() -> String {
-    build_menu_recovery_text("输入已过期", "expired", &expired_input_detail())
+    let app_context = crate::app_context::app_context();
+    build_continue_input_expired_text_on(app_context.as_ref())
 }
 
 /// 读取当前输入草稿摘要，不消费草稿。
@@ -89,10 +101,9 @@ pub(super) async fn current_draft_summary(
     }
 }
 
-/// 重新发送当前草稿所在阶段的提示。
-///
-/// 这里不消费草稿；后续文本回复或确认按钮仍会使用原草稿继续执行。
-pub(super) async fn continue_current_input(
+/// 在指定上下文上重新发送当前草稿所在阶段的提示。
+pub(super) async fn continue_current_input_on(
+    app: &crate::app_context::AppContext,
     chat_id: i64,
     user_id: i64,
     config: std::sync::Arc<BotConfig>,
@@ -101,7 +112,7 @@ pub(super) async fn continue_current_input(
     let draft = match continue_input_decision(peek_current_draft((chat_id, user_id)).await?) {
         ContinueInputDecision::Active(draft) => draft,
         ContinueInputDecision::Expired => {
-            send::ReplyPanel::card(build_continue_input_expired_text())
+            send::ReplyPanel::card(build_continue_input_expired_text_on(app))
                 .row(vec![send::build_callback_button(
                     "返回菜单",
                     &super::build_menu_home_callback_data(),
@@ -114,7 +125,7 @@ pub(super) async fn continue_current_input(
         ContinueInputDecision::None => return Ok(false),
     };
 
-    if continue_flow_input(&draft, config.as_ref(), chat_id, user_id, client_id).await? {
+    if continue_flow_input_on(app, &draft, config.as_ref(), chat_id, user_id, client_id).await? {
         return Ok(true);
     }
 
@@ -136,6 +147,13 @@ pub(super) async fn continue_current_input(
                 client_id,
             )
             .await?;
+        }
+        MenuInputStep::AdminChatPicker {
+            action,
+            request_chat_id_input,
+        } => {
+            send_targets_chat_picker_prompt(chat_id, client_id, action, request_chat_id_input)
+                .await?;
         }
         MenuInputStep::PointLedgerUserId => {
             send::send_card_message_with_force_reply_returning(
@@ -161,7 +179,15 @@ pub(super) async fn continue_current_input(
                 step = ?draft.step,
                 "continue input fell back to flow step unexpectedly"
             );
-            return continue_flow_input(&draft, config.as_ref(), chat_id, user_id, client_id).await;
+            return continue_flow_input_on(
+                app,
+                &draft,
+                config.as_ref(),
+                chat_id,
+                user_id,
+                client_id,
+            )
+            .await;
         }
     }
     Ok(true)
@@ -170,21 +196,21 @@ pub(super) async fn continue_current_input(
 /// 处理菜单输入。
 ///
 /// 返回 true 表示本条消息已被输入流程消费；返回 false 表示没有匹配草稿。
-pub(super) async fn handle_menu_input(
+pub(super) async fn handle_menu_input_on(
+    app: &crate::app_context::AppContext,
     text: &str,
     config: std::sync::Arc<BotConfig>,
-    request_chat_id: i64,
+    key: (i64, i64),
     request_message_id: i64,
-    sender_user_id: i64,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<bool> {
+    let (request_chat_id, sender_user_id) = key;
     let input = text.trim();
     if input.is_empty() {
         return Ok(false);
     }
 
-    let key = (request_chat_id, sender_user_id);
     let draft = match take_current_draft(key).await? {
         DraftTakeResult::Active(draft) => draft,
         DraftTakeResult::Expired => {
@@ -194,18 +220,14 @@ pub(super) async fn handle_menu_input(
                 request_message_id,
                 "menu input draft expired"
             );
-            send::ReplyPanel::card(build_menu_recovery_text(
-                "输入已过期",
-                "expired",
-                &expired_input_detail(),
-            ))
-            .row(vec![send::build_callback_button(
-                "返回菜单",
-                &super::build_menu_home_callback_data(),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            )])
-            .send(request_chat_id, client_id)
-            .await?;
+            send::ReplyPanel::card(build_continue_input_expired_text_on(app))
+                .row(vec![send::build_callback_button(
+                    "返回菜单",
+                    &super::build_menu_home_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                )])
+                .send(request_chat_id, client_id)
+                .await?;
             return Ok(true);
         }
         DraftTakeResult::None => {
@@ -237,6 +259,7 @@ pub(super) async fn handle_menu_input(
     }
 
     if let Some(consumed) = handle_flow_input(
+        app,
         draft.clone(),
         input,
         FlowRequestContext {
@@ -293,7 +316,7 @@ pub(super) async fn handle_menu_input(
                 job_action = action.log_name(),
                 "menu input dispatching job command"
             );
-            run_existing_job_command(action, job_id, actor, client_id).await?;
+            run_existing_job_command(app, action, job_id, actor, client_id).await?;
             Ok(true)
         }
         MenuInputStep::AdminInput { action } => {
@@ -332,19 +355,73 @@ pub(super) async fn handle_menu_input(
             );
             match admin_command_kind(action) {
                 Some(AdminCommandKind::Targets) => {
-                    run_existing_targets_command(command_owned, request_chat_id, client_id).await?;
+                    run_existing_targets_command(app, command_owned, request_chat_id, client_id)
+                        .await?;
                 }
                 Some(AdminCommandKind::Acl) => {
-                    run_existing_acl_command(command_owned, request_chat_id, client_id).await?;
+                    run_existing_acl_command(app, command_owned, request_chat_id, client_id)
+                        .await?;
                 }
                 Some(AdminCommandKind::Config) => {
-                    run_existing_config_command(command_owned, request_chat_id, client_id).await?;
+                    run_existing_config_command(app, command_owned, request_chat_id, client_id)
+                        .await?;
                 }
                 Some(AdminCommandKind::Billing) => {
-                    run_existing_billing_command(command_owned, request_chat_id, client_id).await?;
+                    run_existing_billing_command(app, command_owned, request_chat_id, client_id)
+                        .await?;
                 }
                 None => anyhow::bail!("unsupported admin input action: {}", action.log_name()),
             }
+            Ok(true)
+        }
+        MenuInputStep::AdminChatPicker {
+            action,
+            request_chat_id_input,
+        } => {
+            if action != AdminInputAction::TargetsPickRoute {
+                put_draft(
+                    key,
+                    MenuInputDraft::admin_chat_picker(action, request_chat_id_input),
+                )
+                .await?;
+                anyhow::bail!(
+                    "unsupported admin chat picker text step: {}",
+                    action.log_name()
+                );
+            }
+
+            let Some(route_request_chat_id) = parse_job_id_input(input) else {
+                put_draft(
+                    key,
+                    MenuInputDraft::admin_chat_picker(action, request_chat_id_input),
+                )
+                .await?;
+                send::send_card_message_with_force_reply_returning(
+                    build_step_prompt_text(
+                        "1/1",
+                        "request_chat_id 格式不正确",
+                        "请回复纯数字 request_chat_id，随后会弹出目标群组选择器；或发送 /cancel 取消。",
+                    ),
+                    request_chat_id,
+                    "输入 request_chat_id，或发送 /cancel",
+                    client_id,
+                )
+                .await?;
+                return Ok(true);
+            };
+
+            put_draft(
+                key,
+                MenuInputDraft::admin_chat_picker(action, Some(route_request_chat_id)),
+            )
+            .await?;
+            send_targets_chat_picker_prompt(
+                request_chat_id,
+                client_id,
+                action,
+                Some(route_request_chat_id),
+            )
+            .await?;
             Ok(true)
         }
         MenuInputStep::PointLedgerUserId => {
@@ -399,7 +476,7 @@ pub(super) async fn handle_menu_input(
                 "menu text input fell through to flow step unexpectedly"
             );
             put_draft(key, draft).await?;
-            send::ReplyPanel::card(build_continue_input_expired_text())
+            send::ReplyPanel::card(build_continue_input_expired_text_on(app))
                 .row(vec![send::build_callback_button(
                     "返回菜单",
                     &super::build_menu_home_callback_data(),

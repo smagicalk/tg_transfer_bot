@@ -10,7 +10,6 @@ mod status_meta;
 
 use crate::tgbot::send;
 use crate::tgbot::send::send_interaction_error_card;
-use actions::{pause_job, resume_job, show_job_status, stop_job};
 use args::{
     JobAction, JobCallbackAction, is_job_callback_data, parse_job_args, parse_job_callback_data,
 };
@@ -59,20 +58,32 @@ pub async fn job_command(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    let app_context = crate::app_context::app_context();
+    job_command_on(app_context.as_ref(), text, actor, client_id).await
+}
+
+/// 在指定上下文上执行 `/job` 命令。
+pub(in crate::tgbot) async fn job_command_on(
+    app: &crate::app_context::AppContext,
+    text: Vec<&str>,
+    actor: crate::config::RequestActor,
+    client_id: i32,
+) -> anyhow::Result<()> {
     let args = parse_job_args(&text)?;
 
     match args.action {
-        JobAction::Pause => pause_job(args.job_id, actor, client_id).await,
-        JobAction::Resume => resume_job(args.job_id, actor, client_id).await,
-        JobAction::Stop => stop_job(args.job_id, actor, client_id).await,
-        JobAction::Status => show_job_status(args.job_id, actor, client_id).await,
+        JobAction::Pause => actions::pause_job_on(app, args.job_id, actor, client_id).await,
+        JobAction::Resume => actions::resume_job_on(app, args.job_id, actor, client_id).await,
+        JobAction::Stop => actions::stop_job_on(app, args.job_id, actor, client_id).await,
+        JobAction::Status => actions::show_job_status_on(app, args.job_id, actor, client_id).await,
     }
 }
 
-/// `/job` inline keyboard 回调入口。
+/// 在指定上下文上处理 `/job` inline keyboard 回调。
 ///
-/// 点击任务详情里的按钮后，直接编辑当前卡片，而不是要求用户复制命令再发送。
-pub async fn job_callback_query(
+/// 这样外层统一 callback 路由在已经拿到 `AppContext` 时，可以整条链继续显式传递。
+pub(in crate::tgbot) async fn job_callback_query_on(
+    app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     actor: crate::config::RequestActor,
     client_id: i32,
@@ -103,6 +114,7 @@ pub async fn job_callback_query(
     .await?;
 
     match handle_job_callback(
+        app,
         args.action,
         args.job_id,
         actor,

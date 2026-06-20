@@ -5,17 +5,18 @@ use std::sync::Arc;
 use crate::config::ClientRole;
 use crate::config::{BotConfig, RequestActor};
 use crate::tgbot::send;
+use crate::tgbot::transfer::billing_runtime_config_on;
 use crate::tgbot::transfer::card;
 
 use super::build_downloads_status_button_data;
 use super::build_menu_home_button_data;
-use super::common::{CommandStyle, downloads_command, lookup_command, resolve_target_chat_id};
+use super::common::{CommandStyle, downloads_command, lookup_command, resolve_target_chat_id_on};
 use super::menu;
 use crate::tgbot::transfer::types::{SourceKind, TransferPlan};
 
-/// `/transfer` 命令入口。
-/// 命令格式：`/transfer <link> [target]`
-pub async fn transfer_command(
+/// 在指定上下文上执行 `/transfer` 命令。
+pub async fn transfer_command_on(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     text: Vec<&str>,
     config: Arc<BotConfig>,
     request_message: &tdlib_rs::types::Message,
@@ -39,11 +40,11 @@ pub async fn transfer_command(
         }
         Err(err) => return Err(err),
     };
-    run_transfer_plan(
+    run_transfer_plan_on(
+        app_context,
         text,
         source,
         config,
-        request_chat_id,
         request_message_id,
         actor,
         client_id,
@@ -51,13 +52,12 @@ pub async fn transfer_command(
     .await
 }
 
-/// 链接转存入口。
-///
-/// 菜单输入流已经收集到明确 source link 和 target，因此不需要依赖 TDLib reply 信息。
-pub async fn transfer_link_command(
+/// 在指定上下文上执行菜单/向导收集好的链接转存。
+pub(in crate::tgbot::transfer::command) async fn transfer_link_command_on(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     text: Vec<&str>,
     config: Arc<BotConfig>,
-    request_chat_id: i64,
+    _request_chat_id: i64,
     request_message_id: i64,
     actor: RequestActor,
     client_id: i32,
@@ -72,11 +72,11 @@ pub async fn transfer_link_command(
         source_message_chat_id: None,
         source_message_id: None,
     };
-    run_transfer_plan(
+    run_transfer_plan_on(
+        app_context,
         text,
         source,
         config,
-        request_chat_id,
         request_message_id,
         actor,
         client_id,
@@ -84,16 +84,14 @@ pub async fn transfer_link_command(
     .await
 }
 
-/// bot 收到可见媒体后自动转存。
-///
-/// 自动模式只使用配置默认目标，不解析用户输入；没有默认目标时调用方会得到错误并提示手动指定目标。
-pub async fn transfer_bot_message_auto_command(
+/// 在指定上下文上执行 bot 可见媒体自动转存。
+pub async fn transfer_bot_message_auto_command_on(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     config: Arc<BotConfig>,
     request_message: tdlib_rs::types::Message,
     actor: RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let request_chat_id = request_message.chat_id;
     let request_message_id = request_message.id;
     let source = ResolvedTransferSource {
         source_link: bot_message_source_link(request_message.chat_id, request_message.id),
@@ -102,11 +100,11 @@ pub async fn transfer_bot_message_auto_command(
         source_message_chat_id: Some(request_message.chat_id),
         source_message_id: Some(request_message.id),
     };
-    run_transfer_plan(
+    run_transfer_plan_on(
+        app_context,
         vec!["/t", "bot-message-source"],
         source,
         config,
-        request_chat_id,
         request_message_id,
         actor,
         client_id,
@@ -114,12 +112,12 @@ pub async fn transfer_bot_message_auto_command(
     .await
 }
 
-/// 创建计划、发送进度卡片并派发后台任务。
-async fn run_transfer_plan(
+/// 在指定上下文上创建计划、发送进度卡片并派发后台任务。
+async fn run_transfer_plan_on(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     text: Vec<&str>,
     mut source: ResolvedTransferSource,
     config: Arc<BotConfig>,
-    request_chat_id: i64,
     request_message_id: i64,
     actor: RequestActor,
     client_id: i32,
@@ -133,26 +131,41 @@ async fn run_transfer_plan(
         source.preferred_source_client_role = ClientRole::User;
     }
 
-    let target_chat_id = resolve_transfer_target_chat_id(&text, &source, &config, request_chat_id)?;
+    let target_chat_id = resolve_transfer_target_chat_id_on(
+        app_context.as_ref(),
+        &text,
+        &source,
+        &config,
+        actor.request_chat_id,
+    )?;
 
     let plan = TransferPlan {
+        billing: billing_runtime_config_on(app_context.as_ref()),
         actor,
         source_link: source.source_link,
         source_kind: source.source_kind,
         preferred_source_client_role: source.preferred_source_client_role,
         allow_user_fallback: actor.is_admin(),
-        billing: crate::tgbot::transfer::billing_runtime_config(),
         source_message_chat_id: source.source_message_chat_id,
         source_message_id: source.source_message_id,
         target_chat_id,
-        request_chat_id,
+        request_chat_id: actor.request_chat_id,
         request_message_id,
     };
-    dispatch_transfer_plan(plan, config, request_chat_id, request_message_id, client_id).await
+    dispatch_transfer_plan(
+        app_context,
+        plan,
+        config,
+        actor.request_chat_id,
+        request_message_id,
+        client_id,
+    )
+    .await
 }
 
 /// 发送初始回执并启动后台转存任务。
 async fn dispatch_transfer_plan(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: TransferPlan,
     config: Arc<BotConfig>,
     request_chat_id: i64,
@@ -181,7 +194,7 @@ async fn dispatch_transfer_plan(
     .await?;
     // 后台任务会持续编辑这条消息，把它变成转存进度面板。
     super::super::spawn_transfer_job(
-        crate::app_context::app_context(),
+        app_context,
         plan,
         request_chat_id,
         Some(progress_message.id),
@@ -271,21 +284,34 @@ fn effective_link_source_role(config: &BotConfig) -> ClientRole {
 /// 回复消息模式下 `/transfer archive` 的第 2 个参数是 target；
 /// 链接模式下 `/transfer <link> archive` 的第 3 个参数才是 target，
 /// 因此这里需要按 source_kind 重新组装给公共解析器。
+#[cfg(test)]
 fn resolve_transfer_target_chat_id(
     text: &[&str],
     source: &ResolvedTransferSource,
     _config: &BotConfig,
     request_chat_id: i64,
 ) -> anyhow::Result<i64> {
+    let app_context = crate::app_context::app_context();
+    resolve_transfer_target_chat_id_on(app_context.as_ref(), text, source, _config, request_chat_id)
+}
+
+/// 在指定上下文上解析 `/transfer` 目标 chat。
+fn resolve_transfer_target_chat_id_on(
+    app: &crate::app_context::AppContext,
+    text: &[&str],
+    source: &ResolvedTransferSource,
+    _config: &BotConfig,
+    request_chat_id: i64,
+) -> anyhow::Result<i64> {
     match source.source_kind {
-        SourceKind::Link => resolve_target_chat_id(text, request_chat_id),
+        SourceKind::Link => resolve_target_chat_id_on(app, text, request_chat_id),
         SourceKind::BotMessage => {
             let target_args = if text.len() >= 2 {
                 vec![text[0], "bot-message-source", text[1]]
             } else {
                 vec![text[0], "bot-message-source"]
             };
-            resolve_target_chat_id(&target_args, request_chat_id)
+            resolve_target_chat_id_on(app, &target_args, request_chat_id)
         }
     }
 }

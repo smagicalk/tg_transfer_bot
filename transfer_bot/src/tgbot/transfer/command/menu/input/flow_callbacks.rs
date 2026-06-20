@@ -10,18 +10,21 @@ use super::super::text::{
     build_menu_recovery_text, build_menu_target_unavailable_text, build_step_prompt_text,
     build_step_prompt_with_context,
 };
-use super::flow::{looks_like_telegram_link, run_existing_command};
+use super::flow::{ExistingCommandContext, looks_like_telegram_link, run_existing_command};
 use super::simple::send_keyboard_cleanup_notice;
 use super::state::{
     DraftTakeResult, MenuInputDraft, MenuInputStep, put_confirm_draft, put_draft,
     put_target_choice_draft, remember_last_target, take_current_draft,
 };
 use super::target::{
-    build_target_choice_buttons, confirm_button_rows, resolve_default_target, resolve_target_by_id,
-    resolve_target_input, send_confirm_prompt, send_target_choice_prompt,
-    send_target_choice_prompt_with_detail,
+    TargetPromptContext, build_target_choice_buttons_on, confirm_button_rows,
+    resolve_default_target_on, resolve_target_by_id_on, resolve_target_input_on,
+    send_confirm_prompt, send_target_choice_prompt, send_target_choice_prompt_with_detail,
 };
-use super::{MenuInputKind, TARGET_CHAT_REQUEST_BUTTON_ID};
+use super::{
+    MenuInputKind, TARGET_CHAT_REQUEST_BUTTON_ID, TARGETS_DEFAULT_REQUEST_BUTTON_ID,
+    TARGETS_ROUTE_REQUEST_BUTTON_ID,
+};
 
 /// 共享选群结果对应的后续状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,7 +107,8 @@ pub(super) struct FlowRequestContext {
 /// 重新发送多步向导当前阶段的提示。
 ///
 /// 只处理“源链接 -> 目标 -> 确认”这条链；如果草稿属于单步输入，返回 `false` 交给外层简单分支处理。
-pub(super) async fn continue_flow_input(
+pub(super) async fn continue_flow_input_on(
+    app: &crate::app_context::AppContext,
     draft: &MenuInputDraft,
     config: &BotConfig,
     chat_id: i64,
@@ -123,8 +127,18 @@ pub(super) async fn continue_flow_input(
             Ok(true)
         }
         MenuInputStep::TargetChoice { kind, source_link } => {
-            send_target_choice_prompt(config, chat_id, user_id, client_id, *kind, source_link)
-                .await?;
+            send_target_choice_prompt(
+                config,
+                TargetPromptContext {
+                    app,
+                    request_chat_id: chat_id,
+                    sender_user_id: user_id,
+                    client_id,
+                },
+                *kind,
+                source_link,
+            )
+            .await?;
             Ok(true)
         }
         MenuInputStep::TargetChat { kind, .. } => {
@@ -176,6 +190,7 @@ pub(super) async fn continue_flow_input(
         }
         MenuInputStep::JobId { .. }
         | MenuInputStep::AdminInput { .. }
+        | MenuInputStep::AdminChatPicker { .. }
         | MenuInputStep::PointLedgerUserId => Ok(false),
     }
 }
@@ -189,16 +204,17 @@ pub(super) async fn continue_flow_input(
 ///
 /// `job_id` / `user_id` 这类单步输入仍留给外层简单分支处理。
 pub(super) async fn handle_flow_input(
+    app: &crate::app_context::AppContext,
     draft: MenuInputDraft,
     input: &str,
     ctx: FlowRequestContext,
 ) -> anyhow::Result<Option<bool>> {
     match draft.step {
-        MenuInputStep::SourceLink { kind } => handle_source_link_input(kind, input, ctx).await,
+        MenuInputStep::SourceLink { kind } => handle_source_link_input(app, kind, input, ctx).await,
         MenuInputStep::TargetChoice { kind, source_link }
         | MenuInputStep::TargetChat { kind, source_link }
         | MenuInputStep::ChatPicker { kind, source_link } => {
-            handle_target_input(kind, source_link, input, ctx).await
+            handle_target_input(app, kind, source_link, input, ctx).await
         }
         MenuInputStep::Confirm {
             kind,
@@ -221,6 +237,7 @@ pub(super) async fn handle_flow_input(
         }
         MenuInputStep::JobId { .. }
         | MenuInputStep::AdminInput { .. }
+        | MenuInputStep::AdminChatPicker { .. }
         | MenuInputStep::PointLedgerUserId => Ok(None),
     }
 }
@@ -342,16 +359,18 @@ fn shared_chat_ui_action(
     }
 }
 
-/// 处理共享选群结果。
-pub(in crate::tgbot::transfer::command::menu) async fn handle_shared_chat_input(
+/// 在指定上下文上处理共享选群结果。
+pub(in crate::tgbot::transfer::command::menu) async fn handle_shared_chat_input_on(
+    app: &crate::app_context::AppContext,
     shared: &tdlib_rs::types::MessageChatShared,
     config: Arc<BotConfig>,
     request_chat_id: i64,
     sender_user_id: i64,
     client_id: i32,
 ) -> anyhow::Result<bool> {
-    if shared_chat_outcome(shared.button_id, None, TARGET_CHAT_REQUEST_BUTTON_ID, true)
-        == SharedChatOutcome::Ignored
+    if shared.button_id != TARGET_CHAT_REQUEST_BUTTON_ID
+        && shared.button_id != TARGETS_DEFAULT_REQUEST_BUTTON_ID
+        && shared.button_id != TARGETS_ROUTE_REQUEST_BUTTON_ID
     {
         return Ok(false);
     }
@@ -375,11 +394,75 @@ pub(in crate::tgbot::transfer::command::menu) async fn handle_shared_chat_input(
         DraftTakeResult::None => return Ok(false),
     };
 
+    let target_chat_id = shared.chat.chat_id;
+    if let MenuInputStep::AdminChatPicker {
+        action,
+        request_chat_id_input,
+    } = draft.step
+    {
+        match action {
+            crate::tgbot::transfer::command::menu::AdminInputAction::TargetsPickDefault => {
+                let command_owned = vec![
+                    "/targets".to_owned(),
+                    "set-default".to_owned(),
+                    target_chat_id.to_string(),
+                ];
+                super::admin::run_existing_targets_command(
+                    app,
+                    command_owned,
+                    request_chat_id,
+                    client_id,
+                )
+                .await?;
+                return Ok(true);
+            }
+            crate::tgbot::transfer::command::menu::AdminInputAction::TargetsPickRoute => {
+                let Some(route_request_chat_id) = request_chat_id_input else {
+                    put_draft(key, MenuInputDraft::admin_chat_picker(action, None)).await?;
+                    send::send_card_message_with_force_reply_returning(
+                        build_step_prompt_text(
+                            "1/1",
+                            "缺少 request_chat_id",
+                            "请先回复 request_chat_id，随后再选择目标群组；或发送 /cancel 取消。",
+                        ),
+                        request_chat_id,
+                        "输入 request_chat_id，或发送 /cancel",
+                        client_id,
+                    )
+                    .await?;
+                    return Ok(true);
+                };
+                let command_owned = vec![
+                    "/targets".to_owned(),
+                    "set-route".to_owned(),
+                    route_request_chat_id.to_string(),
+                    target_chat_id.to_string(),
+                ];
+                super::admin::run_existing_targets_command(
+                    app,
+                    command_owned,
+                    request_chat_id,
+                    client_id,
+                )
+                .await?;
+                return Ok(true);
+            }
+            _ => {
+                put_draft(
+                    key,
+                    MenuInputDraft::admin_chat_picker(action, request_chat_id_input),
+                )
+                .await?;
+                return Ok(false);
+            }
+        }
+    }
+
     let outcome = shared_chat_outcome(
         shared.button_id,
         Some(&draft.step),
         TARGET_CHAT_REQUEST_BUTTON_ID,
-        resolve_target_by_id(shared.chat.chat_id, &config, request_chat_id).is_ok(),
+        resolve_target_by_id_on(app, shared.chat.chat_id, &config, request_chat_id).is_ok(),
     );
 
     let MenuInputStep::ChatPicker { kind, source_link } = draft.step else {
@@ -387,7 +470,6 @@ pub(in crate::tgbot::transfer::command::menu) async fn handle_shared_chat_input(
         return Ok(matches!(outcome, SharedChatOutcome::WrongStep));
     };
 
-    let target_chat_id = shared.chat.chat_id;
     match shared_chat_ui_action(kind, source_link, target_chat_id, outcome) {
         Some(FlowUiAction::RechooseTargetAfterShared { kind, source_link }) => {
             put_target_choice_draft(key, kind, source_link).await?;
@@ -407,7 +489,8 @@ pub(in crate::tgbot::transfer::command::menu) async fn handle_shared_chat_input(
             send::ReplyPanel::card(build_menu_target_unavailable_text(
                 build_target_unavailable_detail(),
             ))
-            .rows(build_target_choice_buttons(
+            .rows(build_target_choice_buttons_on(
+                app,
                 &config,
                 request_chat_id,
                 sender_user_id,
@@ -446,6 +529,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn handle_shared_chat_input(
 
 /// 处理源链接输入阶段。
 async fn handle_source_link_input(
+    app: &crate::app_context::AppContext,
     kind: MenuInputKind,
     input: &str,
     ctx: FlowRequestContext,
@@ -456,7 +540,7 @@ async fn handle_source_link_input(
         source_link_outcome(
             kind,
             looks_like_telegram_link(input),
-            resolve_default_target(&ctx.config, ctx.request_chat_id),
+            resolve_default_target_on(app, &ctx.config, ctx.request_chat_id),
         ),
     ) {
         FlowUiAction::ReaskSource => {
@@ -502,9 +586,12 @@ async fn handle_source_link_input(
                 Some(detail) => {
                     send_target_choice_prompt_with_detail(
                         &ctx.config,
-                        ctx.request_chat_id,
-                        ctx.key.1,
-                        ctx.client_id,
+                        TargetPromptContext {
+                            app,
+                            request_chat_id: ctx.request_chat_id,
+                            sender_user_id: ctx.key.1,
+                            client_id: ctx.client_id,
+                        },
                         kind,
                         &source_link,
                         detail,
@@ -514,9 +601,12 @@ async fn handle_source_link_input(
                 None => {
                     send_target_choice_prompt(
                         &ctx.config,
-                        ctx.request_chat_id,
-                        ctx.key.1,
-                        ctx.client_id,
+                        TargetPromptContext {
+                            app,
+                            request_chat_id: ctx.request_chat_id,
+                            sender_user_id: ctx.key.1,
+                            client_id: ctx.client_id,
+                        },
                         kind,
                         &source_link,
                     )
@@ -548,10 +638,14 @@ async fn handle_source_link_input(
                 kind,
                 command_owned,
                 ctx.config,
-                ctx.request_chat_id,
-                ctx.request_message_id,
-                ctx.actor,
-                ctx.client_id,
+                ExistingCommandContext {
+                    // 默认目标分支继续沿用当前请求拿到的运行态，避免回退到全局单例。
+                    app: Arc::new(app.clone()),
+                    request_chat_id: ctx.request_chat_id,
+                    request_message_id: ctx.request_message_id,
+                    actor: ctx.actor,
+                    client_id: ctx.client_id,
+                },
             )
             .await?;
             Ok(Some(true))
@@ -585,6 +679,7 @@ async fn handle_source_link_input(
 
 /// 处理目标输入阶段。
 async fn handle_target_input(
+    app: &crate::app_context::AppContext,
     kind: MenuInputKind,
     source_link: String,
     input: &str,
@@ -593,7 +688,8 @@ async fn handle_target_input(
     match target_input_ui_action(
         kind,
         source_link.clone(),
-        target_input_outcome(resolve_target_input(
+        target_input_outcome(resolve_target_input_on(
+            app,
             input,
             &ctx.config,
             ctx.request_chat_id,

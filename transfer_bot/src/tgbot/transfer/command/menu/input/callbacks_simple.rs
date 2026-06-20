@@ -9,6 +9,75 @@ use super::simple::send_keyboard_cleanup_notice;
 use super::state::{
     AdminInputAction, MenuInputDraft, MenuJobAction, cancel_menu_input_with_state, put_draft,
 };
+use super::{TARGETS_DEFAULT_REQUEST_BUTTON_ID, TARGETS_ROUTE_REQUEST_BUTTON_ID};
+
+/// 需要原生选群器的 targets 管理输入动作。
+fn is_targets_chat_picker_action(action: AdminInputAction) -> bool {
+    matches!(
+        action,
+        AdminInputAction::TargetsPickDefault | AdminInputAction::TargetsPickRoute
+    )
+}
+
+/// 把 targets 选群动作映射到对应的 requestChat 按钮 ID。
+fn targets_chat_picker_button_id(action: AdminInputAction) -> Option<i32> {
+    match action {
+        AdminInputAction::TargetsPickDefault => Some(TARGETS_DEFAULT_REQUEST_BUTTON_ID),
+        AdminInputAction::TargetsPickRoute => Some(TARGETS_ROUTE_REQUEST_BUTTON_ID),
+        _ => None,
+    }
+}
+
+/// 发送 targets 配置页的原生选群提示。
+pub(super) async fn send_targets_chat_picker_prompt(
+    chat_id: i64,
+    client_id: i32,
+    action: AdminInputAction,
+    request_chat_id_input: Option<i64>,
+) -> anyhow::Result<()> {
+    let (title, detail) = match action {
+        AdminInputAction::TargetsPickDefault => (
+            "选择默认目标",
+            "点击输入框下方的“选择群组”，选中的群会写入 default_chat_id。",
+        ),
+        AdminInputAction::TargetsPickRoute => (
+            "选择请求路由目标",
+            "点击输入框下方的“选择群组”，选中的群会写入该 request_chat_id 的路由目标。",
+        ),
+        _ => anyhow::bail!(
+            "unsupported targets chat picker action: {}",
+            action.log_name()
+        ),
+    };
+    let context_detail = request_chat_id_input
+        .map(|request_chat_id| {
+            format!(
+                "当前 request_chat_id：{}",
+                crate::tgbot::transfer::card::code(request_chat_id)
+            )
+        })
+        .unwrap_or_default();
+    let text = if context_detail.is_empty() {
+        build_step_prompt_text("1/1", title, detail)
+    } else {
+        format!(
+            "{}\n{}",
+            build_step_prompt_text("1/1", title, detail),
+            context_detail
+        )
+    };
+    send::send_card_message_with_chat_request_keyboard_returning(
+        text,
+        chat_id,
+        targets_chat_picker_button_id(action)
+            .expect("targets chat picker action should map button id"),
+        "选择群组",
+        "选择目标群组，或发送 /cancel",
+        client_id,
+    )
+    .await?;
+    Ok(())
+}
 
 /// 处理任务页的“输入 job_id”按钮。
 ///
@@ -99,6 +168,55 @@ pub(in crate::tgbot::transfer::command::menu) async fn admin_input_callback_quer
     action: AdminInputAction,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    if action == AdminInputAction::TargetsPickDefault {
+        put_draft(
+            (chat_id, sender_user_id),
+            MenuInputDraft::admin_chat_picker(action, None),
+        )
+        .await?;
+        send::answer_callback_query(callback_query_id, Some("请选择目标群组"), client_id).await?;
+        super::callbacks_target::edit_input_waiting_card(
+            chat_id,
+            message_id,
+            client_id,
+            "1/1",
+            "等待选择默认目标",
+            "请使用输入框下方的 Telegram 原生选群按钮。",
+        )
+        .await;
+        return send_targets_chat_picker_prompt(chat_id, client_id, action, None).await;
+    }
+    if action == AdminInputAction::TargetsPickRoute {
+        put_draft(
+            (chat_id, sender_user_id),
+            MenuInputDraft::admin_chat_picker(action, None),
+        )
+        .await?;
+        send::answer_callback_query(callback_query_id, Some("请输入 request_chat_id"), client_id)
+            .await?;
+        super::callbacks_target::edit_input_waiting_card(
+            chat_id,
+            message_id,
+            client_id,
+            "1/2",
+            "等待 request_chat_id",
+            "请先回复 request_chat_id，随后会弹出 Telegram 原生选群器。",
+        )
+        .await;
+        send::send_card_message_with_force_reply_returning(
+            build_step_prompt_text(
+                "1/2",
+                "输入 request_chat_id",
+                "请回复 request_chat_id，随后会弹出目标群组选择器；或发送 /cancel 取消。",
+            ),
+            chat_id,
+            "输入 request_chat_id，或发送 /cancel",
+            client_id,
+        )
+        .await?;
+        return Ok(());
+    }
+
     put_draft(
         (chat_id, sender_user_id),
         MenuInputDraft::admin_input(action),
@@ -111,13 +229,29 @@ pub(in crate::tgbot::transfer::command::menu) async fn admin_input_callback_quer
         client_id,
         "1/1",
         action.input_title(),
-        action.input_detail(),
+        if is_targets_chat_picker_action(action) {
+            "请先回复 request_chat_id，随后会弹出 Telegram 原生选群器。"
+        } else {
+            action.input_detail()
+        },
     )
     .await;
     send::send_card_message_with_force_reply_returning(
-        build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
+        build_step_prompt_text(
+            "1/1",
+            action.input_title(),
+            if is_targets_chat_picker_action(action) {
+                "请先回复 request_chat_id，随后会弹出 Telegram 原生选群器。"
+            } else {
+                action.input_detail()
+            },
+        ),
         chat_id,
-        action.input_placeholder(),
+        if is_targets_chat_picker_action(action) {
+            "输入 request_chat_id，或发送 /cancel"
+        } else {
+            action.input_placeholder()
+        },
         client_id,
     )
     .await?;

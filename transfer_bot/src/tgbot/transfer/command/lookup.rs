@@ -10,7 +10,7 @@ use crate::tgbot::transfer::{refresh_stored_result_link, refresh_stored_result_m
 
 use super::common::{
     CommandStyle, job_command as build_job_command, lookup_command as build_lookup_command,
-    resolve_target_chat_id, transfer_command as build_transfer_command,
+    resolve_target_chat_id_on, transfer_command as build_transfer_command,
 };
 use super::{
     build_downloads_filter_button_data, build_downloads_status_button_data,
@@ -18,10 +18,9 @@ use super::{
     build_job_stop_button_data, build_menu_home_button_data,
 };
 
-/// `/lookup` 命令入口。
-/// 命令格式：`/lookup <link> [target]`
-/// 用于按源链接查询历史转存结果。
-pub async fn lookup_command(
+/// 在指定上下文上执行 `/lookup`。
+pub async fn lookup_command_on(
+    app: &crate::app_context::AppContext,
     text: Vec<&str>,
     config: Arc<BotConfig>,
     actor: crate::config::RequestActor,
@@ -32,7 +31,7 @@ pub async fn lookup_command(
     }
 
     let source_link = text[1].to_string();
-    let target_chat_id = resolve_target_chat_id(&text, actor.request_chat_id)?;
+    let target_chat_id = resolve_target_chat_id_on(app, &text, actor.request_chat_id)?;
     // 源链接可能来自私有聊天，日志只记录请求 chat 与目标 chat。
     tracing::info!(
         request_chat_id = actor.request_chat_id,

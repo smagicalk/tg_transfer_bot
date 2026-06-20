@@ -28,6 +28,7 @@ pub(super) enum TransferStart {
 
 /// 判断本次 `/transfer` 应复用、恢复还是创建新任务。
 pub(super) async fn build_transfer_start(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: TransferPlan,
     client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferStart> {
@@ -37,8 +38,12 @@ pub(super) async fn build_transfer_start(
         target_chat_id = plan.target_chat_id,
         "transfer start resolving"
     );
-    let _guard =
-        acquire_source_target_create_guard(plan.source_link.clone(), plan.target_chat_id).await;
+    let _guard = acquire_source_target_create_guard(
+        app_context.as_ref(),
+        plan.source_link.clone(),
+        plan.target_chat_id,
+    )
+    .await;
     tracing::debug!(
         request_chat_id = plan.request_chat_id,
         request_message_id = plan.request_message_id,
@@ -112,7 +117,7 @@ pub(super) async fn build_transfer_start(
         return request_job_start(old, client_ids.upload).await;
     }
 
-    create_new_job_start(plan, client_ids).await
+    create_new_job_start(app_context, plan, client_ids).await
 }
 
 /// 将已存在的活跃任务转换为本次命令结果。
@@ -185,6 +190,7 @@ async fn request_job_start(
 
 /// 抓取源消息并创建新的转存任务。
 async fn create_new_job_start(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: TransferPlan,
     client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferStart> {
@@ -262,9 +268,9 @@ async fn create_new_job_start(
         "created transfer job"
     );
     // 新任务从创建子项前就持有 job 锁，避免 `/j stop` 在子项写入前误判“无执行器”。
-    match acquire_job_guard(job.id).await {
+    match acquire_job_guard(app_context.as_ref(), job.id).await {
         Some(job_guard) => {
-            if let Some(outcome) = apply_job_control(job.id).await? {
+            if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
                 tracing::info!(
                     job_id = job.id,
                     "transfer job control applied before item creation"
@@ -340,6 +346,10 @@ mod tests {
     use sea_orm::ActiveModelTrait;
     use sea_orm::EntityTrait;
 
+    fn test_app_context() -> std::sync::Arc<crate::app_context::AppContext> {
+        crate::app_context::app_context()
+    }
+
     // 同源同目标的成功任务应优先复用历史结果，不再重新 spider。
     #[tokio::test]
     async fn test_build_transfer_start_reuses_success_job_without_spider() -> anyhow::Result<()> {
@@ -369,8 +379,9 @@ mod tests {
             request_chat_id + 10,
         );
         let client_ids = test_client_ids();
+        let app_context = test_app_context();
 
-        let start = build_transfer_start(plan, client_ids).await?;
+        let start = build_transfer_start(app_context, plan, client_ids).await?;
 
         match start {
             TransferStart::Outcome(TransferOutcome::Reused { job_id, link }) => {
@@ -417,8 +428,9 @@ mod tests {
             request_chat_id + 10,
         );
         let client_ids = test_client_ids();
+        let app_context = test_app_context();
 
-        let start = build_transfer_start(plan, client_ids).await?;
+        let start = build_transfer_start(app_context, plan, client_ids).await?;
 
         match start {
             TransferStart::Outcome(TransferOutcome::Running { job_id }) => {
@@ -458,8 +470,9 @@ mod tests {
             request_chat_id + 1,
         );
         let client_ids = test_client_ids();
+        let app_context = test_app_context();
 
-        let start = build_transfer_start(plan, client_ids).await?;
+        let start = build_transfer_start(app_context, plan, client_ids).await?;
 
         match start {
             TransferStart::Outcome(TransferOutcome::Cancelled { job_id }) => {

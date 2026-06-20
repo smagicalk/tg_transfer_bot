@@ -13,10 +13,16 @@ use super::{
     build_job_stop_callback_data,
 };
 
-/// 暂停任务。
-///
-/// 当前正在执行的 TDLib 单次下载/上传不会被强制中断；工作流会在下一个安全点停止。
-pub(super) async fn pause_job(
+/// 当前文件删除延迟（分钟）。
+fn file_delete_delay_minutes_on(app: &crate::app_context::AppContext) -> i64 {
+    crate::tgbot::transfer::runtime_config_on(app)
+        .file_delete_delay_minutes
+        .max(0)
+}
+
+/// 在指定上下文上暂停任务。
+pub(super) async fn pause_job_on(
+    _app: &crate::app_context::AppContext,
     job_id: i64,
     actor: crate::config::RequestActor,
     client_id: i32,
@@ -84,20 +90,22 @@ fn build_pause_job_action_rows(job_id: i64) -> Vec<Vec<tdlib_rs::types::InlineKe
     ]
 }
 
-/// 唤醒未完成任务。
-///
-/// paused 会先改回 pending；pending/running 若当前进程没有执行器，也会重新派发后台任务。
-pub(super) async fn resume_job(
+/// 在指定上下文上唤醒未完成任务。
+pub(super) async fn resume_job_on(
+    app: &crate::app_context::AppContext,
     job_id: i64,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let job = store::wake_job_with_owner_scope(job_id, actor.request_chat_id, actor.owner_scope())
         .await?;
-    let is_running = workflow::is_job_running_in_process(job.id).await;
+    // 恢复任务最终需要把后台执行器派发到 tokio 中，因此这里把当前请求的
+    // `&AppContext` 克隆成 `Arc<AppContext>`，保持执行器和当前运行态一致。
+    let app_context = std::sync::Arc::new(app.clone());
+    let is_running = workflow::is_job_running_in_process(app, job.id).await;
     if !is_running {
         super::super::super::spawn_recovery_job(
-            crate::app_context::app_context(),
+            app_context,
             job.clone(),
             super::super::super::transfer_client_ids()?,
         );
@@ -157,12 +165,9 @@ pub(super) async fn resume_job(
         .await
 }
 
-/// 停止任务。
-///
-/// 先把数据库状态改成 cancelling，再判断是否存在执行器：
-/// - 有执行器：由工作流在安全点释放引用；
-/// - 无执行器：当前命令立即收敛为 cancelled 并释放引用。
-pub(super) async fn stop_job(
+/// 在指定上下文上停止任务。
+pub(super) async fn stop_job_on(
+    app: &crate::app_context::AppContext,
     job_id: i64,
     actor: crate::config::RequestActor,
     client_id: i32,
@@ -173,16 +178,14 @@ pub(super) async fn stop_job(
         actor.owner_scope(),
     )
     .await?;
-    let is_running = workflow::is_job_running_in_process(job_id).await;
+    let is_running = workflow::is_job_running_in_process(app, job_id).await;
     let job = if is_running {
         requested
     } else {
         store::cancel_job_now(
             job_id,
             "cancelled by user",
-            super::super::super::runtime_config()
-                .file_delete_delay_minutes
-                .max(0),
+            file_delete_delay_minutes_on(app),
         )
         .await?
     };
@@ -235,15 +238,15 @@ pub(super) async fn stop_job(
         .await
 }
 
-/// 查看单个任务详情。
-///
-/// 只读取轻量进度快照，不会影响后台任务状态。
-pub(super) async fn show_job_status(
+/// 在指定上下文上查看单个任务详情。
+pub(super) async fn show_job_status_on(
+    app: &crate::app_context::AppContext,
     job_id: i64,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let Some(snapshot) = store::get_job_progress_snapshot_for_actor(job_id, actor).await? else {
+    let Some(snapshot) = store::get_job_progress_snapshot_for_actor(app, job_id, actor).await?
+    else {
         anyhow::bail!("job not found: {}", job_id);
     };
     tracing::info!(

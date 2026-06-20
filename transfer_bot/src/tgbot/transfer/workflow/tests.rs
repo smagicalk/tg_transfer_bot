@@ -24,6 +24,11 @@ async fn prepare_test_schema() -> anyhow::Result<&'static sea_orm::DatabaseConne
     Ok(db_conn)
 }
 
+/// 测试统一获取运行态上下文。
+fn test_app_context() -> std::sync::Arc<crate::app_context::AppContext> {
+    crate::app_context::app_context()
+}
+
 /// 构造一个指定状态的 transfer_job。
 async fn insert_job(status: &str) -> anyhow::Result<db::transfer_job::Model> {
     let db_conn = prepare_test_schema().await?;
@@ -205,10 +210,22 @@ fn test_extract_tdlib_message_id_from_stored_link() {
 // 同 source_link + target_chat_id 的创建锁应阻止并发穿透查重窗口。
 #[tokio::test]
 async fn test_source_target_create_guard_is_exclusive() {
-    let first = acquire_source_target_create_guard("https://t.me/c/1/2".to_owned(), 100).await;
+    let app_context = test_app_context();
+    let first = acquire_source_target_create_guard(
+        app_context.as_ref(),
+        "https://t.me/c/1/2".to_owned(),
+        100,
+    )
+    .await;
 
     let waiting = tokio::spawn(async {
-        acquire_source_target_create_guard("https://t.me/c/1/2".to_owned(), 100).await
+        let app_context = test_app_context();
+        acquire_source_target_create_guard(
+            app_context.as_ref(),
+            "https://t.me/c/1/2".to_owned(),
+            100,
+        )
+        .await
     });
     tokio::time::sleep(Duration::from_millis(20)).await;
     assert!(!waiting.is_finished());
@@ -225,15 +242,21 @@ async fn test_source_target_create_guard_is_exclusive() {
 #[tokio::test]
 async fn test_job_guard_is_exclusive() {
     let job_id = rand::rng().random_range(1_000_000..=2_000_000);
-    let first = acquire_job_guard(job_id)
+    let app_context = test_app_context();
+    let first = acquire_job_guard(app_context.as_ref(), job_id)
         .await
         .expect("first guard should be acquired");
-    assert!(acquire_job_guard(job_id).await.is_none());
+    assert!(
+        acquire_job_guard(app_context.as_ref(), job_id)
+            .await
+            .is_none()
+    );
 
     drop(first);
     let second = tokio::time::timeout(Duration::from_secs(1), async {
+        let app_context = test_app_context();
         loop {
-            if let Some(guard) = acquire_job_guard(job_id).await {
+            if let Some(guard) = acquire_job_guard(app_context.as_ref(), job_id).await {
                 return guard;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -249,8 +272,9 @@ async fn test_job_guard_is_exclusive() {
 async fn test_apply_job_control_paused() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
     let job = insert_job(store::JOB_STATUS_PAUSED).await?;
+    let app_context = test_app_context();
 
-    let outcome = apply_job_control(job.id)
+    let outcome = apply_job_control(app_context.as_ref(), job.id)
         .await?
         .expect("paused job should stop workflow");
     match outcome {
@@ -267,8 +291,9 @@ async fn test_apply_job_control_cancelling() -> anyhow::Result<()> {
     let db_conn = prepare_test_schema().await?;
     let job = insert_job(store::JOB_STATUS_CANCELLING).await?;
     let (item_id, file_key) = insert_item_with_file_ref(job.id).await?;
+    let app_context = test_app_context();
 
-    let outcome = apply_job_control(job.id)
+    let outcome = apply_job_control(app_context.as_ref(), job.id)
         .await?
         .expect("cancelling job should stop workflow");
     match outcome {

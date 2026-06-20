@@ -48,37 +48,40 @@ fn test_build_help_index_text_for_user_hides_admin_commands() {
 // 详细帮助应能分别展开不同命令。
 #[test]
 fn test_build_help_detail_text() {
-    let transfer = build_help_detail_text("transfer").unwrap();
+    let transfer = build_help_detail_text("transfer", false).unwrap();
     assert!(transfer.contains("/transfer <link> [target]"));
-    let transfer_slash = build_help_detail_text("/transfer").unwrap();
+    let transfer_slash = build_help_detail_text("/transfer", false).unwrap();
     assert!(transfer_slash.contains("/transfer <link> [target]"));
 
-    let downloads = build_help_detail_text("downloads").unwrap();
+    let downloads = build_help_detail_text("downloads", false).unwrap();
     assert!(downloads.contains(
         "all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | cancel"
     ));
-    let downloads_full = build_help_detail_text("downloads").unwrap();
+    let downloads_full = build_help_detail_text("downloads", false).unwrap();
     assert!(downloads_full.contains("/downloads [filter] [limit] [page]"));
 
-    let health = build_help_detail_text("health").unwrap();
+    let health = build_help_detail_text("health", true).unwrap();
     assert!(health.contains("/health"));
 
-    let cache = build_help_detail_text("cache").unwrap();
+    let cache = build_help_detail_text("cache", true).unwrap();
     assert!(cache.contains("/cache"));
     assert!(cache.contains("/cache page"));
 
-    let points = build_help_detail_text("points").unwrap();
-    assert!(points.contains("/balance"));
-    assert!(points.contains("/points show 123456789"));
-    assert!(points.contains("/points add 123456789 10 admin_adjust"));
-    let balance = build_help_detail_text("balance").unwrap();
+    let points_user = build_help_detail_text("points", false).unwrap();
+    assert!(points_user.contains("/balance"));
+    assert!(!points_user.contains("/points show 123456789"));
+    assert!(!points_user.contains("/points add 123456789 10 admin_adjust"));
+    let points_admin = build_help_detail_text("points", true).unwrap();
+    assert!(points_admin.contains("/points show 123456789"));
+    assert!(points_admin.contains("/points add 123456789 10 admin_adjust"));
+    let balance = build_help_detail_text("balance", false).unwrap();
     assert!(balance.contains("/balance"));
 
-    let job = build_help_detail_text("job").unwrap();
+    let job = build_help_detail_text("job", false).unwrap();
     assert!(job.contains("/job pause 123"));
     assert!(job.contains("/job status 123"));
 
-    let config = build_help_detail_text("config").unwrap();
+    let config = build_help_detail_text("config", true).unwrap();
     assert!(config.contains("/config reset"));
     assert!(config.contains("/config set job_concurrency 4"));
     assert!(config.contains("progress_edit_interval_seconds"));
@@ -86,24 +89,24 @@ fn test_build_help_detail_text() {
     assert!(config.contains("menu_input_timeout_seconds"));
     assert!(config.contains("输入流"));
 
-    let targets = build_help_detail_text("targets").unwrap();
+    let targets = build_help_detail_text("targets", true).unwrap();
     assert!(targets.contains("/targets set-default -1001234567890"));
     assert!(targets.contains("设默认：回复 target_chat_id"));
 
-    let acl = build_help_detail_text("acl").unwrap();
+    let acl = build_help_detail_text("acl", true).unwrap();
     assert!(acl.contains("/acl add-admin 123456789"));
     assert!(acl.contains("加管理员 / 删管理员"));
 
-    let billing = build_help_detail_text("billing").unwrap();
+    let billing = build_help_detail_text("billing", true).unwrap();
     assert!(billing.contains("/billing set enabled true"));
     assert!(billing.contains("设公告：进入输入流"));
 
-    let menu = build_help_detail_text("menu").unwrap();
+    let menu = build_help_detail_text("menu", false).unwrap();
     assert!(menu.contains("/menu"));
     assert!(menu.contains("/cancel"));
     assert!(menu.contains("ForceReply"));
 
-    assert!(build_help_detail_text("unknown").is_err());
+    assert!(build_help_detail_text("unknown", false).is_err());
 }
 
 // help callback 使用短 payload 原地切换页面。
@@ -279,7 +282,8 @@ fn test_help_index_buttons_only_one_help_entry() {
 // help 详情页应保留返回目录 callback。
 #[test]
 fn test_help_detail_buttons_have_back_callback() {
-    let buttons = build_help_detail_buttons("points").expect("points help buttons should build");
+    let buttons =
+        build_help_detail_buttons("points", false).expect("points help buttons should build");
     let back = buttons
         .iter()
         .flatten()
@@ -299,4 +303,38 @@ fn test_help_detail_buttons_have_back_callback() {
         menu.r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
+}
+
+// 普通用户的 `/help points` 详情页不应再暴露管理员积分操作复制按钮。
+#[test]
+fn test_help_points_detail_buttons_for_user_hide_admin_actions() {
+    let buttons = build_help_detail_buttons("points", false).expect("points user buttons");
+    let labels = buttons
+        .iter()
+        .flatten()
+        .map(|button| button.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(labels.contains(&"复制 /balance"));
+    assert!(labels.contains(&"复制账户流水"));
+    assert!(!labels.contains(&"复制查看余额"));
+    assert!(!labels.contains(&"复制用户流水"));
+    assert!(!labels.contains(&"复制加分命令"));
+    assert!(!labels.contains(&"复制扣分命令"));
+}
+
+// 管理员的 `/help points` 详情页仍应保留用户余额/流水与调分入口。
+#[test]
+fn test_help_points_detail_buttons_for_admin_keep_admin_actions() {
+    let buttons = build_help_detail_buttons("points", true).expect("points admin buttons");
+    let labels = buttons
+        .iter()
+        .flatten()
+        .map(|button| button.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(labels.contains(&"复制查看余额"));
+    assert!(labels.contains(&"复制用户流水"));
+    assert!(labels.contains(&"复制加分命令"));
+    assert!(labels.contains(&"复制扣分命令"));
 }

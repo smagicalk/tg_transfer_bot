@@ -117,8 +117,26 @@ fn test_format_downloads_text_for_empty() {
             page: 1,
         },
         0,
+        false,
     );
     assert!(text.contains("下载列表为空"));
+}
+
+// 管理员和普通用户应显示不同的范围说明，避免把全局语义误展示给普通用户。
+#[test]
+fn test_format_downloads_text_scope_label_changes_by_role() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::All,
+        limit: 8,
+        page: 1,
+    };
+    let page_items = [snapshot_with_status("running")];
+
+    let admin_text = format_downloads_text(&page_items, &args, 1, true);
+    let user_text = format_downloads_text(&page_items, &args, 1, false);
+
+    assert!(admin_text.contains("范围：管理员 / 全局"));
+    assert!(user_text.contains("范围：当前用户 / 自己"));
 }
 
 // 当前页存在任务时，应为每个任务生成详情按钮。

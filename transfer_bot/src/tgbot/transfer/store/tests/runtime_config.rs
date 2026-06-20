@@ -3,14 +3,14 @@
 use super::super::{
     ensure_transfer_runtime_config, load_transfer_runtime_config, save_transfer_runtime_config,
 };
-use super::fixtures::prepare_test_schema;
+use super::fixtures::{prepare_test_schema, rebuild_empty_test_schema};
 use crate::config::TransferConfig;
 use crate::db;
 
 #[tokio::test]
 async fn test_ensure_transfer_runtime_config_seeds_default_row_once() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
-    prepare_test_schema().await?;
+    rebuild_empty_test_schema().await?;
 
     let default_config = TransferConfig {
         job_concurrency: 3,

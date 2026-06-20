@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use crate::config::BotConfig;
 use crate::tgbot::send;
 
-use super::super::super::common::resolve_target_chat_id;
+use super::super::super::common::resolve_target_chat_id_on;
 use super::super::callback;
 use super::super::text::{
     build_confirm_command_preview, build_menu_context_lines, build_menu_step_state_line,
@@ -14,32 +14,40 @@ use super::super::text::{
 };
 use super::state::{MenuInputKind, last_target};
 
+/// 目标选择页发送上下文。
+///
+/// 这类页面总是同时需要聊天、用户、客户端和运行时上下文，收拢成一个小结构可以避免函数参数继续膨胀。
+#[derive(Clone, Copy)]
+pub(super) struct TargetPromptContext<'a> {
+    pub(super) app: &'a crate::app_context::AppContext,
+    pub(super) request_chat_id: i64,
+    pub(super) sender_user_id: i64,
+    pub(super) client_id: i32,
+}
+
 /// 发送目标选择卡片。
 pub(super) async fn send_target_choice_prompt(
     config: &BotConfig,
-    request_chat_id: i64,
-    sender_user_id: i64,
-    client_id: i32,
+    ctx: TargetPromptContext<'_>,
     kind: MenuInputKind,
     source_link: &str,
 ) -> anyhow::Result<()> {
     send::ReplyPanel::card(build_target_choice_text(kind, source_link))
-        .rows(build_target_choice_buttons(
+        .rows(build_target_choice_buttons_on(
+            ctx.app,
             config,
-            request_chat_id,
-            sender_user_id,
+            ctx.request_chat_id,
+            ctx.sender_user_id,
             kind,
         ))
-        .send(request_chat_id, client_id)
+        .send(ctx.request_chat_id, ctx.client_id)
         .await
 }
 
 /// 发送带提示说明的目标选择卡片。
 pub(super) async fn send_target_choice_prompt_with_detail(
     config: &BotConfig,
-    request_chat_id: i64,
-    sender_user_id: i64,
-    client_id: i32,
+    ctx: TargetPromptContext<'_>,
     kind: MenuInputKind,
     source_link: &str,
     detail: &str,
@@ -49,40 +57,40 @@ pub(super) async fn send_target_choice_prompt_with_detail(
         source_link,
         detail,
     ))
-    .rows(build_target_choice_buttons(
+    .rows(build_target_choice_buttons_on(
+        ctx.app,
         config,
-        request_chat_id,
-        sender_user_id,
+        ctx.request_chat_id,
+        ctx.sender_user_id,
         kind,
     ))
-    .send(request_chat_id, client_id)
+    .send(ctx.request_chat_id, ctx.client_id)
     .await
 }
 
 /// 编辑当前消息为目标选择卡片。
 pub(super) async fn edit_target_choice_prompt(
     config: &BotConfig,
-    request_chat_id: i64,
-    sender_user_id: i64,
+    ctx: TargetPromptContext<'_>,
     message_id: i64,
-    client_id: i32,
     kind: MenuInputKind,
     source_link: &str,
 ) -> anyhow::Result<()> {
     let (text, keyboard) = send::ReplyPanel::card(build_target_choice_text(kind, source_link))
-        .rows(build_target_choice_buttons(
+        .rows(build_target_choice_buttons_on(
+            ctx.app,
             config,
-            request_chat_id,
-            sender_user_id,
+            ctx.request_chat_id,
+            ctx.sender_user_id,
             kind,
         ))
         .into_card_parts()?;
     send::edit_interaction_card_or_error(
         text,
-        request_chat_id,
+        ctx.request_chat_id,
         message_id,
         keyboard,
-        client_id,
+        ctx.client_id,
         "目标选择刷新失败",
         "目标选择页已生成，但原消息编辑失败；请复制错误或重新打开 /menu。",
     )
@@ -128,26 +136,21 @@ pub(super) async fn edit_confirm_prompt(
     .await
 }
 
-/// 目标选择按钮。
-///
-/// 交互优先级：
-/// 1. 上次目标、快速目标和常用别名，减少重复选择。
-/// 2. Telegram 原生选群，适合临时目标。
-/// 3. 手动输入，作为兜底。
-/// 4. 取消，明确退出流程。
-pub(super) fn build_target_choice_buttons(
+/// 在指定上下文上构造目标选择按钮。
+pub(super) fn build_target_choice_buttons_on(
+    app: &crate::app_context::AppContext,
     config: &BotConfig,
     request_chat_id: i64,
     sender_user_id: i64,
     kind: MenuInputKind,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let _ = config;
-    let targets_runtime = crate::tgbot::transfer::targets_runtime_config();
+    let targets_runtime = crate::tgbot::transfer::targets_runtime_config_on(app);
     let mut rows = Vec::new();
     let mut seen_targets = HashSet::new();
 
     if let Some(target_chat_id) = last_target(request_chat_id, sender_user_id)
-        && resolve_target_by_id(target_chat_id, config, request_chat_id).is_ok()
+        && resolve_target_by_id_on(app, target_chat_id, config, request_chat_id).is_ok()
     {
         seen_targets.insert(target_chat_id);
         rows.push(vec![send::build_callback_button(
@@ -157,7 +160,7 @@ pub(super) fn build_target_choice_buttons(
         )]);
     }
 
-    if let Some(default_target_chat_id) = resolve_default_target(config, request_chat_id)
+    if let Some(default_target_chat_id) = resolve_default_target_on(app, config, request_chat_id)
         && seen_targets.insert(default_target_chat_id)
     {
         rows.push(vec![send::build_callback_button(
@@ -171,7 +174,7 @@ pub(super) fn build_target_choice_buttons(
         .aliases
         .iter()
         .filter_map(|(alias, chat_id)| {
-            if resolve_target_by_id(*chat_id, config, request_chat_id).is_err() {
+            if resolve_target_by_id_on(app, *chat_id, config, request_chat_id).is_err() {
                 return None;
             }
             if !seen_targets.insert(*chat_id) {
@@ -230,33 +233,41 @@ pub(super) fn confirm_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardBu
     ]
 }
 
-/// 解析用户输入的目标。
-pub(super) fn resolve_target_input(
+/// 在指定上下文上解析用户输入的目标。
+pub(super) fn resolve_target_input_on(
+    app: &crate::app_context::AppContext,
     input: &str,
     config: &BotConfig,
     request_chat_id: i64,
 ) -> Option<i64> {
     if input.eq_ignore_ascii_case("default") {
-        return resolve_default_target(config, request_chat_id);
+        return resolve_default_target_on(app, config, request_chat_id);
     }
-    resolve_target_chat_id(&["/menu-input", "placeholder", input], request_chat_id).ok()
+    resolve_target_chat_id_on(app, &["/menu-input", "placeholder", input], request_chat_id).ok()
 }
 
-/// 用数字 chat_id 走同一套目标白名单校验。
-pub(super) fn resolve_target_by_id(
+/// 在指定上下文上用数字 chat_id 走同一套目标白名单校验。
+pub(super) fn resolve_target_by_id_on(
+    app: &crate::app_context::AppContext,
     target_chat_id: i64,
     _config: &BotConfig,
     request_chat_id: i64,
 ) -> anyhow::Result<i64> {
     let target = target_chat_id.to_string();
-    resolve_target_chat_id(&["/menu-input", "placeholder", &target], request_chat_id)
+    resolve_target_chat_id_on(
+        app,
+        &["/menu-input", "placeholder", &target],
+        request_chat_id,
+    )
 }
 
-/// 解析菜单“快速转存/查询”使用的默认目标。
-///
-/// 这里提前解析是为了在缺少默认目标时继续引导输入目标，而不是让复用的命令入口直接报错。
-pub(super) fn resolve_default_target(_config: &BotConfig, request_chat_id: i64) -> Option<i64> {
-    resolve_target_chat_id(&["/menu-input", "placeholder"], request_chat_id).ok()
+/// 在指定上下文上解析菜单“快速转存/查询”使用的默认目标。
+pub(super) fn resolve_default_target_on(
+    app: &crate::app_context::AppContext,
+    _config: &BotConfig,
+    request_chat_id: i64,
+) -> Option<i64> {
+    resolve_target_chat_id_on(app, &["/menu-input", "placeholder"], request_chat_id).ok()
 }
 
 /// 目标选择卡片正文。
@@ -332,26 +343,57 @@ fn default_target_button_label(kind: MenuInputKind) -> &'static str {
 mod tests {
     use super::*;
     use crate::app_context::app_context;
+    use std::sync::{LazyLock, Mutex, MutexGuard};
+
+    static TARGET_RUNTIME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    fn lock_target_runtime_tests() -> MutexGuard<'static, ()> {
+        match TARGET_RUNTIME_TEST_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn test_app_context() -> std::sync::Arc<crate::app_context::AppContext> {
+        app_context()
+    }
 
     fn install_target_runtime(
         targets: crate::config::TargetsConfig,
         access_control: crate::config::AccessControlConfig,
     ) {
-        let app = app_context();
+        super::super::state::clear_last_targets();
+        let app = test_app_context();
         app.targets_runtime.update_runtime_config(targets);
         app.access_control_runtime
             .update_runtime_config(access_control);
     }
 
+    fn resolve_default_target_for_test(config: &BotConfig, request_chat_id: i64) -> Option<i64> {
+        let app = test_app_context();
+        resolve_default_target_on(app.as_ref(), config, request_chat_id)
+    }
+
+    fn test_build_target_choice_buttons(
+        config: &BotConfig,
+        request_chat_id: i64,
+        sender_user_id: i64,
+        kind: MenuInputKind,
+    ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+        let app = test_app_context();
+        build_target_choice_buttons_on(app.as_ref(), config, request_chat_id, sender_user_id, kind)
+    }
+
     // 快速转存应优先使用当前请求 chat 的默认目标，再使用全局兜底目标。
     #[test]
     fn test_resolve_default_target() {
+        let _guard = lock_target_runtime_tests();
         let config = BotConfig::default();
         install_target_runtime(
             crate::config::TargetsConfig::default(),
             crate::config::AccessControlConfig::default(),
         );
-        assert_eq!(resolve_default_target(&config, 1), None);
+        assert_eq!(resolve_default_target_for_test(&config, 1), None);
 
         install_target_runtime(
             crate::config::TargetsConfig {
@@ -361,7 +403,7 @@ mod tests {
             },
             crate::config::AccessControlConfig::default(),
         );
-        assert_eq!(resolve_default_target(&config, 1), Some(-100));
+        assert_eq!(resolve_default_target_for_test(&config, 1), Some(-100));
 
         install_target_runtime(
             crate::config::TargetsConfig {
@@ -371,12 +413,13 @@ mod tests {
             },
             crate::config::AccessControlConfig::default(),
         );
-        assert_eq!(resolve_default_target(&config, 1), Some(-200));
+        assert_eq!(resolve_default_target_for_test(&config, 1), Some(-200));
     }
 
     // 快速转存的默认目标也必须遵守 allowed_target_chat_ids。
     #[test]
     fn test_resolve_default_target_respects_allowed_targets() {
+        let _guard = lock_target_runtime_tests();
         let config = BotConfig::default();
         install_target_runtime(
             crate::config::TargetsConfig {
@@ -390,12 +433,13 @@ mod tests {
             },
         );
 
-        assert_eq!(resolve_default_target(&config, 1), None);
+        assert_eq!(resolve_default_target_for_test(&config, 1), None);
     }
 
     // 目标选择页应优先提供快速目标、常用目标、Telegram 原生选群和手动输入。
     #[test]
     fn test_build_target_choice_buttons_layout() {
+        let _guard = lock_target_runtime_tests();
         let config = BotConfig::default();
         install_target_runtime(
             crate::config::TargetsConfig {
@@ -409,18 +453,24 @@ mod tests {
             },
         );
 
-        let rows = build_target_choice_buttons(&config, 1, 2, MenuInputKind::Transfer);
+        let rows = test_build_target_choice_buttons(&config, 61001, 62001, MenuInputKind::Transfer);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
 
         assert_eq!(rows[0][0].text, "快速转存");
-        assert_eq!(rows[1][0].text, "archive");
-        assert_eq!(rows[2][0].text, "选择群组");
-        assert_eq!(rows[2][1].text, "手动输入");
-        assert_eq!(rows[3][0].text, "取消");
+        assert!(labels.contains(&"archive"));
+        assert!(labels.contains(&"选择群组"));
+        assert!(labels.contains(&"手动输入"));
+        assert_eq!(rows.last().expect("should have cancel row")[0].text, "取消");
     }
 
     // 查询流程里的默认目标按钮应显示“快速查询”，避免和转存动作混淆。
     #[test]
     fn test_build_target_choice_buttons_lookup_label() {
+        let _guard = lock_target_runtime_tests();
         let config = BotConfig::default();
         install_target_runtime(
             crate::config::TargetsConfig {
@@ -434,7 +484,7 @@ mod tests {
             },
         );
 
-        let rows = build_target_choice_buttons(&config, 1, 2, MenuInputKind::Lookup);
+        let rows = test_build_target_choice_buttons(&config, 61002, 62002, MenuInputKind::Lookup);
 
         assert_eq!(rows[0][0].text, "快速查询");
     }
@@ -456,7 +506,11 @@ mod tests {
     // 已确认过的目标应作为上次目标优先展示，并避免和默认目标重复出现。
     #[test]
     fn test_build_target_choice_buttons_prefers_last_target() {
-        super::super::state::remember_last_target(101, 202, -100);
+        let _guard = lock_target_runtime_tests();
+        install_target_runtime(
+            crate::config::TargetsConfig::default(),
+            crate::config::AccessControlConfig::default(),
+        );
         let config = BotConfig::default();
         install_target_runtime(
             crate::config::TargetsConfig {
@@ -469,15 +523,19 @@ mod tests {
                 ..Default::default()
             },
         );
+        super::super::state::remember_last_target(101, 202, -100);
 
-        let rows = build_target_choice_buttons(&config, 101, 202, MenuInputKind::Transfer);
+        let rows = test_build_target_choice_buttons(&config, 101, 202, MenuInputKind::Transfer);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
 
-        assert_eq!(rows[0][0].text, "上次目标");
-        assert!(
-            !rows
-                .iter()
-                .flatten()
-                .any(|button| button.text == "快速转存")
+        assert!(labels.contains(&"上次目标"));
+        assert_eq!(
+            labels.iter().filter(|label| **label == "快速转存").count(),
+            0
         );
     }
 

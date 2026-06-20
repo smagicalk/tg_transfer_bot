@@ -32,6 +32,8 @@ static MENU_LAST_TARGETS: LazyLock<std::sync::Mutex<HashMap<DraftKey, i64>>> =
 static MENU_DRAFT_ACTIVE_KEYS: LazyLock<std::sync::Mutex<HashSet<DraftKey>>> =
     LazyLock::new(|| std::sync::Mutex::new(HashSet::new()));
 
+#[cfg(test)]
+pub(super) use memory::clear_last_targets;
 pub(super) use memory::{acquire_draft_key_guard, last_target, remember_last_target};
 
 /// 菜单输入流程。
@@ -221,7 +223,9 @@ impl MenuJobAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot::transfer::command) enum AdminInputAction {
     TargetsSetDefault,
+    TargetsPickDefault,
     TargetsSetRoute,
+    TargetsPickRoute,
     TargetsDelRoute,
     TargetsSetAlias,
     TargetsDelAlias,
@@ -254,7 +258,9 @@ impl AdminInputAction {
     #[cfg(test)]
     const ALL: &'static [Self] = &[
         Self::TargetsSetDefault,
+        Self::TargetsPickDefault,
         Self::TargetsSetRoute,
+        Self::TargetsPickRoute,
         Self::TargetsDelRoute,
         Self::TargetsSetAlias,
         Self::TargetsDelAlias,
@@ -333,7 +339,9 @@ impl AdminInputAction {
 
         match self {
             Self::TargetsSetDefault
+            | Self::TargetsPickDefault
             | Self::TargetsSetRoute
+            | Self::TargetsPickRoute
             | Self::TargetsDelRoute
             | Self::TargetsSetAlias
             | Self::TargetsDelAlias => unreachable!("targets input title uses spec"),
@@ -379,7 +387,9 @@ impl AdminInputAction {
 
         match self {
             Self::TargetsSetDefault
+            | Self::TargetsPickDefault
             | Self::TargetsSetRoute
+            | Self::TargetsPickRoute
             | Self::TargetsDelRoute
             | Self::TargetsSetAlias
             | Self::TargetsDelAlias => unreachable!("targets input detail uses spec"),
@@ -425,7 +435,9 @@ impl AdminInputAction {
 
         match self {
             Self::TargetsSetDefault
+            | Self::TargetsPickDefault
             | Self::TargetsSetRoute
+            | Self::TargetsPickRoute
             | Self::TargetsDelRoute
             | Self::TargetsSetAlias
             | Self::TargetsDelAlias => unreachable!("targets input placeholder uses spec"),
@@ -458,7 +470,9 @@ impl AdminInputAction {
     pub(in crate::tgbot::transfer::command) fn log_name(self) -> &'static str {
         match self {
             Self::TargetsSetDefault => "targets_set_default",
+            Self::TargetsPickDefault => "targets_pick_default",
             Self::TargetsSetRoute => "targets_set_route",
+            Self::TargetsPickRoute => "targets_pick_route",
             Self::TargetsDelRoute => "targets_del_route",
             Self::TargetsSetAlias => "targets_set_alias",
             Self::TargetsDelAlias => "targets_del_alias",
@@ -492,7 +506,9 @@ impl AdminInputAction {
     pub(in crate::tgbot::transfer::command) fn parse(code: &str) -> Option<Self> {
         match code {
             "targets_set_default" => Some(Self::TargetsSetDefault),
+            "targets_pick_default" => Some(Self::TargetsPickDefault),
             "targets_set_route" => Some(Self::TargetsSetRoute),
+            "targets_pick_route" => Some(Self::TargetsPickRoute),
             "targets_del_route" => Some(Self::TargetsDelRoute),
             "targets_set_alias" => Some(Self::TargetsSetAlias),
             "targets_del_alias" => Some(Self::TargetsDelAlias),
@@ -550,6 +566,10 @@ pub(super) enum MenuInputStep {
     AdminInput {
         action: AdminInputAction,
     },
+    AdminChatPicker {
+        action: AdminInputAction,
+        request_chat_id_input: Option<i64>,
+    },
     PointLedgerUserId,
 }
 
@@ -575,6 +595,7 @@ impl MenuInputDraft {
             MenuInputStep::Confirm { .. } => "确认执行",
             MenuInputStep::JobId { action } => action.input_title(),
             MenuInputStep::AdminInput { action } => action.input_title(),
+            MenuInputStep::AdminChatPicker { action, .. } => action.input_title(),
             MenuInputStep::PointLedgerUserId => "用户积分流水",
         }
     }
@@ -611,6 +632,17 @@ impl MenuInputDraft {
     /// 构造等待管理配置输入的草稿。
     pub(super) fn admin_input(action: AdminInputAction) -> Self {
         Self::new(MenuInputStep::AdminInput { action })
+    }
+
+    /// 构造等待管理配置选群结果的草稿。
+    pub(super) fn admin_chat_picker(
+        action: AdminInputAction,
+        request_chat_id_input: Option<i64>,
+    ) -> Self {
+        Self::new(MenuInputStep::AdminChatPicker {
+            action,
+            request_chat_id_input,
+        })
     }
 
     /// 构造等待用户 ID 的积分流水草稿。
@@ -670,6 +702,10 @@ impl MenuInputDraft {
             },
             "admin_input" => MenuInputStep::AdminInput {
                 action: AdminInputAction::parse(model.job_action.as_deref()?)?,
+            },
+            "admin_chat_picker" => MenuInputStep::AdminChatPicker {
+                action: AdminInputAction::parse(model.job_action.as_deref()?)?,
+                request_chat_id_input: model.target_chat_id,
             },
             "point_ledger_user_id" => MenuInputStep::PointLedgerUserId,
             _ => return None,
@@ -744,6 +780,16 @@ impl DraftFields {
                 job_action: Some(action.code()),
                 source_link: None,
                 target_chat_id: None,
+            },
+            MenuInputStep::AdminChatPicker {
+                action,
+                request_chat_id_input,
+            } => Self {
+                step: "admin_chat_picker",
+                input_kind: None,
+                job_action: Some(action.code()),
+                source_link: None,
+                target_chat_id: request_chat_id_input,
             },
             MenuInputStep::PointLedgerUserId => Self {
                 step: "point_ledger_user_id",
@@ -1080,13 +1126,17 @@ pub(super) fn target_context_from_step(step: &MenuInputStep) -> Option<(MenuInpu
         MenuInputStep::SourceLink { .. }
         | MenuInputStep::JobId { .. }
         | MenuInputStep::AdminInput { .. }
+        | MenuInputStep::AdminChatPicker { .. }
         | MenuInputStep::PointLedgerUserId => None,
     }
 }
 
 /// 判断当前阶段是否曾展示 reply keyboard。
 pub(super) fn step_uses_reply_keyboard(step: &MenuInputStep) -> bool {
-    matches!(step, MenuInputStep::ChatPicker { .. })
+    matches!(
+        step,
+        MenuInputStep::ChatPicker { .. } | MenuInputStep::AdminChatPicker { .. }
+    )
 }
 
 /// 统一生成 UTC+8 时间戳。
@@ -1100,7 +1150,10 @@ fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
 
 /// 菜单输入草稿超时时间（秒）。
 fn input_ttl_seconds() -> u64 {
-    crate::tgbot::transfer::runtime_config()
+    // 草稿 TTL 是状态模块自己的基础规则；这里集中读取一次运行态配置，
+    // 比把 `AppContext` 继续透传到所有状态读写 API 更能保持状态层接口简洁。
+    let app_context = crate::app_context::app_context();
+    crate::tgbot::transfer::runtime_config_on(app_context.as_ref())
         .menu_input_timeout_seconds
         .max(1)
 }
@@ -1480,6 +1533,10 @@ mod tests {
             kind: MenuInputKind::Transfer,
             source_link: source_link.clone(),
         }));
+        assert!(step_uses_reply_keyboard(&MenuInputStep::AdminChatPicker {
+            action: AdminInputAction::TargetsPickDefault,
+            request_chat_id_input: None,
+        }));
         assert!(!step_uses_reply_keyboard(&MenuInputStep::TargetChoice {
             kind: MenuInputKind::Transfer,
             source_link,
@@ -1503,6 +1560,10 @@ mod tests {
         assert_eq!(
             AdminInputAction::TargetsSetDefault.input_title(),
             "设置默认目标"
+        );
+        assert_eq!(
+            AdminInputAction::TargetsPickDefault.input_title(),
+            "选择默认目标"
         );
         assert!(
             AdminInputAction::TargetsSetRoute

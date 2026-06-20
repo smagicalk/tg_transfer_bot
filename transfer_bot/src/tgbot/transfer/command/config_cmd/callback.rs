@@ -232,8 +232,17 @@ pub(super) fn parse_config_callback_data(data: &str) -> Option<ConfigCallbackAct
 }
 
 /// config 页面快捷按钮。
+#[cfg(test)]
 pub(in crate::tgbot::transfer::command) fn build_config_buttons()
 -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let app_context = crate::app_context::app_context();
+    build_config_buttons_on(app_context.as_ref())
+}
+
+/// config 页面快捷按钮的上下文版本。
+pub(in crate::tgbot::transfer::command) fn build_config_buttons_on(
+    app: &crate::app_context::AppContext,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let mut rows = CONFIG_FIELD_SPECS
         .iter()
         .map(build_config_adjust_row)
@@ -290,6 +299,7 @@ pub(in crate::tgbot::transfer::command) fn build_config_buttons()
             .collect::<Vec<_>>(),
     );
 
+    let _ = app;
     rows
 }
 

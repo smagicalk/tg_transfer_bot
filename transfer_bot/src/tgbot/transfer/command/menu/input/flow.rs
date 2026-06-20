@@ -8,31 +8,47 @@ use crate::config::BotConfig;
 use super::state::MenuInputKind;
 use crate::tgbot::transfer::command::{lookup, transfer_cmd};
 
+/// 多步向导最终执行现有命令时的共享上下文。
+///
+/// 转存与查询都需要同一组请求定位和 actor 信息，收拢后可以避免 helper 参数继续膨胀。
+pub(super) struct ExistingCommandContext {
+    pub(super) app: std::sync::Arc<crate::app_context::AppContext>,
+    pub(super) request_chat_id: i64,
+    pub(super) request_message_id: i64,
+    pub(super) actor: crate::config::RequestActor,
+    pub(super) client_id: i32,
+}
+
 /// 调用已有命令入口，避免菜单输入流复制转存/查询业务逻辑。
 pub(super) async fn run_existing_command(
     kind: MenuInputKind,
     command_owned: Vec<String>,
     config: Arc<BotConfig>,
-    request_chat_id: i64,
-    request_message_id: i64,
-    actor: crate::config::RequestActor,
-    client_id: i32,
+    ctx: ExistingCommandContext,
 ) -> anyhow::Result<()> {
     let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
     match kind {
         MenuInputKind::Transfer | MenuInputKind::TransferDefault => {
-            transfer_cmd::transfer_link_command(
+            transfer_cmd::transfer_link_command_on(
+                ctx.app,
                 command_refs,
                 config,
-                request_chat_id,
-                request_message_id,
-                actor,
-                client_id,
+                ctx.request_chat_id,
+                ctx.request_message_id,
+                ctx.actor,
+                ctx.client_id,
             )
             .await
         }
         MenuInputKind::Lookup | MenuInputKind::LookupDefault => {
-            lookup::lookup_command(command_refs, config, actor, client_id).await
+            lookup::lookup_command_on(
+                ctx.app.as_ref(),
+                command_refs,
+                config,
+                ctx.actor,
+                ctx.client_id,
+            )
+            .await
         }
     }
 }

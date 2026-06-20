@@ -24,26 +24,23 @@ pub(super) fn build_health_callback_data() -> String {
     format!("{}show", HEALTH_CALLBACK_PREFIX)
 }
 
-/// `/health` 命令入口。
-///
-/// 用于快速确认：
-/// - bot/user client 是否已准备好
-/// - 运行时并发和 GC 参数
-/// - 当前任务、缓存、恢复队列的大致规模
-pub async fn health_command(
+/// 在指定上下文上执行 `/health` 命令。
+pub async fn health_command_on(
+    app: &crate::app_context::AppContext,
     _text: Vec<&str>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let snapshot = build_health_snapshot().await?;
+    let snapshot = build_health_snapshot_on(app).await?;
     send::ReplyPanel::card(format_health_text(&snapshot))
         .rows(build_health_buttons())
         .send(request_chat_id, client_id)
         .await
 }
 
-/// `/health` callback 入口。
-pub async fn health_callback_query(
+/// 在指定上下文上处理 `/health` callback。
+pub async fn health_callback_query_on(
+    app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
@@ -60,7 +57,7 @@ pub async fn health_callback_query(
     }
 
     send::answer_callback_query(update.id, Some("已刷新"), client_id).await?;
-    let snapshot = match build_health_snapshot().await {
+    let snapshot = match build_health_snapshot_on(app).await {
         Ok(snapshot) => snapshot,
         Err(err) => {
             send_health_callback_error(update.chat_id, client_id, &err).await?;
@@ -166,12 +163,13 @@ struct HealthSnapshot {
     now: chrono::DateTime<chrono::FixedOffset>,
 }
 
-/// 构造健康快照。
-async fn build_health_snapshot() -> anyhow::Result<HealthSnapshot> {
-    let app_context = crate::app_context::app_context();
+/// 在指定上下文上构造健康快照。
+async fn build_health_snapshot_on(
+    app: &crate::app_context::AppContext,
+) -> anyhow::Result<HealthSnapshot> {
     Ok(HealthSnapshot {
-        transfer: store::list_transfer_health_snapshot(app_context.as_ref()).await?,
-        clients: app_context.transfer_runtime.transfer_client_ids(),
+        transfer: store::list_transfer_health_snapshot(app).await?,
+        clients: app.transfer_runtime.transfer_client_ids(),
         now: store::now_utc8(),
     })
 }

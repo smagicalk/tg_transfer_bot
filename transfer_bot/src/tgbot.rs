@@ -226,7 +226,7 @@ pub async fn handle_update(
             return Ok(());
         }
 
-        let Some(actor) = crate::app_context::app_context()
+        let Some(actor) = app_context
             .access_control_runtime
             .request_actor(chat_id, sender_id)
         else {
@@ -240,7 +240,7 @@ pub async fn handle_update(
         };
         tgbot::transfer::ensure_user_account_for_actor(
             actor,
-            tgbot::transfer::billing_runtime_config().initial_user_points,
+            tgbot::transfer::billing_runtime_config_on(app_context.as_ref()).initial_user_points,
         )
         .await?;
 
@@ -339,7 +339,8 @@ pub async fn handle_update(
                     // /transfer 命令入口。
                     "/transfer" => {
                         // request_message_id 用于请求级幂等（防止同一条指令重复建任务）。
-                        tgbot::transfer::transfer_command(
+                        tgbot::transfer::transfer_command_on(
+                            app_context.clone(),
                             text,
                             config.clone(),
                             &request_message,
@@ -351,7 +352,8 @@ pub async fn handle_update(
                     // /lookup 命令入口。
                     // 按源链接查找历史转存结果。
                     "/lookup" => {
-                        tgbot::transfer::lookup_command(
+                        tgbot::transfer::lookup_command_on(
+                            app_context.as_ref(),
                             text,
                             config.clone(),
                             actor,
@@ -362,23 +364,47 @@ pub async fn handle_update(
                     // /config 命令入口。
                     // 仅开放运行时安全可调的配置项。
                     "/config" if actor.is_admin() => {
-                        tgbot::transfer::config_command(text, chat_id, interaction_client_id).await
+                        tgbot::transfer::config_command_on(
+                            app_context.as_ref(),
+                            text,
+                            chat_id,
+                            interaction_client_id,
+                        )
+                        .await
                     }
                     "/config" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
                     }
                     "/targets" if actor.is_admin() => {
-                        tgbot::transfer::targets_command(text, chat_id, interaction_client_id).await
+                        tgbot::transfer::targets_command_on(
+                            app_context.as_ref(),
+                            text,
+                            chat_id,
+                            interaction_client_id,
+                        )
+                        .await
                     }
                     "/targets" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
                     }
                     "/acl" if actor.is_admin() => {
-                        tgbot::transfer::acl_command(text, chat_id, interaction_client_id).await
+                        tgbot::transfer::acl_command_on(
+                            app_context.as_ref(),
+                            text,
+                            chat_id,
+                            interaction_client_id,
+                        )
+                        .await
                     }
                     "/acl" => send_permission_denied_message(chat_id, interaction_client_id).await,
                     "/billing" if actor.is_admin() => {
-                        tgbot::transfer::billing_command(text, chat_id, interaction_client_id).await
+                        tgbot::transfer::billing_command_on(
+                            app_context.as_ref(),
+                            text,
+                            chat_id,
+                            interaction_client_id,
+                        )
+                        .await
                     }
                     "/billing" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
@@ -386,7 +412,13 @@ pub async fn handle_update(
                     // /health 命令入口。
                     // 只读展示运行状态、任务规模和缓存状态，方便排障。
                     "/health" if actor.is_admin() => {
-                        tgbot::transfer::health_command(text, chat_id, interaction_client_id).await
+                        tgbot::transfer::health_command_on(
+                            app_context.as_ref(),
+                            text,
+                            chat_id,
+                            interaction_client_id,
+                        )
+                        .await
                     }
                     "/health" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
@@ -394,7 +426,13 @@ pub async fn handle_update(
                     // /cache 命令入口。
                     // 只读展示 file_cache 汇总和最近记录，不执行清理。
                     "/cache" if actor.is_admin() => {
-                        tgbot::transfer::cache_command(text, chat_id, interaction_client_id).await
+                        tgbot::transfer::cache_command_on(
+                            app_context.as_ref(),
+                            text,
+                            chat_id,
+                            interaction_client_id,
+                        )
+                        .await
                     }
                     "/cache" => {
                         send_permission_denied_message(chat_id, interaction_client_id).await
@@ -402,18 +440,31 @@ pub async fn handle_update(
                     // /downloads 命令入口。
                     // 展示当前聊天最近的转存任务进度列表。
                     "/downloads" => {
-                        tgbot::transfer::downloads_command(text, actor, interaction_client_id).await
+                        tgbot::transfer::downloads_command_on(
+                            app_context.as_ref(),
+                            text,
+                            actor,
+                            interaction_client_id,
+                        )
+                        .await
                     }
                     // /job 命令入口。
                     // 手动暂停、恢复、停止指定转存任务。
                     "/job" => {
-                        tgbot::transfer::job_command(text, actor, interaction_client_id).await
+                        tgbot::transfer::job_command_on(
+                            app_context.as_ref(),
+                            text,
+                            actor,
+                            interaction_client_id,
+                        )
+                        .await
                     }
                     // /menu 命令入口。
                     // 正常配置下交互端固定为 bot；supports_reply_markup 只作为异常配置/测试场景的兜底开关。
                     "/menu" => {
                         let supports_reply_markup = config.supports_reply_markup();
-                        tgbot::transfer::menu_command(
+                        tgbot::transfer::menu_command_on(
+                            app_context.as_ref(),
                             text,
                             actor,
                             interaction_client_id,
@@ -457,12 +508,12 @@ pub async fn handle_update(
                         "admin command completed"
                     );
                 }
-            } else if tgbot::transfer::handle_menu_text_input(
+            } else if tgbot::transfer::handle_menu_text_input_on(
+                app_context.as_ref(),
                 raw_text.as_str(),
                 config.clone(),
-                chat_id,
+                (chat_id, sender_id),
                 message.id,
-                sender_id,
                 actor,
                 interaction_client_id,
             )
@@ -486,7 +537,8 @@ pub async fn handle_update(
         } else {
             if let tdlib_rs::enums::MessageContent::MessageChatShared(shared) =
                 &request_message.content
-                && tgbot::transfer::handle_menu_shared_chat_input(
+                && tgbot::transfer::handle_menu_shared_chat_input_on(
+                    app_context.as_ref(),
                     shared,
                     config.clone(),
                     chat_id,
@@ -511,7 +563,8 @@ pub async fn handle_update(
                     content_kind = message_content_kind(&request_message.content),
                     "admin media message received, dispatching auto transfer"
                 );
-                match tgbot::transfer::transfer_bot_message_auto_command(
+                match tgbot::transfer::transfer_bot_message_auto_command_on(
+                    app_context.clone(),
                     config.clone(),
                     request_message.clone(),
                     actor,
@@ -587,13 +640,10 @@ pub async fn handle_update(
             return Ok(());
         }
 
-        let Some(actor) = crate::app_context::app_context()
-            .access_control_runtime
-            .request_actor(
-                update_callback_query.chat_id,
-                update_callback_query.sender_user_id,
-            )
-        else {
+        let Some(actor) = app_context.access_control_runtime.request_actor(
+            update_callback_query.chat_id,
+            update_callback_query.sender_user_id,
+        ) else {
             tracing::debug!(
                 chat_id = update_callback_query.chat_id,
                 sender_user_id = update_callback_query.sender_user_id,
@@ -604,7 +654,7 @@ pub async fn handle_update(
         };
         tgbot::transfer::ensure_user_account_for_actor(
             actor,
-            tgbot::transfer::billing_runtime_config().initial_user_points,
+            tgbot::transfer::billing_runtime_config_on(app_context.as_ref()).initial_user_points,
         )
         .await?;
 
@@ -616,7 +666,8 @@ pub async fn handle_update(
         );
         // callback update 已经确认来自 interaction client，直接使用当前 client_id 回答并编辑消息。
         // 这能避免双 client 运行时误把 callback 交给 download/upload client。
-        tgbot::transfer::transfer_callback_query(
+        tgbot::transfer::transfer_callback_query_on(
+            app_context.as_ref(),
             update_callback_query,
             config.clone(),
             actor,

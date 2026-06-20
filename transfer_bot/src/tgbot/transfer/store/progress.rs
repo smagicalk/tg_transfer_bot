@@ -200,16 +200,12 @@ pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_context(
 
 /// 查询当前 actor 可见的单个任务进度快照。
 pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_for_actor(
+    app_context: &crate::app_context::AppContext,
     job_id: i64,
     actor: crate::config::RequestActor,
 ) -> anyhow::Result<Option<JobProgressSnapshot>> {
-    get_job_progress_snapshot_with_request_chat(
-        crate::app_context::app_context().as_ref(),
-        job_id,
-        None,
-        actor.owner_scope(),
-    )
-    .await
+    get_job_progress_snapshot_with_request_chat(app_context, job_id, None, actor.owner_scope())
+        .await
 }
 
 /// 查询单个任务进度快照的内部实现。

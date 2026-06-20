@@ -204,18 +204,19 @@ fn acl_input_spec_for_callback_action(action: AclCallbackAction) -> Option<&'sta
         .find(|spec| spec.callback_action == action)
 }
 
-/// `/acl` 命令入口。
-pub async fn acl_command(
+/// 在指定上下文上执行 `/acl` 文本命令。
+pub async fn acl_command_on(
+    app: &crate::app_context::AppContext,
     text: Vec<&str>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let reply = match text.get(1).copied() {
-        None | Some("show") => format_acl_text(ACL_PAGE_TITLE),
-        Some("reset") => reset_acl_to_default().await?,
+        None | Some("show") => format_acl_text_on(app, ACL_PAGE_TITLE),
+        Some("reset") => reset_acl_to_default_on(app).await?,
         Some("add-admin") => {
             let user_id = parse_i64_arg(&text, 2, "usage: /acl add-admin <user_id>")?;
-            update_acl_with(&added_action_title("管理员"), |config| {
+            update_acl_with_on(app, &added_action_title("管理员"), |config| {
                 push_unique(&mut config.admin_user_ids, user_id);
                 config.banned_user_ids.retain(|id| *id != user_id);
             })
@@ -223,28 +224,28 @@ pub async fn acl_command(
         }
         Some("del-admin") => {
             let user_id = parse_i64_arg(&text, 2, "usage: /acl del-admin <user_id>")?;
-            update_acl_with(&deleted_action_title("管理员"), |config| {
+            update_acl_with_on(app, &deleted_action_title("管理员"), |config| {
                 config.admin_user_ids.retain(|id| *id != user_id);
             })
             .await?
         }
         Some("add-allow-user") => {
             let user_id = parse_i64_arg(&text, 2, "usage: /acl add-allow-user <user_id>")?;
-            update_acl_with(&added_action_title("允许用户"), |config| {
+            update_acl_with_on(app, &added_action_title("允许用户"), |config| {
                 push_unique(&mut config.allowed_user_ids, user_id);
             })
             .await?
         }
         Some("del-allow-user") => {
             let user_id = parse_i64_arg(&text, 2, "usage: /acl del-allow-user <user_id>")?;
-            update_acl_with(&deleted_action_title("允许用户"), |config| {
+            update_acl_with_on(app, &deleted_action_title("允许用户"), |config| {
                 config.allowed_user_ids.retain(|id| *id != user_id);
             })
             .await?
         }
         Some("add-ban") => {
             let user_id = parse_i64_arg(&text, 2, "usage: /acl add-ban <user_id>")?;
-            update_acl_with(&added_action_title("封禁用户"), |config| {
+            update_acl_with_on(app, &added_action_title("封禁用户"), |config| {
                 if config.bootstrap_admin_user_ids.contains(&user_id) {
                     return;
                 }
@@ -256,7 +257,7 @@ pub async fn acl_command(
         }
         Some("del-ban") => {
             let user_id = parse_i64_arg(&text, 2, "usage: /acl del-ban <user_id>")?;
-            update_acl_with(&released_action_title("封禁用户"), |config| {
+            update_acl_with_on(app, &released_action_title("封禁用户"), |config| {
                 config.banned_user_ids.retain(|id| *id != user_id);
             })
             .await?
@@ -271,7 +272,7 @@ pub async fn acl_command(
             match key {
                 "allow_all_private_users" => {
                     let enabled = parse_bool_arg(value)?;
-                    update_acl_with(&updated_action_title("私聊开放策略"), |config| {
+                    update_acl_with_on(app, &updated_action_title("私聊开放策略"), |config| {
                         config.allow_all_private_users = enabled;
                     })
                     .await?
@@ -281,28 +282,28 @@ pub async fn acl_command(
         }
         Some("add-allow-target") => {
             let chat_id = parse_i64_arg(&text, 2, "usage: /acl add-allow-target <chat_id>")?;
-            update_acl_with(&added_action_title("目标白名单"), |config| {
+            update_acl_with_on(app, &added_action_title("目标白名单"), |config| {
                 push_unique(&mut config.allowed_target_chat_ids, chat_id);
             })
             .await?
         }
         Some("del-allow-target") => {
             let chat_id = parse_i64_arg(&text, 2, "usage: /acl del-allow-target <chat_id>")?;
-            update_acl_with(&deleted_action_title("目标白名单"), |config| {
+            update_acl_with_on(app, &deleted_action_title("目标白名单"), |config| {
                 config.allowed_target_chat_ids.retain(|id| *id != chat_id);
             })
             .await?
         }
         Some("add-allow-request") => {
             let chat_id = parse_i64_arg(&text, 2, "usage: /acl add-allow-request <chat_id>")?;
-            update_acl_with(&added_action_title("请求白名单"), |config| {
+            update_acl_with_on(app, &added_action_title("请求白名单"), |config| {
                 push_unique(&mut config.allowed_request_chat_ids, chat_id);
             })
             .await?
         }
         Some("del-allow-request") => {
             let chat_id = parse_i64_arg(&text, 2, "usage: /acl del-allow-request <chat_id>")?;
-            update_acl_with(&deleted_action_title("请求白名单"), |config| {
+            update_acl_with_on(app, &deleted_action_title("请求白名单"), |config| {
                 config.allowed_request_chat_ids.retain(|id| *id != chat_id);
             })
             .await?
@@ -396,8 +397,9 @@ pub(super) fn is_acl_callback_data(data: &str) -> bool {
     data.starts_with(ACL_CALLBACK_PREFIX)
 }
 
-/// `/acl` inline keyboard 回调入口。
-pub(super) async fn acl_callback_query(
+/// 在指定上下文上处理 `/acl` callback。
+pub async fn acl_callback_query_on(
+    app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
@@ -417,11 +419,11 @@ pub(super) async fn acl_callback_query(
 
     let action_result = match action {
         AclCallbackAction::Refresh => Ok(()),
-        AclCallbackAction::Reset => reset_acl_to_default().await.map(|_| ()),
+        AclCallbackAction::Reset => reset_acl_to_default_on(app).await.map(|_| ()),
         AclCallbackAction::ToggleAllowAllPrivateUsers => {
-            let enabled =
-                !crate::tgbot::transfer::access_control_runtime_config().allow_all_private_users;
-            update_acl_with(&updated_action_title("私聊开放策略"), |config| {
+            let enabled = !crate::tgbot::transfer::access_control_runtime_config_on(app)
+                .allow_all_private_users;
+            update_acl_with_on(app, &updated_action_title("私聊开放策略"), |config| {
                 config.allow_all_private_users = enabled;
             })
             .await
@@ -456,8 +458,8 @@ pub(super) async fn acl_callback_query(
         return Err(err);
     }
 
-    let (text, keyboard) = send::ReplyPanel::card(format_acl_text(ACL_PAGE_TITLE))
-        .rows(build_acl_buttons())
+    let (text, keyboard) = send::ReplyPanel::card(format_acl_text_on(app, ACL_PAGE_TITLE))
+        .rows(build_acl_buttons_on(app))
         .into_card_parts()?;
     edit_runtime_admin_interaction_card_or_error(
         text,
@@ -472,16 +474,19 @@ pub(super) async fn acl_callback_query(
     Ok(())
 }
 
-pub(super) fn format_acl_text(title: &str) -> String {
+/// 构造当前访问控制配置文本。
+///
+/// 菜单页和 help 页在已经持有 `AppContext` 时优先用这个版本，避免重复抓全局。
+pub(super) fn format_acl_text_on(app: &crate::app_context::AppContext, title: &str) -> String {
     format_acl_config_text(
         title,
-        &crate::tgbot::transfer::access_control_runtime_config(),
+        &crate::tgbot::transfer::access_control_runtime_config_on(app),
     )
 }
 
-async fn reset_acl_to_default() -> anyhow::Result<String> {
-    let config = crate::tgbot::transfer::access_control_runtime_default_config();
-    persist_acl_config(&config).await?;
+async fn reset_acl_to_default_on(app: &crate::app_context::AppContext) -> anyhow::Result<String> {
+    let config = crate::tgbot::transfer::access_control_runtime_default_config_on(app);
+    persist_acl_config_on(app, &config).await?;
     tracing::info!("access control runtime config reset to startup defaults");
     Ok(format_acl_config_text(
         &reset_action_title("访问控制"),
@@ -489,14 +494,15 @@ async fn reset_acl_to_default() -> anyhow::Result<String> {
     ))
 }
 
-async fn update_acl_with(
+async fn update_acl_with_on(
+    app: &crate::app_context::AppContext,
     title: &str,
     updater: impl FnOnce(&mut AccessControlConfig),
 ) -> anyhow::Result<String> {
-    let mut config = crate::tgbot::transfer::access_control_runtime_config();
+    let mut config = crate::tgbot::transfer::access_control_runtime_config_on(app);
     updater(&mut config);
     normalize_acl_config(&mut config);
-    persist_acl_config(&config).await?;
+    persist_acl_config_on(app, &config).await?;
     tracing::info!(
         admin_count = config.admin_user_ids.len(),
         allowed_user_count = config.allowed_user_ids.len(),
@@ -508,9 +514,12 @@ async fn update_acl_with(
     Ok(format_acl_config_text(title, &config))
 }
 
-async fn persist_acl_config(config: &AccessControlConfig) -> anyhow::Result<()> {
+async fn persist_acl_config_on(
+    app: &crate::app_context::AppContext,
+    config: &AccessControlConfig,
+) -> anyhow::Result<()> {
     crate::tgbot::transfer::save_access_control_runtime_config(config).await?;
-    crate::tgbot::transfer::update_access_control_runtime_config(config.clone());
+    crate::tgbot::transfer::update_access_control_runtime_config_on(app, config.clone());
     Ok(())
 }
 
@@ -562,7 +571,15 @@ fn format_acl_config_text(title: &str, config: &AccessControlConfig) -> String {
 }
 
 pub(super) fn build_acl_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    let config = crate::tgbot::transfer::access_control_runtime_config();
+    let app_context = crate::app_context::app_context();
+    build_acl_buttons_on(app_context.as_ref())
+}
+
+/// `/acl` 页按钮的上下文版本。
+pub(super) fn build_acl_buttons_on(
+    app: &crate::app_context::AppContext,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let config = crate::tgbot::transfer::access_control_runtime_config_on(app);
     let allow_all_label = if config.allow_all_private_users {
         "关闭任意私聊"
     } else {

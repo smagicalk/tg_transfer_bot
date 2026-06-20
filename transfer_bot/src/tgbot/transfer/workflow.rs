@@ -20,7 +20,8 @@ mod upload;
 pub(super) use gc::run_file_gc_loop;
 pub(super) use guard::is_job_running_in_process;
 pub(super) use recovery::{
-    maybe_send_startup_setup_guide, recover_unfinished_jobs, resume_one_job,
+    maybe_send_startup_setup_guide_on, recover_unfinished_jobs, resume_one_job,
+    startup_setup_guide_page_on,
 };
 pub(in crate::tgbot::transfer) use result_link::{
     refresh_stored_result_link, refresh_stored_result_messages,
@@ -51,7 +52,7 @@ pub(super) async fn transfer(
     plan: TransferPlan,
     client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferOutcome> {
-    let start = build_transfer_start(plan, client_ids).await?;
+    let start = build_transfer_start(app_context.clone(), plan, client_ids).await?;
     match start {
         TransferStart::Outcome(outcome) => Ok(outcome),
         TransferStart::Resume(job) => resume_one_job(app_context.clone(), job, client_ids).await,
@@ -61,8 +62,13 @@ pub(super) async fn transfer(
     }
 }
 
-/// 文件删除延迟（分钟）：
-/// 从 config.json 读取 `transfer_config.file_delete_delay_minutes`。
-fn file_delete_delay_minutes() -> i64 {
-    super::runtime_config().file_delete_delay_minutes.max(0)
+/// 文件删除延迟（分钟）。
+///
+/// 当前从 `AppContext` 里的运行时配置读取，避免工作流层继续直接抓全局兼容壳。
+fn file_delete_delay_minutes(app_context: &crate::app_context::AppContext) -> i64 {
+    app_context
+        .transfer_runtime
+        .runtime_config()
+        .file_delete_delay_minutes
+        .max(0)
 }

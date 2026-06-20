@@ -17,22 +17,24 @@ mod points;
 mod targets;
 mod transfer_cmd;
 
-pub use acl::acl_command;
-pub use billing::billing_command;
-pub use cache::cache_command;
-pub use config_cmd::config_command;
-pub use downloads::downloads_command;
-pub use health::health_command;
+pub(in crate::tgbot) use acl::acl_command_on;
+pub(in crate::tgbot) use billing::billing_command_on;
+pub(in crate::tgbot) use cache::cache_command_on;
+pub(in crate::tgbot) use config_cmd::config_command_on;
+pub(in crate::tgbot) use downloads::downloads_command_on;
+pub(in crate::tgbot) use health::health_command_on;
 pub use help::help_command;
 pub use job::job_command;
-pub use lookup::lookup_command;
-pub use menu::{
-    cancel_menu_input, discard_menu_input, discard_menu_input_for_command,
-    handle_menu_shared_chat_input, handle_menu_text_input, menu_command,
-};
+pub(in crate::tgbot) use job::job_command_on;
+pub(in crate::tgbot) use lookup::lookup_command_on;
+pub(in crate::tgbot) use menu::menu_command_on;
+pub use menu::{cancel_menu_input, discard_menu_input, discard_menu_input_for_command};
+pub(in crate::tgbot) use menu::{handle_menu_shared_chat_input_on, handle_menu_text_input_on};
 pub use points::{balance_command, points_command};
-pub use targets::targets_command;
-pub use transfer_cmd::{transfer_bot_message_auto_command, transfer_command};
+pub(in crate::tgbot) use targets::targets_command_on;
+pub(in crate::tgbot) use transfer_cmd::{
+    transfer_bot_message_auto_command_on, transfer_command_on,
+};
 
 /// 给转存结果/进度卡片生成“任务详情”按钮数据。
 ///
@@ -168,6 +170,18 @@ pub async fn transfer_callback_query(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    let app_context = crate::app_context::app_context();
+    transfer_callback_query_on(app_context.as_ref(), update, config, actor, client_id).await
+}
+
+/// 在指定上下文上处理转存模块 inline keyboard 回调。
+pub(in crate::tgbot) async fn transfer_callback_query_on(
+    app: &crate::app_context::AppContext,
+    update: tdlib_rs::types::UpdateNewCallbackQuery,
+    config: std::sync::Arc<crate::config::BotConfig>,
+    actor: crate::config::RequestActor,
+    client_id: i32,
+) -> anyhow::Result<()> {
     let route = classify_callback_route(&update.payload);
     tracing::debug!(
         route = ?route,
@@ -180,33 +194,37 @@ pub async fn transfer_callback_query(
     match route {
         CallbackRoute::Help => help::help_callback_query(update, actor, client_id).await,
         CallbackRoute::Downloads => {
-            downloads::downloads_callback_query(update, actor, client_id).await
+            downloads::downloads_callback_query_on(app, update, actor, client_id).await
         }
-        CallbackRoute::Job => job::job_callback_query(update, actor, client_id).await,
+        CallbackRoute::Job => job::job_callback_query_on(app, update, actor, client_id).await,
         CallbackRoute::Config if actor.is_admin() => {
-            config_cmd::config_callback_query(update, client_id).await
+            config_cmd::config_callback_query_on(app, update, client_id).await
         }
         CallbackRoute::Config => send_permission_denied_callback(update, client_id).await,
         CallbackRoute::Targets if actor.is_admin() => {
-            targets::targets_callback_query(update, client_id).await
+            targets::targets_callback_query_on(app, update, client_id).await
         }
         CallbackRoute::Targets => send_permission_denied_callback(update, client_id).await,
-        CallbackRoute::Acl if actor.is_admin() => acl::acl_callback_query(update, client_id).await,
+        CallbackRoute::Acl if actor.is_admin() => {
+            acl::acl_callback_query_on(app, update, client_id).await
+        }
         CallbackRoute::Acl => send_permission_denied_callback(update, client_id).await,
         CallbackRoute::Billing if actor.is_admin() => {
-            billing::billing_callback_query(update, client_id).await
+            billing::billing_callback_query_on(app, update, client_id).await
         }
         CallbackRoute::Billing => send_permission_denied_callback(update, client_id).await,
         CallbackRoute::Health if actor.is_admin() => {
-            health::health_callback_query(update, client_id).await
+            health::health_callback_query_on(app, update, client_id).await
         }
         CallbackRoute::Health => send_permission_denied_callback(update, client_id).await,
         CallbackRoute::Cache if actor.is_admin() => {
-            cache::cache_callback_query(update, client_id).await
+            cache::cache_callback_query_on(app, update, client_id).await
         }
         CallbackRoute::Cache => send_permission_denied_callback(update, client_id).await,
         CallbackRoute::Points => points::points_callback_query(update, actor, client_id).await,
-        CallbackRoute::Menu => menu::menu_callback_query(update, config, actor, client_id).await,
+        CallbackRoute::Menu => {
+            menu::menu_callback_query_on(app, update, config, actor, client_id).await
+        }
         CallbackRoute::Unknown => {
             tracing::warn!(
                 chat_id = update.chat_id,

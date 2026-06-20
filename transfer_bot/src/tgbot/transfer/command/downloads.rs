@@ -16,7 +16,7 @@ mod tests;
 
 use keyboard::{DownloadsCallbackAction, build_downloads_keyboard, parse_downloads_callback_data};
 use render::{compute_downloads_query_limit, compute_total_pages, format_downloads_text};
-use types::{DownloadsArgs, DownloadsFilter, parse_downloads_args};
+use types::{DownloadsArgs, DownloadsFilter, parse_downloads_args_on};
 
 use crate::tgbot::send::send_interaction_error_card;
 
@@ -54,38 +54,34 @@ pub(super) fn build_downloads_menu_callback_data(filter_value: &str, limit: u64)
     build_downloads_filter_value_callback_data(filter_value, limit)
 }
 
-/// `/downloads` 命令入口。
-/// 命令格式：`/downloads [filter] [limit] [page]`
-/// 示例：
-/// - `/downloads`
-/// - `/downloads 10`
-/// - `/downloads dl`
-/// - `/downloads done 5`
-/// - `/downloads done 5 2`
-pub async fn downloads_command(
+/// 在指定上下文上执行 `/downloads` 命令。
+pub async fn downloads_command_on(
+    app: &crate::app_context::AppContext,
     text: Vec<&str>,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let args = parse_downloads_args(&text)?;
+    let args = parse_downloads_args_on(app, &text)?;
     tracing::info!(
         request_chat_id = actor.request_chat_id,
         owner_user_id = actor.user_id,
         actor_role = actor.role.as_str(),
+        is_admin = actor.is_admin(),
         filter = args.filter.command_value(),
         limit = args.limit,
         page = args.page,
         "downloads command started"
     );
-    render_downloads_page(actor, args)
+    render_downloads_page_on(app, actor, args)
         .await?
         .panel
         .send(actor.request_chat_id, client_id)
         .await
 }
 
-/// 处理 `/downloads` 的分页按钮回调。
-pub async fn downloads_callback_query(
+/// 在指定上下文上处理 `/downloads` callback。
+pub async fn downloads_callback_query_on(
+    app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     actor: crate::config::RequestActor,
     client_id: i32,
@@ -119,7 +115,7 @@ pub async fn downloads_callback_query(
     };
     send::answer_callback_query(update.id, callback_tip, client_id).await?;
 
-    let rendered = match render_downloads_page(actor, args).await {
+    let rendered = match render_downloads_page_on(app, actor, args).await {
         Ok(rendered) => rendered,
         Err(err) => {
             send_downloads_callback_error(update.chat_id, client_id, &err).await?;
@@ -162,17 +158,15 @@ struct DownloadsRenderedPage {
     panel: send::ReplyPanel,
 }
 
-/// 查询并渲染某一页下载列表。
-async fn render_downloads_page(
+/// 在指定上下文上查询并渲染某一页下载列表。
+async fn render_downloads_page_on(
+    app: &crate::app_context::AppContext,
     actor: crate::config::RequestActor,
     args: DownloadsArgs,
 ) -> anyhow::Result<DownloadsRenderedPage> {
     // 先拉取更大窗口，再按筛选条件裁剪，避免“最近几条碰巧不匹配”导致空结果。
     let query_limit = compute_downloads_query_limit(args.limit, args.page);
-    let app_context = crate::app_context::app_context();
-    let snapshots =
-        store::list_recent_job_snapshots_for_actor(app_context.as_ref(), actor, query_limit)
-            .await?;
+    let snapshots = store::list_recent_job_snapshots_for_actor(app, actor, query_limit).await?;
     let filtered = snapshots
         .into_iter()
         .filter(|snapshot| args.filter.matches(snapshot))
@@ -192,6 +186,7 @@ async fn render_downloads_page(
         request_chat_id = actor.request_chat_id,
         owner_user_id = actor.user_id,
         actor_role = actor.role.as_str(),
+        is_admin = actor.is_admin(),
         filter = normalized_args.filter.command_value(),
         limit = normalized_args.limit,
         page = normalized_args.page,
@@ -200,7 +195,7 @@ async fn render_downloads_page(
         page_items = page_items.len(),
         "downloads page rendered"
     );
-    let text = format_downloads_text(&page_items, &normalized_args, total);
+    let text = format_downloads_text(&page_items, &normalized_args, total, actor.is_admin());
     let keyboard = build_downloads_keyboard(&normalized_args, total_pages, &page_items);
 
     Ok(DownloadsRenderedPage {

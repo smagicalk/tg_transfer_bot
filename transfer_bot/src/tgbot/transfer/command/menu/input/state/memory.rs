@@ -31,6 +31,15 @@ pub(in crate::tgbot::transfer::command::menu) fn last_target(
     targets.get(&(chat_id, user_id)).copied()
 }
 
+/// 清空最近目标缓存。
+///
+/// 仅测试使用，避免不同测试之间共享进程内交互状态。
+#[cfg(test)]
+pub(in crate::tgbot::transfer::command::menu) fn clear_last_targets() {
+    let mut targets = lock_menu_last_targets();
+    targets.clear();
+}
+
 /// 获取最近目标锁；锁中毒时恢复内部 HashMap，避免交互缓存故障扩散成菜单不可用。
 fn lock_menu_last_targets() -> MutexGuard<'static, HashMap<DraftKey, i64>> {
     match MENU_LAST_TARGETS.lock() {

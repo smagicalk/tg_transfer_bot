@@ -108,6 +108,49 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
   - `downloads` 现已统一为“任务/筛选主操作 -> 刷新/返回/菜单 -> 复制当前命令 -> 分页单独一行”。
   - `config` 现已统一为“配置增减主操作 -> 刷新/返回/菜单 -> 复制命令”，并补了层级测试。
   - `menu` 的 `Home / Transfer / Downloads / Jobs / Lookup / Help / Config fallback` 已继续拉平按钮密度和导航层级。
+
+更新记录：2026-06-19
+
+- README、`/help` 和 `/menu` 文案已同步收口“最终对外可开放能力”的边界：
+  - 普通用户建议只开放：
+    - `/help`
+    - `/menu`
+    - `/transfer`
+    - `/lookup`
+    - `/downloads`
+    - `/job`
+    - `/balance`
+  - admin 额外使用：
+    - `/points`
+    - `/config`
+    - `/targets`
+    - `/acl`
+    - `/billing`
+    - `/health`
+    - `/cache`
+- README 的“最小可运行配置”已修正为只保留启动级文件配置：
+  - `bootstrap_admin_user_ids` 仍在 `config.json`
+  - `targets / acl / billing / transfer runtime config` 以数据库运行态为准，不再要求先写入文件
+- README 已补首启建议：
+  1. 先用 bootstrap admin 私聊 bot 打开 `/menu`
+  2. 先配 `targets`
+  3. 再配 `acl`
+  4. 最后按需调 `billing / config`
+- 现在已明确：在 `targets` 和 `acl` 仍未初始化前，不建议对普通用户开放 `/transfer`、`/menu` 等入口。
+- `help transfer / lookup / downloads / job / menu` 与菜单各页文案已补上权限边界：
+  - 普通用户只看自己的任务
+  - 普通用户只查自己的结果
+  - 普通用户只能控制自己的任务
+  - 普通用户不能借 `user` fallback 读取私有源
+- “默认目标”的语义已在 README 中明确：
+  - 当前按 `targets.by_request_chat_id[request_chat_id]` 做私聊隔离
+  - 在 bot 私聊模式下，这基本等价于“每个用户自己的默认目标”
+  - 暂不需要为此单独引入 `by_user_id` 语义
+- 本轮验证已通过：
+  - `cargo fmt --all`
+  - `cargo test -p transfer_bot`
+  - `cargo check -p transfer_bot`
+  - 当前测试数：`407 passed`
 - 本轮继续完成第二批交互页统一：
   - `cache` 现已统一为“视图主操作 -> 刷新/返回/菜单 -> 复制当前命令 -> 分页单独一行”。
   - `points` 流水页现已统一为“分页主操作 -> 刷新/返回/菜单 -> 复制当前命令 -> 复制余额”，admin 返回按钮会安全降级为复制 `/points show <user_id>`。
@@ -262,6 +305,8 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - bot 是唯一交互端；用户号只做源读取/下载 fallback。
 - admin 只能私聊 bot 交互，可全局查看和控制任务，不扣积分，可使用 user fallback。
 - 普通用户只能私聊 bot，只能查看和控制自己的任务，链接源不允许借 user fallback。
+- 普通用户对外建议只开放 `/help /menu /transfer /lookup /downloads /job /balance`。
+- `targets` 和 `acl` 没完成初始化前，不建议对普通用户开放转存入口。
 - 普通用户转存按 `billing.base_cost_points + billing.item_cost_points * item_count` 扣积分。
 - 扣费发生在 spider 成功后、创建 job 前；无效链接不会扣费。
 - 积分账本使用 `request_chat_id + request_message_id` 生成幂等键，防止同一命令重复扣费。
@@ -273,6 +318,7 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - 开发期允许直接删除业务库，程序下次启动会自动重建。
 - 重复转存判断固定看 `source_link + target_chat_id`。
 - 请求级幂等固定看 `request_chat_id + request_message_id`。
+- 私聊模式下 `targets.by_request_chat_id[request_chat_id]` 基本等价于“该用户自己的默认目标”。
 - 文件缓存保留，消息缓存不做独立表。
 - 菜单输入草稿持久化在 `menu_input_draft`，程序重启后未完成交互仍可继续。
 - 项目不支持群聊命令交互；目标群只作为转存目的地，通过私聊菜单或命令参数选择。

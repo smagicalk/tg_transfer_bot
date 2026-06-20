@@ -9,6 +9,7 @@ use super::state::MenuJobAction;
 
 /// 调用已有 `/job` 命令入口，避免菜单输入流复制任务状态迁移逻辑。
 pub(super) async fn run_existing_job_command(
+    app: &crate::app_context::AppContext,
     action: MenuJobAction,
     job_id: i64,
     actor: crate::config::RequestActor,
@@ -20,7 +21,7 @@ pub(super) async fn run_existing_job_command(
         job_id.to_string(),
     ];
     let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
-    job::job_command(command_refs, actor, client_id).await
+    job::job_command_on(app, command_refs, actor, client_id).await
 }
 
 /// 调用已有 `/points history` 命令，避免菜单输入流复制积分流水查询逻辑。
@@ -101,12 +102,12 @@ pub(super) async fn send_keyboard_cleanup_notice(
     .await
 }
 
-/// 菜单输入过期提示，跟随运行时配置展示实际超时时间。
-pub(super) fn expired_input_detail() -> String {
+/// 菜单输入过期提示的上下文版本。
+pub(super) fn expired_input_detail_on(app: &crate::app_context::AppContext) -> String {
     format!(
         "上一次菜单输入已超过 {}，请重新打开 /menu。",
         format_duration_hint(
-            crate::tgbot::transfer::runtime_config()
+            crate::tgbot::transfer::runtime_config_on(app)
                 .menu_input_timeout_seconds
                 .max(1)
         )

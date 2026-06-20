@@ -485,9 +485,11 @@ mod tests {
         assert_eq!(decoded, "pt:p:b:1:10:1");
     }
 
-    // admin 查看他人流水时，“返回”按钮需要降级成复制命令，而不是错误地回到自己余额页。
+    // admin 查看他人流水时，“返回”按钮也应回到该用户的余额卡片。
     #[test]
-    fn test_ledger_button_rows_admin_return_is_copy_button() {
+    fn test_ledger_button_rows_admin_return_is_balance_home_callback() {
+        use base64::{Engine as _, engine::general_purpose};
+
         let page = store::PointLedgerPage {
             telegram_user_id: 9,
             entries: vec![],
@@ -498,12 +500,15 @@ mod tests {
         };
 
         let rows = ledger_button_rows(LedgerCommandKind::Points, 9, &page, true);
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[1][1].r#type
+        else {
+            panic!("points ledger return button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
 
         assert_eq!(rows[1][1].text, "返回");
-        assert!(matches!(
-            rows[1][1].r#type,
-            tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
-        ));
+        assert_eq!(decoded, "pt:bh:pts:9:10:1");
         assert_eq!(rows[2][0].text, "复制当前页");
         assert_ne!(rows[1][1].text, rows[2][0].text);
     }

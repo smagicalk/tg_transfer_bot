@@ -9,20 +9,22 @@ use crate::tgbot::send;
 use super::super::text::{
     build_menu_recovery_text, build_step_prompt_text, build_step_prompt_with_context,
 };
-use super::flow::run_existing_command;
+use super::flow::{ExistingCommandContext, run_existing_command};
 use super::state::{
     ConfirmContextTakeResult, DraftKey, TargetContext, TargetContextAdvanceResult,
     TargetDraftAdvance, advance_target_context, remember_last_target, take_confirm_context,
 };
 use super::target::{
-    edit_confirm_prompt, edit_target_choice_prompt, resolve_default_target, resolve_target_by_id,
+    TargetPromptContext, edit_confirm_prompt, edit_target_choice_prompt, resolve_default_target_on,
+    resolve_target_by_id_on,
 };
 
 /// 目标选择 callback 的公共上下文。
 ///
 /// 多个目标按钮都需要同一组 TDLib 消息坐标；收拢后目标推进逻辑更容易保持一致。
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct TargetCallbackContext {
+    app: std::sync::Arc<crate::app_context::AppContext>,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
@@ -31,19 +33,39 @@ struct TargetCallbackContext {
 }
 
 impl TargetCallbackContext {
+    /// 构造 callback 共享上下文。
+    fn new(
+        app: std::sync::Arc<crate::app_context::AppContext>,
+        callback_query_id: i64,
+        chat_id: i64,
+        message_id: i64,
+        sender_user_id: i64,
+        client_id: i32,
+    ) -> Self {
+        Self {
+            app,
+            callback_query_id,
+            chat_id,
+            message_id,
+            sender_user_id,
+            client_id,
+        }
+    }
+
     /// 当前草稿的隔离键。
-    fn draft_key(self) -> DraftKey {
+    fn draft_key(&self) -> DraftKey {
         (self.chat_id, self.sender_user_id)
     }
 
     /// 向 Telegram ACK 当前按钮点击。
-    async fn answer(self, text: &'static str) -> anyhow::Result<()> {
+    async fn answer(&self, text: &'static str) -> anyhow::Result<()> {
         send::answer_callback_query(self.callback_query_id, Some(text), self.client_id).await
     }
 }
 
 /// 处理“使用默认目标”按钮。
 pub(in crate::tgbot::transfer::command::menu) async fn target_default_callback_query(
+    app: &crate::app_context::AppContext,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
@@ -51,14 +73,37 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_default_callback_q
     config: Arc<BotConfig>,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let ctx = TargetCallbackContext {
+    target_default_callback_query_on(
+        app,
+        callback_query_id,
+        chat_id,
+        message_id,
+        sender_user_id,
+        config,
+        client_id,
+    )
+    .await
+}
+
+/// 在指定上下文上处理“使用默认目标”按钮。
+async fn target_default_callback_query_on(
+    app: &crate::app_context::AppContext,
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    config: Arc<BotConfig>,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let ctx = TargetCallbackContext::new(
+        std::sync::Arc::new(app.clone()),
         callback_query_id,
         chat_id,
         message_id,
         sender_user_id,
         client_id,
-    };
-    let Some(target_chat_id) = resolve_default_target(&config, chat_id) else {
+    );
+    let Some(target_chat_id) = resolve_default_target_on(app, &config, chat_id) else {
         let Some(_context) = advance_target_context_for_callback(
             ctx.draft_key(),
             TargetDraftAdvance::TargetChoice,
@@ -75,11 +120,11 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_default_callback_q
         return Ok(());
     };
 
-    select_target_for_callback(ctx, target_chat_id, "已选择默认目标").await
+    select_target_for_callback_on(ctx, target_chat_id, "已选择默认目标").await
 }
 
 /// 把当前目标选择草稿推进到确认页，并编辑原 inline 卡片。
-async fn select_target_for_callback(
+async fn select_target_for_callback_on(
     ctx: TargetCallbackContext,
     target_chat_id: i64,
     selected_tip: &'static str,
@@ -110,6 +155,7 @@ async fn select_target_for_callback(
 
 /// 处理“常用目标”按钮。
 pub(in crate::tgbot::transfer::command::menu) async fn target_alias_callback_query(
+    app: &crate::app_context::AppContext,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
@@ -118,18 +164,34 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_alias_callback_que
     config: Arc<BotConfig>,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let ctx = TargetCallbackContext {
-        callback_query_id,
-        chat_id,
-        message_id,
-        sender_user_id,
-        client_id,
-    };
-    if let Err(err) = resolve_target_by_id(target_chat_id, &config, chat_id) {
+    target_alias_callback_query_on(
+        TargetCallbackContext::new(
+            std::sync::Arc::new(app.clone()),
+            callback_query_id,
+            chat_id,
+            message_id,
+            sender_user_id,
+            client_id,
+        ),
+        target_chat_id,
+        config,
+    )
+    .await
+}
+
+/// 在指定上下文上处理“常用目标”按钮。
+async fn target_alias_callback_query_on(
+    ctx: TargetCallbackContext,
+    target_chat_id: i64,
+    config: Arc<BotConfig>,
+) -> anyhow::Result<()> {
+    if let Err(err) =
+        resolve_target_by_id_on(ctx.app.as_ref(), target_chat_id, &config, ctx.chat_id)
+    {
         ctx.answer("目标不在允许列表").await?;
         tracing::warn!(
-            chat_id,
-            sender_user_id,
+            chat_id = ctx.chat_id,
+            sender_user_id = ctx.sender_user_id,
             target_chat_id,
             error = %err,
             "target alias callback rejected"
@@ -137,24 +199,26 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_alias_callback_que
         return Ok(());
     }
 
-    select_target_for_callback(ctx, target_chat_id, "已选择目标").await
+    select_target_for_callback_on(ctx, target_chat_id, "已选择目标").await
 }
 
 /// 处理“手动输入目标”按钮。
 pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_query(
+    app: &crate::app_context::AppContext,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
     sender_user_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let ctx = TargetCallbackContext {
+    let ctx = TargetCallbackContext::new(
+        std::sync::Arc::new(app.clone()),
         callback_query_id,
         chat_id,
         message_id,
         sender_user_id,
         client_id,
-    };
+    );
     let Some(_context) = advance_target_context_for_callback(
         ctx.draft_key(),
         TargetDraftAdvance::TargetChat,
@@ -197,19 +261,21 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_qu
 
 /// 处理“选择群组”按钮，发送 Telegram 原生选群键盘。
 pub(in crate::tgbot::transfer::command::menu) async fn target_request_chat_callback_query(
+    app: &crate::app_context::AppContext,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
     sender_user_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let ctx = TargetCallbackContext {
+    let ctx = TargetCallbackContext::new(
+        std::sync::Arc::new(app.clone()),
         callback_query_id,
         chat_id,
         message_id,
         sender_user_id,
         client_id,
-    };
+    );
     let Some(_context) = advance_target_context_for_callback(
         ctx.draft_key(),
         TargetDraftAdvance::ChatPicker,
@@ -254,6 +320,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_request_chat_callb
 
 /// 处理“确认页执行”按钮。
 pub(in crate::tgbot::transfer::command::menu) async fn target_confirm_callback_query(
+    app: &crate::app_context::AppContext,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
@@ -291,10 +358,15 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_confirm_callback_q
             confirm.target_chat_id.to_string(),
         ],
         config,
-        chat_id,
-        message_id,
-        actor,
-        client_id,
+        ExistingCommandContext {
+            // 确认按钮要把执行上下文 move 给现有转存/查询命令入口；这里局部取一次全局 Arc
+            // 比在确认状态结构里长期持有整份运行态更简单，也能维持状态表纯净。
+            app: std::sync::Arc::new(app.clone()),
+            request_chat_id: chat_id,
+            request_message_id: message_id,
+            actor,
+            client_id,
+        },
     )
     .await
 }
@@ -380,6 +452,7 @@ fn target_advance_callback_decision(
 
 /// 处理“返回选择目标”按钮。
 pub(in crate::tgbot::transfer::command::menu) async fn target_back_callback_query(
+    app: &crate::app_context::AppContext,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
@@ -387,13 +460,36 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_back_callback_quer
     config: Arc<BotConfig>,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let ctx = TargetCallbackContext {
+    target_back_callback_query_on(
+        app,
+        callback_query_id,
+        chat_id,
+        message_id,
+        sender_user_id,
+        config,
+        client_id,
+    )
+    .await
+}
+
+/// 在指定上下文上处理“返回选择目标”按钮。
+async fn target_back_callback_query_on(
+    app: &crate::app_context::AppContext,
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    config: Arc<BotConfig>,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let ctx = TargetCallbackContext::new(
+        std::sync::Arc::new(app.clone()),
         callback_query_id,
         chat_id,
         message_id,
         sender_user_id,
         client_id,
-    };
+    );
     let Some(context) = advance_target_context_for_callback(
         ctx.draft_key(),
         TargetDraftAdvance::TargetChoice,
@@ -409,10 +505,13 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_back_callback_quer
     ctx.answer("已返回目标选择").await?;
     edit_target_choice_prompt(
         &config,
-        ctx.chat_id,
-        ctx.sender_user_id,
+        TargetPromptContext {
+            app: ctx.app.as_ref(),
+            request_chat_id: ctx.chat_id,
+            sender_user_id: ctx.sender_user_id,
+            client_id: ctx.client_id,
+        },
         ctx.message_id,
-        ctx.client_id,
         context.kind,
         &context.source_link,
     )
@@ -558,7 +657,9 @@ mod tests {
     // 目标 callback 上下文必须用 chat + user 隔离草稿，不能把 message_id 混进主键。
     #[test]
     fn test_target_callback_context_draft_key() {
+        let app_context = crate::app_context::app_context();
         let ctx = TargetCallbackContext {
+            app: app_context,
             callback_query_id: 1,
             chat_id: 10,
             message_id: 20,

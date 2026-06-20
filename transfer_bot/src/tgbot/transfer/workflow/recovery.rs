@@ -36,21 +36,46 @@ impl StartupSetupGuide {
     }
 }
 
-/// 启动后按需向 bootstrap admin 发送初始化引导。
-pub(in crate::tgbot::transfer) async fn maybe_send_startup_setup_guide(
+/// 在指定上下文上构造“初始化引导”页面。
+///
+/// 菜单首页和受限页面在数据库运行态尚未初始化完成时会复用这张卡片，避免用户跳到
+/// 转存/下载/任务等页面后才发现目标和 ACL 还没配好。
+pub(in crate::tgbot::transfer) fn startup_setup_guide_page_on(
+    app: &crate::app_context::AppContext,
+) -> Option<(String, Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>)> {
+    let guide = detect_startup_setup_guide(
+        &super::super::targets_runtime_config_on(app),
+        &super::super::access_control_runtime_config_on(app),
+        &super::super::billing_runtime_config_on(app),
+        &super::super::billing_runtime_default_config_on(app),
+        &super::super::runtime_config_on(app),
+        &super::super::runtime_default_config_on(app),
+    );
+    guide.should_send().then(|| {
+        (
+            format_startup_setup_guide_text(&guide),
+            build_startup_setup_guide_button_rows(),
+        )
+    })
+}
+
+/// 在指定上下文上按需向 bootstrap admin 发送初始化引导。
+pub(in crate::tgbot::transfer) async fn maybe_send_startup_setup_guide_on(
+    app: &crate::app_context::AppContext,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let guide = detect_startup_setup_guide(
-        &super::super::targets_runtime_config(),
-        &super::super::access_control_runtime_config(),
-        &super::super::billing_runtime_config(),
-        &super::super::billing_runtime_default_config(),
-        &super::super::runtime_config(),
-        &super::super::runtime_default_config(),
-    );
-    if !guide.should_send() {
+    let Some((text, rows)) = startup_setup_guide_page_on(app) else {
         return Ok(());
-    }
+    };
+
+    let guide = detect_startup_setup_guide(
+        &super::super::targets_runtime_config_on(app),
+        &super::super::access_control_runtime_config_on(app),
+        &super::super::billing_runtime_config_on(app),
+        &super::super::billing_runtime_default_config_on(app),
+        &super::super::runtime_config_on(app),
+        &super::super::runtime_default_config_on(app),
+    );
 
     let recipients = guide
         .bootstrap_admin_user_ids
@@ -58,8 +83,7 @@ pub(in crate::tgbot::transfer) async fn maybe_send_startup_setup_guide(
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
     for chat_id in recipients {
-        let panel = crate::tgbot::send::ReplyPanel::card(format_startup_setup_guide_text(&guide))
-            .rows(build_startup_setup_guide_button_rows());
+        let panel = crate::tgbot::send::ReplyPanel::card(text.clone()).rows(rows.clone());
         if let Err(err) = panel.send(chat_id, client_id).await {
             tracing::warn!(chat_id, error = %err, "send startup setup guide failed");
         }
@@ -205,7 +229,7 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
         store::cancel_job_now(
             job.id,
             "cancelled by user before restart",
-            super::file_delete_delay_minutes(),
+            super::file_delete_delay_minutes(app_context.as_ref()),
         )
         .await?;
         summaries.add_finalized(&job);
@@ -251,7 +275,7 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
     client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferOutcome> {
     // 恢复流程从抓取源消息开始就占用 job 运行锁，避免 stop 命令误判“无执行器”后直接释放引用。
-    let _guard = match acquire_job_guard(job.id).await {
+    let _guard = match acquire_job_guard(app_context.as_ref(), job.id).await {
         Some(g) => g,
         None => {
             tracing::info!(
@@ -264,7 +288,7 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
         }
     };
 
-    if let Some(outcome) = apply_job_control(job.id).await? {
+    if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
         tracing::info!(
             job_id = job.id,
             request_chat_id = job.request_chat_id,
@@ -316,7 +340,7 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
             .await?
         }
     };
-    if let Some(outcome) = apply_job_control(job.id).await? {
+    if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
         tracing::info!(
             job_id = job.id,
             request_chat_id = job.request_chat_id,
@@ -333,7 +357,7 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
             target_chat_id = job.target_chat_id,
             "recovery mark running skipped by control"
         );
-        return finish_skipped_by_control(job.id).await;
+        return finish_skipped_by_control(app_context.as_ref(), job.id).await;
     }
     tracing::info!(
         job_id = job.id,
@@ -345,7 +369,12 @@ pub(in crate::tgbot::transfer) async fn resume_one_job(
     );
     // 恢复时以重新 spider 到的链接内容为准，并同步修正旧 item/file_cache 引用：
     // 新出现的消息会新增，消失的旧消息会 obsolete，文件变化的消息会迁移 file_key。
-    store::reconcile_items_for_bundle(job.id, &bundle, super::file_delete_delay_minutes()).await?;
+    store::reconcile_items_for_bundle(
+        job.id,
+        &bundle,
+        super::file_delete_delay_minutes(app_context.as_ref()),
+    )
+    .await?;
     let refreshed_job = db::transfer_job::Entity::find_by_id(job.id)
         .one(crate::db::get_db().await?)
         .await?

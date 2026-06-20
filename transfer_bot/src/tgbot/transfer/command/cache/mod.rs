@@ -27,13 +27,9 @@ pub(super) fn build_cache_summary_callback_data() -> String {
     keyboard::build_cache_view_callback_data(CacheView::Summary, CacheArgs::default().limit, 1)
 }
 
-/// `/cache` 命令入口。
-///
-/// 支持：
-/// - `/cache`
-/// - `/cache summary`
-/// - `/cache page [limit] [page]`
-pub async fn cache_command(
+/// 在指定上下文上执行 `/cache` 命令。
+pub async fn cache_command_on(
+    app: &crate::app_context::AppContext,
     text: Vec<&str>,
     request_chat_id: i64,
     client_id: i32,
@@ -47,12 +43,13 @@ pub async fn cache_command(
         "cache command started"
     );
 
-    let rendered = render_cache_page(args).await?;
+    let rendered = render_cache_page_on(app, args).await?;
     rendered.panel.send(request_chat_id, client_id).await
 }
 
-/// `/cache` callback 入口。
-pub async fn cache_callback_query(
+/// 在指定上下文上处理 `/cache` callback。
+pub async fn cache_callback_query_on(
+    app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
@@ -71,7 +68,7 @@ pub async fn cache_callback_query(
 
     send::answer_callback_query(update.id, Some("已刷新"), client_id).await?;
 
-    let rendered = match render_cache_page(args).await {
+    let rendered = match render_cache_page_on(app, args).await {
         Ok(rendered) => rendered,
         Err(err) => {
             send_cache_callback_error(update.chat_id, client_id, &err).await?;
@@ -96,11 +93,13 @@ struct CacheRenderedPage {
     panel: send::ReplyPanel,
 }
 
-/// 渲染缓存页面。
-async fn render_cache_page(args: CacheArgs) -> anyhow::Result<CacheRenderedPage> {
+/// 在指定上下文上渲染缓存页面。
+async fn render_cache_page_on(
+    app: &crate::app_context::AppContext,
+    args: CacheArgs,
+) -> anyhow::Result<CacheRenderedPage> {
     let summary_rows = store::list_file_cache_status_summaries().await?;
-    let health =
-        store::list_transfer_health_snapshot(crate::app_context::app_context().as_ref()).await?;
+    let health = store::list_transfer_health_snapshot(app).await?;
     let total_pages = compute_cache_page_count(health.file_cache_rows as usize, args.limit);
     let page = args.page.min(total_pages).max(1);
     let normalized = CacheArgs { page, ..args };

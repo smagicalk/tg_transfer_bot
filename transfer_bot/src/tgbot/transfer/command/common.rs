@@ -19,9 +19,25 @@ pub(crate) enum CommandStyle {
 /// 2. 否则从 `targets.by_request_chat_id[request_chat_id]` 获取
 /// 3. 再否则尝试 `targets.default_chat_id` 兜底
 /// 4. 如果配置了 `allowed_target_chat_ids`，最终目标必须命中白名单
+#[cfg(test)]
 pub(crate) fn resolve_target_chat_id(text: &[&str], request_chat_id: i64) -> anyhow::Result<i64> {
-    let targets_config = crate::tgbot::transfer::targets_runtime_config();
-    let access_control = crate::tgbot::transfer::access_control_runtime_config();
+    resolve_target_chat_id_on(
+        crate::app_context::app_context().as_ref(),
+        text,
+        request_chat_id,
+    )
+}
+
+/// 在指定上下文上解析目标 chat_id。
+///
+/// 高层命令入口如果已经拿到 `AppContext`，优先走这个版本，避免再次抓全局运行态。
+pub(crate) fn resolve_target_chat_id_on(
+    app: &crate::app_context::AppContext,
+    text: &[&str],
+    request_chat_id: i64,
+) -> anyhow::Result<i64> {
+    let targets_config = crate::tgbot::transfer::targets_runtime_config_on(app);
+    let access_control = crate::tgbot::transfer::access_control_runtime_config_on(app);
     let target_chat_id = if text.len() >= 3 {
         parse_target_arg(text[2], &targets_config)?
     } else if let Some(chat_id) = targets_config.by_request_chat_id.get(&request_chat_id) {
@@ -618,11 +634,15 @@ mod tests {
     use crate::app_context::app_context;
     use std::collections::HashMap;
 
+    fn test_app_context() -> std::sync::Arc<crate::app_context::AppContext> {
+        app_context()
+    }
+
     fn install_target_runtime(
         targets: crate::config::TargetsConfig,
         access_control: crate::config::AccessControlConfig,
     ) {
-        let app = app_context();
+        let app = test_app_context();
         app.targets_runtime.update_runtime_config(targets);
         app.access_control_runtime
             .update_runtime_config(access_control);

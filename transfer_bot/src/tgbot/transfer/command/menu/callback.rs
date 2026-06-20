@@ -209,6 +209,7 @@ pub(super) fn job_id_input_callback_data(action: MenuJobAction) -> String {
 }
 
 /// 启动管理单步输入的 callback payload。
+#[cfg(test)]
 pub(super) fn admin_input_callback_data(action: AdminInputAction) -> String {
     menu_callback_data(&format!("ai:{}", action.log_name()))
 }

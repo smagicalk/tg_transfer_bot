@@ -199,8 +199,8 @@ pub(super) fn ledger_button_rows(
 
 /// 构造积分流水页的返回按钮。
 ///
-/// 普通用户余额页可以直接回到 callback 余额卡片；
-/// admin 查看他人流水时没有对应 callback 余额页，因此降级成可复制命令。
+/// 普通用户余额页直接回到自己的余额卡片；
+/// admin 查看他人流水时也回到该用户的余额卡片，避免把“返回”误做成复制命令。
 fn balance_return_button(
     kind: super::LedgerCommandKind,
     user_id: i64,
@@ -217,9 +217,15 @@ fn balance_return_button(
             ),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-        super::LedgerCommandKind::Points => send::build_copy_button(
+        super::LedgerCommandKind::Points => send::build_callback_button(
             "返回",
-            &format!("/points show {}", user_id),
+            &super::build_ledger_callback_data(
+                super::LedgerCallbackAction::BalanceHome,
+                super::LedgerCommandKind::Points,
+                user_id,
+                10,
+                1,
+            ),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     }

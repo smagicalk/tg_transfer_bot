@@ -28,7 +28,9 @@ enum TargetsCallbackAction {
     Reset,
     ClearDefault,
     InputSetDefault,
+    PickSetDefault,
     InputSetRoute,
+    PickSetRoute,
     InputDelRoute,
     InputSetAlias,
     InputDelAlias,
@@ -41,7 +43,9 @@ impl TargetsCallbackAction {
             Self::Reset => "正在重置目标配置",
             Self::ClearDefault => "正在清空默认目标",
             Self::InputSetDefault
+            | Self::PickSetDefault
             | Self::InputSetRoute
+            | Self::PickSetRoute
             | Self::InputDelRoute
             | Self::InputSetAlias
             | Self::InputDelAlias => "请回复参数",
@@ -83,6 +87,19 @@ pub(in crate::tgbot::transfer::command) const TARGETS_INPUT_SPECS: &[TargetsInpu
         interaction_detail: "设默认：回复 target_chat_id。",
     },
     TargetsInputSpec {
+        action: super::menu::AdminInputAction::TargetsPickDefault,
+        callback_action: TargetsCallbackAction::PickSetDefault,
+        button_label: "选默认",
+        input_title: "选择默认目标",
+        input_detail: "点击后会弹出 Telegram 原生选群器，选中的群会写入 default_chat_id。",
+        input_placeholder: "选择目标群组",
+        subcommand: "set-default",
+        expected_parts: 1,
+        example_command: "/targets set-default -1001234567890",
+        copy_label: "复制默认",
+        interaction_detail: "选默认：通过 Telegram 原生选群器选择目标群组。",
+    },
+    TargetsInputSpec {
         action: super::menu::AdminInputAction::TargetsSetRoute,
         callback_action: TargetsCallbackAction::InputSetRoute,
         button_label: "设路由",
@@ -94,6 +111,19 @@ pub(in crate::tgbot::transfer::command) const TARGETS_INPUT_SPECS: &[TargetsInpu
         example_command: "/targets set-route 123456789 -1001234567890",
         copy_label: "复制路由",
         interaction_detail: "设路由：回复 request_chat_id target_chat_id。",
+    },
+    TargetsInputSpec {
+        action: super::menu::AdminInputAction::TargetsPickRoute,
+        callback_action: TargetsCallbackAction::PickSetRoute,
+        button_label: "选路由",
+        input_title: "选择请求路由目标",
+        input_detail: "先回复 request_chat_id，再通过 Telegram 原生选群器选择目标群组。",
+        input_placeholder: "输入 request_chat_id，随后选择群组",
+        subcommand: "set-route",
+        expected_parts: 2,
+        example_command: "/targets set-route 123456789 -1001234567890",
+        copy_label: "复制路由",
+        interaction_detail: "选路由：先回复 request_chat_id，再用原生选群器选择目标群组。",
     },
     TargetsInputSpec {
         action: super::menu::AdminInputAction::TargetsDelRoute,
@@ -154,29 +184,20 @@ fn targets_input_spec_for_callback_action(
         .find(|spec| spec.callback_action == action)
 }
 
-/// `/targets` 命令入口。
-///
-/// 支持：
-/// - `/targets`
-/// - `/targets show`
-/// - `/targets reset`
-/// - `/targets set-default <target_chat_id>`
-/// - `/targets set-route <request_chat_id> <target_chat_id>`
-/// - `/targets del-route <request_chat_id>`
-/// - `/targets set-alias <alias> <target_chat_id>`
-/// - `/targets del-alias <alias>`
-pub async fn targets_command(
+/// 在指定上下文上执行 `/targets` 文本命令。
+pub async fn targets_command_on(
+    app: &crate::app_context::AppContext,
     text: Vec<&str>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let reply = match text.get(1).copied() {
-        None | Some("show") => format_targets_text(TARGETS_PAGE_TITLE),
-        Some("reset") => reset_targets_config_to_default().await?,
+        None | Some("show") => format_targets_text_on(app, TARGETS_PAGE_TITLE),
+        Some("reset") => reset_targets_config_to_default_on(app).await?,
         Some("set-default") => {
             let target_chat_id =
                 parse_i64_arg(&text, 2, "usage: /targets set-default <target_chat_id>")?;
-            update_targets_with(&updated_action_title("默认目标"), |config| {
+            update_targets_with_on(app, &updated_action_title("默认目标"), |config| {
                 config.default_chat_id = target_chat_id;
             })
             .await?
@@ -192,7 +213,7 @@ pub async fn targets_command(
                 3,
                 "usage: /targets set-route <request_chat_id> <target_chat_id>",
             )?;
-            update_targets_with(&updated_action_title("请求路由"), |config| {
+            update_targets_with_on(app, &updated_action_title("请求路由"), |config| {
                 config.by_request_chat_id.insert(request_id, target_chat_id);
             })
             .await?
@@ -200,7 +221,7 @@ pub async fn targets_command(
         Some("del-route") => {
             let request_id =
                 parse_i64_arg(&text, 2, "usage: /targets del-route <request_chat_id>")?;
-            update_targets_with(&deleted_action_title("请求路由"), |config| {
+            update_targets_with_on(app, &deleted_action_title("请求路由"), |config| {
                 config.by_request_chat_id.remove(&request_id);
             })
             .await?
@@ -216,14 +237,14 @@ pub async fn targets_command(
                 3,
                 "usage: /targets set-alias <alias> <target_chat_id>",
             )?;
-            update_targets_with(&updated_action_title("目标别名"), |config| {
+            update_targets_with_on(app, &updated_action_title("目标别名"), |config| {
                 config.aliases.insert(alias.clone(), target_chat_id);
             })
             .await?
         }
         Some("del-alias") => {
             let alias = parse_alias_arg(&text, 2, "usage: /targets del-alias <alias>")?;
-            update_targets_with(&deleted_action_title("目标别名"), |config| {
+            update_targets_with_on(app, &deleted_action_title("目标别名"), |config| {
                 config.aliases.remove(&alias);
             })
             .await?
@@ -319,8 +340,9 @@ pub(super) fn is_targets_callback_data(data: &str) -> bool {
     data.starts_with(TARGETS_CALLBACK_PREFIX)
 }
 
-/// `/targets` inline keyboard 回调入口。
-pub(super) async fn targets_callback_query(
+/// 在指定上下文上处理 `/targets` callback。
+pub async fn targets_callback_query_on(
+    app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
@@ -340,16 +362,18 @@ pub(super) async fn targets_callback_query(
 
     let action_result = match action {
         TargetsCallbackAction::Refresh => Ok(()),
-        TargetsCallbackAction::Reset => reset_targets_config_to_default().await.map(|_| ()),
+        TargetsCallbackAction::Reset => reset_targets_config_to_default_on(app).await.map(|_| ()),
         TargetsCallbackAction::ClearDefault => {
-            update_targets_with(&cleared_action_title("默认目标"), |config| {
+            update_targets_with_on(app, &cleared_action_title("默认目标"), |config| {
                 config.default_chat_id = 0;
             })
             .await
             .map(|_| ())
         }
         TargetsCallbackAction::InputSetDefault
+        | TargetsCallbackAction::PickSetDefault
         | TargetsCallbackAction::InputSetRoute
+        | TargetsCallbackAction::PickSetRoute
         | TargetsCallbackAction::InputDelRoute
         | TargetsCallbackAction::InputSetAlias
         | TargetsCallbackAction::InputDelAlias => {
@@ -375,8 +399,8 @@ pub(super) async fn targets_callback_query(
         return Err(err);
     }
 
-    let (text, keyboard) = send::ReplyPanel::card(format_targets_text(TARGETS_PAGE_TITLE))
-        .rows(build_targets_buttons())
+    let (text, keyboard) = send::ReplyPanel::card(format_targets_text_on(app, TARGETS_PAGE_TITLE))
+        .rows(build_targets_buttons_on(app))
         .into_card_parts()?;
     edit_runtime_admin_interaction_card_or_error(
         text,
@@ -392,19 +416,25 @@ pub(super) async fn targets_callback_query(
 }
 
 /// 构造当前 targets 配置文本。
-pub(super) fn format_targets_text(title: &str) -> String {
-    format_targets_config_text(title, &crate::tgbot::transfer::targets_runtime_config())
+///
+/// 菜单页在已经持有 `AppContext` 时优先用这个版本，避免重复抓全局。
+pub(super) fn format_targets_text_on(app: &crate::app_context::AppContext, title: &str) -> String {
+    format_targets_config_text(
+        title,
+        &crate::tgbot::transfer::targets_runtime_config_on(app),
+    )
 }
 
-/// 按闭包更新 targets 配置并立即刷新运行时状态。
-async fn update_targets_with(
+/// 在指定上下文上按闭包更新 targets 配置并立即刷新运行时状态。
+async fn update_targets_with_on(
+    app: &crate::app_context::AppContext,
     title: &str,
     updater: impl FnOnce(&mut TargetsConfig),
 ) -> anyhow::Result<String> {
-    let mut config = crate::tgbot::transfer::targets_runtime_config();
+    let mut config = crate::tgbot::transfer::targets_runtime_config_on(app);
     updater(&mut config);
     normalize_targets_config(&mut config);
-    persist_targets_config(&config).await?;
+    persist_targets_config_on(app, &config).await?;
     tracing::info!(
         default_chat_id = config.default_chat_id,
         route_count = config.by_request_chat_id.len(),
@@ -414,11 +444,13 @@ async fn update_targets_with(
     Ok(format_targets_config_text(title, &config))
 }
 
-/// 把 targets 重置为启动默认值。
-async fn reset_targets_config_to_default() -> anyhow::Result<String> {
-    let mut config = crate::tgbot::transfer::targets_runtime_default_config();
+/// 在指定上下文上把 targets 重置为启动默认值。
+async fn reset_targets_config_to_default_on(
+    app: &crate::app_context::AppContext,
+) -> anyhow::Result<String> {
+    let mut config = crate::tgbot::transfer::targets_runtime_default_config_on(app);
     normalize_targets_config(&mut config);
-    persist_targets_config(&config).await?;
+    persist_targets_config_on(app, &config).await?;
     tracing::info!("targets runtime config reset to startup defaults");
     Ok(format_targets_config_text(
         &reset_action_title("目标配置"),
@@ -426,10 +458,13 @@ async fn reset_targets_config_to_default() -> anyhow::Result<String> {
     ))
 }
 
-/// 写库并刷新内存运行时。
-async fn persist_targets_config(config: &TargetsConfig) -> anyhow::Result<()> {
+/// 在指定上下文上写库并刷新内存运行时。
+async fn persist_targets_config_on(
+    app: &crate::app_context::AppContext,
+    config: &TargetsConfig,
+) -> anyhow::Result<()> {
     crate::tgbot::transfer::save_targets_runtime_config(config).await?;
-    crate::tgbot::transfer::update_targets_runtime_config(config.clone());
+    crate::tgbot::transfer::update_targets_runtime_config_on(app, config.clone());
     Ok(())
 }
 
@@ -496,7 +531,15 @@ fn format_targets_config_text(title: &str, config: &TargetsConfig) -> String {
 
 /// `/targets` 页按钮。
 pub(super) fn build_targets_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    let config = crate::tgbot::transfer::targets_runtime_config();
+    let app_context = crate::app_context::app_context();
+    build_targets_buttons_on(app_context.as_ref())
+}
+
+/// `/targets` 页按钮的上下文版本。
+pub(super) fn build_targets_buttons_on(
+    app: &crate::app_context::AppContext,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let config = crate::tgbot::transfer::targets_runtime_config_on(app);
     let mut rows = vec![vec![
         send::build_callback_button(
             "刷新",
@@ -516,12 +559,19 @@ pub(super) fn build_targets_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboard
             tdlib_rs::enums::ButtonStyle::Danger,
         ));
     }
-    rows.extend(
-        TARGETS_INPUT_SPECS
-            .chunks(3)
-            .map(build_targets_input_row)
-            .collect::<Vec<_>>(),
-    );
+    rows.push(build_targets_input_row(&[
+        TARGETS_INPUT_SPECS[0],
+        TARGETS_INPUT_SPECS[1],
+    ]));
+    rows.push(build_targets_input_row(&[
+        TARGETS_INPUT_SPECS[2],
+        TARGETS_INPUT_SPECS[3],
+        TARGETS_INPUT_SPECS[4],
+    ]));
+    rows.push(build_targets_input_row(&[
+        TARGETS_INPUT_SPECS[5],
+        TARGETS_INPUT_SPECS[6],
+    ]));
     rows.push(build_help_menu_row(
         send::build_callback_button(
             "帮助",
@@ -586,7 +636,9 @@ fn parse_targets_callback_data(data: &str) -> Option<TargetsCallbackAction> {
         "x" => Some(TargetsCallbackAction::Reset),
         "d" => Some(TargetsCallbackAction::ClearDefault),
         "is" => Some(TargetsCallbackAction::InputSetDefault),
+        "ps" => Some(TargetsCallbackAction::PickSetDefault),
         "ir" => Some(TargetsCallbackAction::InputSetRoute),
+        "pr" => Some(TargetsCallbackAction::PickSetRoute),
         "id" => Some(TargetsCallbackAction::InputDelRoute),
         "ia" => Some(TargetsCallbackAction::InputSetAlias),
         "ix" => Some(TargetsCallbackAction::InputDelAlias),
@@ -600,7 +652,9 @@ fn build_targets_callback_data(action: TargetsCallbackAction) -> String {
         TargetsCallbackAction::Reset => "x",
         TargetsCallbackAction::ClearDefault => "d",
         TargetsCallbackAction::InputSetDefault => "is",
+        TargetsCallbackAction::PickSetDefault => "ps",
         TargetsCallbackAction::InputSetRoute => "ir",
+        TargetsCallbackAction::PickSetRoute => "pr",
         TargetsCallbackAction::InputDelRoute => "id",
         TargetsCallbackAction::InputSetAlias => "ia",
         TargetsCallbackAction::InputDelAlias => "ix",
@@ -644,6 +698,8 @@ mod tests {
         let refresh = build_targets_callback_data(TargetsCallbackAction::Refresh);
         let reset = build_targets_callback_data(TargetsCallbackAction::Reset);
         let clear = build_targets_callback_data(TargetsCallbackAction::ClearDefault);
+        let pick_default = build_targets_callback_data(TargetsCallbackAction::PickSetDefault);
+        let pick_route = build_targets_callback_data(TargetsCallbackAction::PickSetRoute);
 
         assert!(is_targets_callback_data(&refresh));
         assert_eq!(
@@ -657,6 +713,14 @@ mod tests {
         assert_eq!(
             parse_targets_callback_data(&clear),
             Some(TargetsCallbackAction::ClearDefault)
+        );
+        assert_eq!(
+            parse_targets_callback_data(&pick_default),
+            Some(TargetsCallbackAction::PickSetDefault)
+        );
+        assert_eq!(
+            parse_targets_callback_data(&pick_route),
+            Some(TargetsCallbackAction::PickSetRoute)
         );
         assert_eq!(parse_targets_callback_data("tcfg:bad"), None);
     }
@@ -696,6 +760,8 @@ mod tests {
         assert_eq!(decoded, "tcfg:r");
         assert_eq!(rows[0][2].text, "清空默认");
         assert!(rows.iter().flatten().any(|button| button.text == "设默认"));
+        assert!(rows.iter().flatten().any(|button| button.text == "选默认"));
+        assert!(rows.iter().flatten().any(|button| button.text == "选路由"));
         assert!(rows.iter().flatten().any(|button| button.text == "设别名"));
     }
 

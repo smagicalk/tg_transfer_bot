@@ -130,8 +130,8 @@ fn build_help_page(
             build_help_index_buttons(actor.is_admin()),
         )),
         Some(command_name) => Ok((
-            build_help_detail_text(command_name)?,
-            build_help_detail_buttons(command_name)?,
+            build_help_detail_text(command_name, actor.is_admin())?,
+            build_help_detail_buttons(command_name, actor.is_admin())?,
         )),
     }
 }

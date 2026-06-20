@@ -17,6 +17,17 @@ pub(super) async fn prepare_test_schema() -> anyhow::Result<&'static sea_orm::Da
     Ok(db_conn)
 }
 
+/// 重建一个空测试库。
+///
+/// `ensure_*_runtime_config` 的语义是“库里没有运行态时才 seed 默认值”，
+/// 因此对应测试必须显式清空旧行，不能只依赖 `prepare_test_schema()` 的结构自检。
+pub(super) async fn rebuild_empty_test_schema()
+-> anyhow::Result<&'static sea_orm::DatabaseConnection> {
+    let db_conn = db::get_db().await?;
+    db::rebuild_test_schema(db_conn).await?;
+    Ok(db_conn)
+}
+
 /// 构造一个指定状态的 transfer_job。
 pub(super) async fn insert_job(status: &str) -> anyhow::Result<db::transfer_job::Model> {
     let db_conn = prepare_test_schema().await?;

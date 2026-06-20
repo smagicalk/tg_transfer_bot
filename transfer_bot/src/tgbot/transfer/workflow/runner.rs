@@ -67,16 +67,26 @@ async fn run_job_inner_with_fallback(
             )
             .await
             {
-                Ok(bundle) => match reconcile_job_source_for_fallback(job.id, &bundle).await {
-                    Ok(()) => Ok(bundle),
-                    Err(err) => Err(err),
-                },
+                Ok(bundle) => {
+                    match reconcile_job_source_for_fallback(app_context.as_ref(), job.id, &bundle)
+                        .await
+                    {
+                        Ok(()) => Ok(bundle),
+                        Err(err) => Err(err),
+                    }
+                }
                 Err(err) => Err(err),
             };
             let bundle = match fallback_result {
                 Ok(bundle) => bundle,
                 Err(fallback_err) => {
-                    finish_prepare_fallback_failed_job(&job, &err, &fallback_err).await?;
+                    finish_prepare_fallback_failed_job(
+                        app_context.as_ref(),
+                        &job,
+                        &err,
+                        &fallback_err,
+                    )
+                    .await?;
                     anyhow::bail!(
                         "transfer failed during bot prepare and user fallback, job_id={}, bot_error={:#}, fallback_error={:#}",
                         job.id,
@@ -98,7 +108,7 @@ async fn run_job_inner_with_fallback(
 
 /// 执行一次任务，不做 source fallback。
 async fn run_job_inner_once(
-    _app_context: std::sync::Arc<crate::app_context::AppContext>,
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: db::transfer_job::Model,
     messages: Vec<tdlib_rs::types::Message>,
     client_ids: crate::config::TransferClientIds,
@@ -116,7 +126,7 @@ async fn run_job_inner_once(
         .ok_or_else(|| anyhow::anyhow!("invalid source_client_role: {}", job.source_client_role))?;
     let source_client_id = client_ids.get(source_client_role)?;
 
-    if let Some(outcome) = apply_job_control(job.id).await? {
+    if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
         tracing::info!(
             job_id = job.id,
             "transfer job stopped by control before prepare"
@@ -142,7 +152,7 @@ async fn run_job_inner_once(
 
     // 第一阶段：全部准备完成（下载与构建 InputMessageContent）。
     for msg in &messages {
-        if let Some(outcome) = apply_job_control(job.id).await? {
+        if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
             tracing::info!(
                 job_id = job.id,
                 "transfer job stopped by control during prepare"
@@ -165,7 +175,7 @@ async fn run_job_inner_once(
         }
 
         store::set_item_status(item.id, ITEM_STATUS_PREPARING, None).await?;
-        if let Some(outcome) = apply_job_control(job.id).await? {
+        if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
             tracing::info!(
                 job_id = job.id,
                 item_id = item.id,
@@ -203,7 +213,7 @@ async fn run_job_inner_once(
                 last_error = Some(err_str);
                 continue;
             }
-            if let Some(outcome) = apply_job_control(job.id).await? {
+            if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
                 tracing::info!(
                     job_id = job.id,
                     item_id = item.id,
@@ -220,7 +230,7 @@ async fn run_job_inner_once(
                 }
                 store::set_item_status(item.id, ITEM_STATUS_PREPARED, None).await?;
                 prepared.push((item.id, prepared_one));
-                if let Some(outcome) = apply_job_control(job.id).await? {
+                if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
                     tracing::info!(
                         job_id = job.id,
                         item_id = item.id,
@@ -284,13 +294,13 @@ async fn run_job_inner_once(
                 result_message_id: None,
                 result_message_link: None,
                 result_messages: Vec::new(),
-                delay_minutes: super::file_delete_delay_minutes(),
+                delay_minutes: super::file_delete_delay_minutes(app_context.as_ref()),
             },
             item_updates,
         )
         .await?
         {
-            return finish_skipped_by_control(job.id).await;
+            return finish_skipped_by_control(app_context.as_ref(), job.id).await;
         }
         anyhow::bail!(
             "transfer failed during prepare, job_id={}, error={}",
@@ -317,11 +327,11 @@ async fn run_job_inner_once(
             last_error.clone(),
             job.result_message_id,
             job.result_message_link.clone(),
-            super::file_delete_delay_minutes(),
+            super::file_delete_delay_minutes(app_context.as_ref()),
         )
         .await?
         {
-            return finish_skipped_by_control(job.id).await;
+            return finish_skipped_by_control(app_context.as_ref(), job.id).await;
         }
         return Ok(TransferOutcome::Completed {
             job_id: job.id,
@@ -330,7 +340,7 @@ async fn run_job_inner_once(
     }
 
     // 第二阶段：所有项准备成功后再上传。
-    if let Some(outcome) = apply_job_control(job.id).await? {
+    if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
         tracing::info!(
             job_id = job.id,
             "transfer job stopped by control before upload"
@@ -386,13 +396,13 @@ async fn run_job_inner_once(
                     result_message_id: Some(first_result.message_id),
                     result_message_link: Some(first_result.message_link.clone()),
                     result_messages: result_messages.clone(),
-                    delay_minutes: super::file_delete_delay_minutes(),
+                    delay_minutes: super::file_delete_delay_minutes(app_context.as_ref()),
                 },
                 item_updates,
             )
             .await?
             {
-                return finish_skipped_by_control(job.id).await;
+                return finish_skipped_by_control(app_context.as_ref(), job.id).await;
             }
             tracing::info!(
                 job_id = job.id,
@@ -433,13 +443,13 @@ async fn run_job_inner_once(
                     result_message_id: None,
                     result_message_link: None,
                     result_messages: Vec::new(),
-                    delay_minutes: super::file_delete_delay_minutes(),
+                    delay_minutes: super::file_delete_delay_minutes(app_context.as_ref()),
                 },
                 item_updates,
             )
             .await?
             {
-                return finish_skipped_by_control(job.id).await;
+                return finish_skipped_by_control(app_context.as_ref(), job.id).await;
             }
             anyhow::bail!("transfer upload failed, job_id={}", job.id)
         }
@@ -470,20 +480,27 @@ fn should_return_prepare_error_for_fallback(job: &db::transfer_job::Model) -> bo
 ///
 /// 复用恢复流程的 reconcile：新增/消失/owner 变化都会在同一事务里更新 item 和 file_cache 引用。
 async fn reconcile_job_source_for_fallback(
+    app_context: &crate::app_context::AppContext,
     job_id: i64,
     bundle: &TransferBundle,
 ) -> anyhow::Result<()> {
-    if let Some(outcome) = apply_job_control(job_id).await? {
+    if let Some(outcome) = apply_job_control(app_context, job_id).await? {
         anyhow::bail!(
             "transfer job control requested during fallback: {:?}",
             outcome
         );
     }
-    store::reconcile_items_for_bundle(job_id, bundle, super::file_delete_delay_minutes()).await
+    store::reconcile_items_for_bundle(
+        job_id,
+        bundle,
+        super::file_delete_delay_minutes(app_context),
+    )
+    .await
 }
 
 /// bot 准备失败且 user fallback 也失败时，必须把任务收敛成失败并释放已有引用。
 async fn finish_prepare_fallback_failed_job(
+    app_context: &crate::app_context::AppContext,
     job: &db::transfer_job::Model,
     bot_err: &anyhow::Error,
     fallback_err: &anyhow::Error,
@@ -518,13 +535,13 @@ async fn finish_prepare_fallback_failed_job(
             result_message_id: None,
             result_message_link: None,
             result_messages: Vec::new(),
-            delay_minutes: super::file_delete_delay_minutes(),
+            delay_minutes: super::file_delete_delay_minutes(app_context),
         },
         item_updates,
     )
     .await?
     {
-        let _ = finish_skipped_by_control(job.id).await?;
+        let _ = finish_skipped_by_control(app_context, job.id).await?;
     }
     Ok(())
 }

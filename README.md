@@ -73,9 +73,7 @@ $env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
 - `clients.user.tdlib.database_encryption_key`
 - `clients.bot.token`
 - `clients.bot.tdlib.database_encryption_key`
-- `access_control.admin_user_ids`
-- `access_control.allowed_target_chat_ids`
-- `targets.default_chat_id`
+- `access_control.bootstrap_admin_user_ids`
 
 ### 3. 启动
 
@@ -89,6 +87,15 @@ cargo run -p transfer_bot -- -c config.json
 - `user` client 可能需要二维码、验证码或二次密码登录。
 - `bot` client 会使用 `token` 登录。
 - 程序会自动执行数据库 migration；SQLite 文件库会自动创建运行目录。
+
+首次启动后，建议立刻用 bootstrap admin 私聊 bot 并打开 `/menu`，按下面顺序完成运行态初始化：
+
+1. `目标配置`：先配置默认目标、请求路由或目标别名。
+2. `访问控制`：决定谁能使用，以及允许写入哪些目标 chat。
+3. `计费配置`：决定是否扣分、初始积分和首页公告。
+4. `运行配置`：按需要调整并发、删除延迟、分页和菜单超时。
+
+在 `targets` 和 `acl` 还未初始化前，不建议对普通用户开放 `/transfer`、`/menu` 等入口。
 
 ## GitHub Actions
 
@@ -238,18 +245,28 @@ cargo run -p transfer_bot -- -c config.json
 
 ## 常用命令
 
+普通用户建议只开放下面这组命令：
+
 | 命令 | 作用 |
 | --- | --- |
 | `/help [command]` | 查看命令目录或单个命令帮助 |
 | `/menu` | 打开交互菜单 |
-| `/transfer [link] [target]` | 创建转存任务或进入向导 |
+| `/transfer [link] [target]` | 创建转存任务或进入向导；不填 `target` 时使用管理员预配置目标 |
 | `/lookup <link> [target]` | 查询历史成功转存结果 |
-| `/downloads [filter] [limit] [page]` | 查看任务列表和下载进度 |
-| `/job <pause|resume|stop|status> <job_id>` | 控制任务 |
+| `/downloads [filter] [limit] [page]` | 查看自己的任务列表和下载进度 |
+| `/job <pause|resume|stop|status> <job_id>` | 控制自己的任务 |
 | `/balance` | 查看当前用户积分余额 |
 | `/balance history [limit] [page]` | 查看当前用户积分流水 |
+
+管理员额外可用：
+
+| 命令 | 作用 |
+| --- | --- |
 | `/points <show|history|add|sub> <user_id> [amount|limit] [reason|page]` | 管理员查看、查询流水或调整用户积分 |
 | `/config [show|reset|set <key> <value>]` | 查看、重置或调整已开放的运行时参数 |
+| `/targets [show|reset|set-default|set-route|del-route|set-alias|del-alias]` | 管理默认目标、请求路由和目标别名 |
+| `/acl [show|...]` | 管理管理员、普通用户、黑名单和白名单 |
+| `/billing [show|set|clear announcement_text]` | 管理积分计费与首页公告 |
 | `/health` | 查看健康状态、并发和缓存摘要 |
 | `/cache [summary|page] [limit] [page]` | 查看文件缓存 |
 
@@ -275,9 +292,10 @@ cargo run -p transfer_bot -- -c config.json
 /menu
 -> 首页显示运行摘要
 -> 如果存在未完成输入，首页顶部显示“继续输入 / 取消输入”
--> 第一行：开始转存 / 快速转存 / 快速查询
--> 第二行：运行任务 / 失败任务 / 已暂停
--> 其他入口：下载列表 / 任务控制 / 转存页 / 查询页 / 运行配置 / 帮助 / 运行健康 / 文件缓存 / 用户流水
+-> 普通用户：首页 -> 任务 / 账户 / 帮助
+-> 普通用户：转存、查询、下载列表、任务控制都只作用于自己的任务
+-> 管理员额外看到：管理
+-> 管理员：运行配置 / 目标配置 / 访问控制 / 计费配置 / 运行健康 / 文件缓存 / 用户流水
 ```
 
 菜单中的“选择群组”使用 Telegram 原生 `keyboardButtonTypeRequestChat`。这个入口主要适用于 bot 私聊，最终选中的目标仍会经过 `allowed_target_chat_ids` 校验。
@@ -292,6 +310,8 @@ admin 首页的“用户流水”会先让你回复 Telegram user_id，再打开
 ```
 
 `快速转存` 和 `快速查询` 会优先使用默认目标；如果当前请求 chat 或全局没有默认目标，会自动退回普通“选择目标 -> 确认”流程。
+
+这里的“当前请求 chat 默认目标”在 bot 私聊模式下，基本就等价于“当前用户自己的默认目标”。如果你想给不同用户不同默认目标，优先配置 `targets.by_request_chat_id`，不需要额外引入新的按用户字段。
 
 运行态管理页也支持按钮进入输入流：
 

@@ -272,17 +272,20 @@ pub async fn run() -> anyhow::Result<()> {
             )
         })
         .collect::<std::collections::HashMap<_, _>>();
-    crate::tgbot::transfer::init_runtime_config(crate::tgbot::transfer::RuntimeInitBundle {
-        transfer_config: config.transfer_config.clone(),
-        transfer_default_config: transfer_config_default,
-        billing_config: config.billing.clone(),
-        billing_default_config: billing_config_default,
-        targets_config: targets_config.clone(),
-        targets_default_config: targets_config_default,
-        access_control_config: access_control_runtime,
-        access_control_default_config: access_control_default,
-        tdlib_files_directories,
-    });
+    crate::tgbot::transfer::init_runtime_config_on(
+        app_context.as_ref(),
+        crate::tgbot::transfer::RuntimeInitBundle {
+            transfer_config: config.transfer_config.clone(),
+            transfer_default_config: transfer_config_default,
+            billing_config: config.billing.clone(),
+            billing_default_config: billing_config_default,
+            targets_config: targets_config.clone(),
+            targets_default_config: targets_config_default,
+            access_control_config: access_control_runtime,
+            access_control_default_config: access_control_default,
+            tdlib_files_directories,
+        },
+    );
 
     for role in config.required_client_roles() {
         create_and_register_client(role, &mut config).await?;

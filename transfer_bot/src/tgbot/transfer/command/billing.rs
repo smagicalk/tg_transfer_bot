@@ -33,6 +33,9 @@ enum BillingCallbackAction {
         delta: i64,
     },
     ClearAnnouncement,
+    InputSetNumeric {
+        field: BillingNumericField,
+    },
     InputSetAnnouncement,
 }
 
@@ -44,6 +47,7 @@ impl BillingCallbackAction {
             Self::ToggleEnabled => "正在更新计费开关",
             Self::Adjust { .. } => "正在更新计费参数",
             Self::ClearAnnouncement => "正在清空公告",
+            Self::InputSetNumeric { .. } => "请回复计费参数",
             Self::InputSetAnnouncement => "请回复公告内容",
         }
     }
@@ -191,15 +195,16 @@ pub(in crate::tgbot::transfer::command) fn billing_announcement_spec_for_admin_a
     (BILLING_ANNOUNCEMENT_SPEC.admin_input_action == action).then_some(&BILLING_ANNOUNCEMENT_SPEC)
 }
 
-/// `/billing` 命令入口。
-pub async fn billing_command(
+/// 在指定上下文上执行 `/billing` 文本命令。
+pub async fn billing_command_on(
+    app: &crate::app_context::AppContext,
     text: Vec<&str>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let reply = match text.get(1).copied() {
-        None | Some("show") => format_billing_text(BILLING_PAGE_TITLE),
-        Some("reset") => reset_billing_to_default().await?,
+        None | Some("show") => format_billing_text_on(app, BILLING_PAGE_TITLE),
+        Some("reset") => reset_billing_to_default_on(app).await?,
         Some("set") => {
             let key = text
                 .get(2)
@@ -210,7 +215,7 @@ pub async fn billing_command(
                 .map(|parts| parts.join(" "))
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| anyhow::anyhow!("usage: /billing set <key> <value>"))?;
-            update_billing_key(key, &value).await?
+            update_billing_key_on(app, key, &value).await?
         }
         Some("clear") => {
             let key = text
@@ -219,7 +224,7 @@ pub async fn billing_command(
                 .ok_or_else(|| anyhow::anyhow!("usage: /billing clear announcement_text"))?;
             match key {
                 "announcement_text" => {
-                    update_billing_with(&cleared_action_title("公告"), |config| {
+                    update_billing_with_on(app, &cleared_action_title("公告"), |config| {
                         config.announcement_text = None;
                     })
                     .await?
@@ -322,8 +327,9 @@ pub(super) fn is_billing_callback_data(data: &str) -> bool {
     data.starts_with(BILLING_CALLBACK_PREFIX)
 }
 
-/// `/billing` inline keyboard 回调入口。
-pub(super) async fn billing_callback_query(
+/// 在指定上下文上处理 `/billing` callback。
+pub async fn billing_callback_query_on(
+    app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
@@ -343,24 +349,35 @@ pub(super) async fn billing_callback_query(
 
     let action_result = match action {
         BillingCallbackAction::Refresh => Ok(()),
-        BillingCallbackAction::Reset => reset_billing_to_default().await.map(|_| ()),
+        BillingCallbackAction::Reset => reset_billing_to_default_on(app).await.map(|_| ()),
         BillingCallbackAction::ToggleEnabled => {
-            let enabled = !crate::tgbot::transfer::billing_runtime_config().enabled;
-            update_billing_with(&updated_action_title("计费开关"), |config| {
+            let enabled = !crate::tgbot::transfer::billing_runtime_config_on(app).enabled;
+            update_billing_with_on(app, &updated_action_title("计费开关"), |config| {
                 config.enabled = enabled;
             })
             .await
             .map(|_| ())
         }
         BillingCallbackAction::Adjust { field, delta } => {
-            adjust_billing_numeric(field, delta).await
+            adjust_billing_numeric_on(app, field, delta).await
         }
         BillingCallbackAction::ClearAnnouncement => {
-            update_billing_with(&cleared_action_title("公告"), |config| {
+            update_billing_with_on(app, &cleared_action_title("公告"), |config| {
                 config.announcement_text = None;
             })
             .await
             .map(|_| ())
+        }
+        BillingCallbackAction::InputSetNumeric { field } => {
+            return super::menu::start_admin_input_callback(
+                update.id,
+                update.chat_id,
+                update.message_id,
+                update.sender_user_id,
+                field.spec().admin_input_action,
+                client_id,
+            )
+            .await;
         }
         BillingCallbackAction::InputSetAnnouncement => {
             return super::menu::start_admin_input_callback(
@@ -379,8 +396,8 @@ pub(super) async fn billing_callback_query(
         return Err(err);
     }
 
-    let (text, keyboard) = send::ReplyPanel::card(format_billing_text(BILLING_PAGE_TITLE))
-        .rows(build_billing_buttons())
+    let (text, keyboard) = send::ReplyPanel::card(format_billing_text_on(app, BILLING_PAGE_TITLE))
+        .rows(build_billing_buttons_on(app))
         .into_card_parts()?;
     edit_runtime_admin_interaction_card_or_error(
         text,
@@ -395,13 +412,21 @@ pub(super) async fn billing_callback_query(
     Ok(())
 }
 
-pub(super) fn format_billing_text(title: &str) -> String {
-    format_billing_config_text(title, &crate::tgbot::transfer::billing_runtime_config())
+/// 构造当前计费配置文本。
+///
+/// 菜单页在已经持有 `AppContext` 时优先用这个版本，避免重复抓全局。
+pub(super) fn format_billing_text_on(app: &crate::app_context::AppContext, title: &str) -> String {
+    format_billing_config_text(
+        title,
+        &crate::tgbot::transfer::billing_runtime_config_on(app),
+    )
 }
 
-async fn reset_billing_to_default() -> anyhow::Result<String> {
-    let config = crate::tgbot::transfer::billing_runtime_default_config();
-    persist_billing_config(&config).await?;
+async fn reset_billing_to_default_on(
+    app: &crate::app_context::AppContext,
+) -> anyhow::Result<String> {
+    let config = crate::tgbot::transfer::billing_runtime_default_config_on(app);
+    persist_billing_config_on(app, &config).await?;
     tracing::info!("billing runtime config reset to startup defaults");
     Ok(format_billing_config_text(
         &reset_action_title("计费配置"),
@@ -409,11 +434,15 @@ async fn reset_billing_to_default() -> anyhow::Result<String> {
     ))
 }
 
-async fn update_billing_key(key: &str, value: &str) -> anyhow::Result<String> {
+async fn update_billing_key_on(
+    app: &crate::app_context::AppContext,
+    key: &str,
+    value: &str,
+) -> anyhow::Result<String> {
     match key {
         "enabled" => {
             let enabled = parse_bool_arg(value)?;
-            update_billing_with(&updated_action_title("计费开关"), |config| {
+            update_billing_with_on(app, &updated_action_title("计费开关"), |config| {
                 config.enabled = enabled;
             })
             .await
@@ -422,7 +451,7 @@ async fn update_billing_key(key: &str, value: &str) -> anyhow::Result<String> {
             let field = BillingNumericField::parse_key(key).expect("billing numeric key checked");
             let spec = field.spec();
             let points = parse_non_negative_i64(value, spec.key)?;
-            update_billing_with(&updated_action_title(spec.title), |config| {
+            update_billing_with_on(app, &updated_action_title(spec.title), |config| {
                 set_billing_numeric_value(config, field, points);
             })
             .await
@@ -432,7 +461,7 @@ async fn update_billing_key(key: &str, value: &str) -> anyhow::Result<String> {
             if announcement.is_empty() {
                 anyhow::bail!("announcement_text cannot be empty");
             }
-            update_billing_with(&updated_action_title("公告"), |config| {
+            update_billing_with_on(app, &updated_action_title("公告"), |config| {
                 config.announcement_text = Some(announcement.to_owned());
             })
             .await
@@ -441,13 +470,14 @@ async fn update_billing_key(key: &str, value: &str) -> anyhow::Result<String> {
     }
 }
 
-async fn update_billing_with(
+async fn update_billing_with_on(
+    app: &crate::app_context::AppContext,
     title: &str,
     updater: impl FnOnce(&mut BillingConfig),
 ) -> anyhow::Result<String> {
-    let mut config = crate::tgbot::transfer::billing_runtime_config();
+    let mut config = crate::tgbot::transfer::billing_runtime_config_on(app);
     updater(&mut config);
-    persist_billing_config(&config).await?;
+    persist_billing_config_on(app, &config).await?;
     tracing::info!(
         enabled = config.enabled,
         base_cost_points = config.base_cost_points,
@@ -459,12 +489,16 @@ async fn update_billing_with(
     Ok(format_billing_config_text(title, &config))
 }
 
-async fn adjust_billing_numeric(field: BillingNumericField, delta: i64) -> anyhow::Result<()> {
-    let mut config = crate::tgbot::transfer::billing_runtime_config();
+async fn adjust_billing_numeric_on(
+    app: &crate::app_context::AppContext,
+    field: BillingNumericField,
+    delta: i64,
+) -> anyhow::Result<()> {
+    let mut config = crate::tgbot::transfer::billing_runtime_config_on(app);
     let current = billing_numeric_value(&config, field);
     let next = current.saturating_add(delta).max(0);
     set_billing_numeric_value(&mut config, field, next);
-    persist_billing_config(&config).await?;
+    persist_billing_config_on(app, &config).await?;
     tracing::info!(
         field = field.spec().key,
         delta,
@@ -495,11 +529,13 @@ fn set_billing_numeric_value(config: &mut BillingConfig, field: BillingNumericFi
     }
 }
 
-async fn persist_billing_config(config: &BillingConfig) -> anyhow::Result<()> {
+async fn persist_billing_config_on(
+    app: &crate::app_context::AppContext,
+    config: &BillingConfig,
+) -> anyhow::Result<()> {
     crate::tgbot::transfer::save_billing_runtime_config(config).await?;
-    crate::tgbot::transfer::update_billing_runtime_config(config.clone());
-    crate::app_context::app_context()
-        .home_announcement
+    crate::tgbot::transfer::update_billing_runtime_config_on(app, config.clone());
+    app.home_announcement
         .set_announcement_text(config.announcement_text.clone());
     Ok(())
 }
@@ -528,7 +564,15 @@ fn format_billing_config_text(title: &str, config: &BillingConfig) -> String {
 }
 
 pub(super) fn build_billing_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    let config = crate::tgbot::transfer::billing_runtime_config();
+    let app_context = crate::app_context::app_context();
+    build_billing_buttons_on(app_context.as_ref())
+}
+
+/// `/billing` 页按钮的上下文版本。
+pub(super) fn build_billing_buttons_on(
+    app: &crate::app_context::AppContext,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let config = crate::tgbot::transfer::billing_runtime_config_on(app);
     let enabled_label = if config.enabled {
         "关闭计费"
     } else {
@@ -633,7 +677,8 @@ fn build_billing_input_button(field: BillingNumericField) -> tdlib_rs::types::In
     let spec = field.spec();
     send::build_callback_button(
         spec.input_label,
-        &super::menu::build_menu_admin_input_button_data(spec.admin_input_action),
+        // 数值输入也走 `/billing` 自己的 callback 前缀，保持本页按钮协议统一。
+        &build_billing_callback_data(BillingCallbackAction::InputSetNumeric { field }),
         tdlib_rs::enums::ButtonStyle::Default,
     )
 }
@@ -679,6 +724,14 @@ fn parse_billing_callback_data(data: &str) -> Option<BillingCallbackAction> {
                 None
             }
         }
+        "i" => {
+            let field = BillingNumericField::parse_code(parts.next()?)?;
+            if parts.next().is_none() {
+                Some(BillingCallbackAction::InputSetNumeric { field })
+            } else {
+                None
+            }
+        }
         "c" => {
             if parts.next().is_none() {
                 Some(BillingCallbackAction::ClearAnnouncement)
@@ -707,6 +760,9 @@ fn build_billing_callback_data(action: BillingCallbackAction) -> String {
         BillingCallbackAction::Reset => format!("{BILLING_CALLBACK_PREFIX}x"),
         BillingCallbackAction::ToggleEnabled => format!("{BILLING_CALLBACK_PREFIX}e"),
         BillingCallbackAction::ClearAnnouncement => format!("{BILLING_CALLBACK_PREFIX}c"),
+        BillingCallbackAction::InputSetNumeric { field } => {
+            format!("{}i:{}", BILLING_CALLBACK_PREFIX, field.spec().code)
+        }
         BillingCallbackAction::InputSetAnnouncement => format!("{BILLING_CALLBACK_PREFIX}s"),
         BillingCallbackAction::Adjust { field, delta } => {
             format!("{}{}:{}", BILLING_CALLBACK_PREFIX, field.spec().code, delta)
@@ -776,6 +832,9 @@ mod tests {
             delta: 1,
         });
         let clear = build_billing_callback_data(BillingCallbackAction::ClearAnnouncement);
+        let input_base = build_billing_callback_data(BillingCallbackAction::InputSetNumeric {
+            field: BillingNumericField::BaseCost,
+        });
 
         assert!(is_billing_callback_data(&refresh));
         assert_eq!(
@@ -797,6 +856,12 @@ mod tests {
             parse_billing_callback_data(&clear),
             Some(BillingCallbackAction::ClearAnnouncement)
         );
+        assert_eq!(
+            parse_billing_callback_data(&input_base),
+            Some(BillingCallbackAction::InputSetNumeric {
+                field: BillingNumericField::BaseCost
+            })
+        );
         assert_eq!(parse_billing_callback_data("bcfg:bad"), None);
     }
 
@@ -814,6 +879,13 @@ mod tests {
         let decoded =
             String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
         assert_eq!(decoded, "bcfg:e");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[4][1].r#type
+        else {
+            panic!("base cost input button must be billing callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "bcfg:i:b");
         assert_eq!(rows[6][0].text, "帮助");
         assert_eq!(rows[6][1].text, "菜单");
         assert!(rows.iter().flatten().any(|button| button.text == "设公告"));

@@ -15,7 +15,7 @@ use crate::tgbot::transfer::card;
 use callback::{CONFIG_FIELD_SPECS, ConfigCallbackAction, ConfigField, parse_config_callback_data};
 
 pub(in crate::tgbot::transfer::command) use callback::ConfigFieldSpec;
-pub(super) use callback::build_config_buttons;
+pub(super) use callback::build_config_buttons_on;
 
 /// 根据菜单输入动作反查配置字段规格。
 pub(in crate::tgbot::transfer::command) fn config_field_spec_for_admin_action(
@@ -122,29 +122,25 @@ const CONFIG_PAGE_TITLE: &str = "运行配置";
 const CONFIG_PAGE_DETAIL: &str =
     "按钮可直接微调；点“设并发 / 设删除 / 设GC / 设进度 / 设分页 / 设超时”后回复一个值。";
 
-/// `/config` 命令入口。
-/// 支持：
-/// - `/config`
-/// - `/config show`
-/// - `/config set <key> <value>`
-/// - `/config reset`
-pub async fn config_command(
+/// 在指定上下文上执行 `/config`。
+pub async fn config_command_on(
+    app: &crate::app_context::AppContext,
     text: Vec<&str>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let (reply, rows) = match text.get(1).copied() {
         None => (
-            format_current_transfer_config_text(CONFIG_PAGE_TITLE),
-            build_config_buttons(),
+            format_current_transfer_config_text_on(app, CONFIG_PAGE_TITLE),
+            build_config_buttons_on(app),
         ),
         Some("show") => (
-            format_current_transfer_config_text(CONFIG_PAGE_TITLE),
-            build_config_buttons(),
+            format_current_transfer_config_text_on(app, CONFIG_PAGE_TITLE),
+            build_config_buttons_on(app),
         ),
         Some("reset") => (
-            reset_transfer_config_to_default().await?,
-            build_config_buttons(),
+            reset_transfer_config_to_default_on(app).await?,
+            build_config_buttons_on(app),
         ),
         Some("set") => {
             let key = text
@@ -156,8 +152,8 @@ pub async fn config_command(
                 .copied()
                 .ok_or_else(|| anyhow::anyhow!("usage: /config set <key> <value>"))?;
             (
-                update_transfer_config(key, value).await?,
-                build_config_buttons(),
+                update_transfer_config_on(app, key, value).await?,
+                build_config_buttons_on(app),
             )
         }
         Some(other) => anyhow::bail!("unknown config subcommand: {}", other),
@@ -175,10 +171,9 @@ pub(super) fn is_config_callback_data(data: &str) -> bool {
     callback::is_config_callback_data(data)
 }
 
-/// `/config` inline keyboard 回调入口。
-///
-/// 配置按钮只开放小步增减和刷新，避免把复杂输入塞进 callback。
-pub async fn config_callback_query(
+/// 在指定上下文上处理 `/config` callback。
+pub async fn config_callback_query_on(
+    app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
@@ -199,8 +194,10 @@ pub async fn config_callback_query(
 
     let action_result = match action {
         ConfigCallbackAction::Refresh => Ok(()),
-        ConfigCallbackAction::Reset => reset_transfer_config_to_default().await.map(|_| ()),
-        ConfigCallbackAction::Adjust { field, delta } => adjust_transfer_config(field, delta).await,
+        ConfigCallbackAction::Reset => reset_transfer_config_to_default_on(app).await.map(|_| ()),
+        ConfigCallbackAction::Adjust { field, delta } => {
+            adjust_transfer_config_on(app, field, delta).await
+        }
         ConfigCallbackAction::Input { field } => {
             return crate::tgbot::transfer::command::menu::start_admin_input_callback(
                 update.id,
@@ -218,10 +215,12 @@ pub async fn config_callback_query(
         return Err(err);
     }
 
-    let (text, keyboard) =
-        send::ReplyPanel::card(format_current_transfer_config_text(CONFIG_PAGE_TITLE))
-            .rows(build_config_buttons())
-            .into_card_parts()?;
+    let (text, keyboard) = send::ReplyPanel::card(format_current_transfer_config_text_on(
+        app,
+        CONFIG_PAGE_TITLE,
+    ))
+    .rows(build_config_buttons_on(app))
+    .into_card_parts()?;
     edit_runtime_admin_interaction_card_or_error(
         text,
         update.chat_id,
@@ -235,9 +234,13 @@ pub async fn config_callback_query(
     Ok(())
 }
 
-/// 更新 `transfer_config` 中允许动态调整的字段。
-async fn update_transfer_config(key: &str, value: &str) -> anyhow::Result<String> {
-    let mut transfer_config = crate::tgbot::transfer::runtime_config();
+/// 在指定上下文上更新 `transfer_config` 中允许动态调整的字段。
+async fn update_transfer_config_on(
+    app: &crate::app_context::AppContext,
+    key: &str,
+    value: &str,
+) -> anyhow::Result<String> {
+    let mut transfer_config = crate::tgbot::transfer::runtime_config_on(app);
     match key {
         "job_concurrency" => {
             let parsed = value.parse::<usize>()?;
@@ -314,7 +317,7 @@ async fn update_transfer_config(key: &str, value: &str) -> anyhow::Result<String
     }
 
     crate::tgbot::transfer::save_transfer_runtime_config(&transfer_config).await?;
-    crate::tgbot::transfer::update_runtime_config(transfer_config.clone());
+    crate::tgbot::transfer::update_runtime_config_on(app, transfer_config.clone());
     // 这里只允许修改非敏感运行参数，因此 key/value 可以安全记录，便于追踪运行时变更。
     tracing::info!(key, value, "transfer runtime config updated");
 
@@ -324,9 +327,13 @@ async fn update_transfer_config(key: &str, value: &str) -> anyhow::Result<String
     ))
 }
 
-/// 按按钮小步调整运行配置。
-async fn adjust_transfer_config(field: ConfigField, delta: i64) -> anyhow::Result<()> {
-    let mut transfer_config = crate::tgbot::transfer::runtime_config();
+/// 在指定上下文上按按钮小步调整运行配置。
+async fn adjust_transfer_config_on(
+    app: &crate::app_context::AppContext,
+    field: ConfigField,
+    delta: i64,
+) -> anyhow::Result<()> {
+    let mut transfer_config = crate::tgbot::transfer::runtime_config_on(app);
     match field {
         ConfigField::JobConcurrency => {
             let current = i64::try_from(transfer_config.job_concurrency)?;
@@ -379,7 +386,7 @@ async fn adjust_transfer_config(field: ConfigField, delta: i64) -> anyhow::Resul
     }
 
     crate::tgbot::transfer::save_transfer_runtime_config(&transfer_config).await?;
-    crate::tgbot::transfer::update_runtime_config(transfer_config);
+    crate::tgbot::transfer::update_runtime_config_on(app, transfer_config);
     tracing::info!(
         field = field.key(),
         delta,
@@ -388,11 +395,13 @@ async fn adjust_transfer_config(field: ConfigField, delta: i64) -> anyhow::Resul
     Ok(())
 }
 
-/// 把运行配置重置为启动配置里的默认值。
-async fn reset_transfer_config_to_default() -> anyhow::Result<String> {
-    let transfer_config = crate::tgbot::transfer::runtime_default_config();
+/// 在指定上下文上把运行配置重置为启动配置里的默认值。
+async fn reset_transfer_config_to_default_on(
+    app: &crate::app_context::AppContext,
+) -> anyhow::Result<String> {
+    let transfer_config = crate::tgbot::transfer::runtime_default_config_on(app);
     crate::tgbot::transfer::save_transfer_runtime_config(&transfer_config).await?;
-    crate::tgbot::transfer::update_runtime_config(transfer_config.clone());
+    crate::tgbot::transfer::update_runtime_config_on(app, transfer_config.clone());
     tracing::info!("transfer runtime config reset to startup defaults");
 
     Ok(format_transfer_config_text(
@@ -413,8 +422,13 @@ async fn send_config_callback_error(
 }
 
 /// 把运行时配置格式化成当前卡片文本。
-pub(super) fn format_current_transfer_config_text(title: &str) -> String {
-    format_transfer_config_text(title, &crate::tgbot::transfer::runtime_config())
+///
+/// 菜单页在已经拿到 `AppContext` 时优先用这个版本，避免重复抓全局。
+pub(super) fn format_current_transfer_config_text_on(
+    app: &crate::app_context::AppContext,
+    title: &str,
+) -> String {
+    format_transfer_config_text(title, &crate::tgbot::transfer::runtime_config_on(app))
 }
 
 /// 格式化当前可调配置。

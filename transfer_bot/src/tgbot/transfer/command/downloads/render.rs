@@ -15,8 +15,14 @@ pub(super) fn format_downloads_text(
     snapshots: &[store::JobProgressSnapshot],
     args: &DownloadsArgs,
     total: usize,
+    is_admin: bool,
 ) -> String {
     let total_pages = compute_total_pages(total, args.limit);
+    let scope_label = if is_admin {
+        "范围：管理员 / 全局"
+    } else {
+        "范围：当前用户 / 自己"
+    };
     if snapshots.is_empty() {
         let page_label = format!("{}/{}", args.page, total_pages);
         let current_page_command = short_and_long(
@@ -31,6 +37,7 @@ pub(super) fn format_downloads_text(
             card::code(page_label),
             card::code(args.limit),
         ));
+        lines.push(scope_label.to_owned());
         lines.push(build_page_command_section());
         lines.push(current_page_line);
         lines.push(build_page_empty_note("可切换筛选或稍后刷新。"));
@@ -53,6 +60,7 @@ pub(super) fn format_downloads_text(
             build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Long),
         ),
     ));
+    lines.push(scope_label.to_owned());
 
     for snapshot in snapshots {
         lines.push(card::DIVIDER.to_owned());
