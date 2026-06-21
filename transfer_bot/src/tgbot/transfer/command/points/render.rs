@@ -6,7 +6,7 @@ use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
 
 use super::super::common::{
-    CommandStyle, balance_history_command as build_balance_history_command, build_copy_only_row,
+    CommandStyle, balance_history_command as build_balance_history_command,
     build_page_command_section, build_page_empty_note, build_ready_page_header,
     build_refresh_return_menu_row, points_history_command as build_points_history_command,
 };
@@ -147,9 +147,15 @@ pub(super) fn ledger_button_rows(
     rows.push(vec![
         ledger_nav_button("首页", kind, user_id, page.limit, 1, page.page),
         ledger_nav_button("上页", kind, user_id, page.limit, prev_page, page.page),
-        send::build_copy_button(
+        send::build_callback_button(
             &format!("{}/{}", page.page, page.total_pages),
-            &ledger_command(kind, user_id, page.limit, page.page, false),
+            &super::build_ledger_callback_data(
+                super::LedgerCallbackAction::Refresh,
+                kind,
+                user_id,
+                page.limit,
+                page.page,
+            ),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         ledger_nav_button("下页", kind, user_id, page.limit, next_page, page.page),
@@ -181,19 +187,7 @@ pub(super) fn ledger_button_rows(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ));
-    if admin_view {
-        rows.push(build_copy_only_row(send::build_copy_button(
-            "复制当前页",
-            &points_history_command(user_id, page.limit, page.page, false),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )));
-    } else {
-        rows.push(build_copy_only_row(send::build_copy_button(
-            "复制余额",
-            "/balance",
-            tdlib_rs::enums::ButtonStyle::Default,
-        )));
-    }
+    let _ = admin_view;
     rows
 }
 
@@ -240,43 +234,28 @@ fn ledger_nav_button(
     page: u64,
     current_page: u64,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    // 边界页按钮不发 callback，避免点击后只是触发“消息未修改”错误。
-    if page == current_page {
-        return send::build_copy_button(
-            text,
-            &ledger_command(kind, user_id, limit, current_page, true),
-            tdlib_rs::enums::ButtonStyle::Default,
-        );
-    }
-
     send::build_callback_button(
         text,
         &super::build_ledger_callback_data(
-            super::LedgerCallbackAction::Page,
+            if page == current_page {
+                super::LedgerCallbackAction::Refresh
+            } else {
+                super::LedgerCallbackAction::Page
+            },
             kind,
             user_id,
             limit,
-            page,
+            if page == current_page {
+                current_page
+            } else {
+                page
+            },
         ),
         tdlib_rs::enums::ButtonStyle::Default,
     )
 }
 
-/// 根据入口类型生成长/短流水命令。
-fn ledger_command(
-    kind: super::LedgerCommandKind,
-    user_id: i64,
-    limit: u64,
-    page: u64,
-    short: bool,
-) -> String {
-    match kind {
-        super::LedgerCommandKind::Balance => balance_history_command(limit, page, short),
-        super::LedgerCommandKind::Points => points_history_command(user_id, limit, page, short),
-    }
-}
-
-/// 构造 `/balance history` 命令；`short=true` 时只作为内部兼容样式。
+/// 构造 `/balance history` 命令；测试仍使用这个 helper 校验长命令格式。
 pub(super) fn balance_history_command(limit: u64, page: u64, short: bool) -> String {
     let style = if short {
         CommandStyle::Short
@@ -286,8 +265,8 @@ pub(super) fn balance_history_command(limit: u64, page: u64, short: bool) -> Str
     build_balance_history_command(limit, page, style)
 }
 
-/// 构造 `/points history` 命令；`short=true` 时只作为内部兼容样式。
-pub(super) fn points_history_command(user_id: i64, limit: u64, page: u64, short: bool) -> String {
+/// 构造 `/points history` 命令；正文里继续展示统一的长命令格式。
+fn points_history_command(user_id: i64, limit: u64, page: u64, short: bool) -> String {
     let style = if short {
         CommandStyle::Short
     } else {

@@ -191,7 +191,8 @@ pub(super) async fn continue_flow_input_on(
         MenuInputStep::JobId { .. }
         | MenuInputStep::AdminInput { .. }
         | MenuInputStep::AdminChatPicker { .. }
-        | MenuInputStep::PointLedgerUserId => Ok(false),
+        | MenuInputStep::PointLedgerUserId
+        | MenuInputStep::PointsAdjust { .. } => Ok(false),
     }
 }
 
@@ -238,7 +239,8 @@ pub(super) async fn handle_flow_input(
         MenuInputStep::JobId { .. }
         | MenuInputStep::AdminInput { .. }
         | MenuInputStep::AdminChatPicker { .. }
-        | MenuInputStep::PointLedgerUserId => Ok(None),
+        | MenuInputStep::PointLedgerUserId
+        | MenuInputStep::PointsAdjust { .. } => Ok(None),
     }
 }
 

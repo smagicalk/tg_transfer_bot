@@ -147,6 +147,7 @@ pub(in crate::tgbot::transfer) fn build_cache_button_data() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CallbackRoute {
     Help,
+    Lookup,
     Downloads,
     Job,
     Config,
@@ -193,6 +194,9 @@ pub(in crate::tgbot) async fn transfer_callback_query_on(
 
     match route {
         CallbackRoute::Help => help::help_callback_query(update, actor, client_id).await,
+        CallbackRoute::Lookup => {
+            lookup::lookup_callback_query_on(app, update, config, actor, client_id).await
+        }
         CallbackRoute::Downloads => {
             downloads::downloads_callback_query_on(app, update, actor, client_id).await
         }
@@ -270,6 +274,11 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
             CallbackRoute::Help
         }
         tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if lookup::is_lookup_callback_data(&data.data) =>
+        {
+            CallbackRoute::Lookup
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
             if downloads::is_downloads_callback_data(&data.data) =>
         {
             CallbackRoute::Downloads
@@ -339,6 +348,10 @@ mod tests {
         assert_eq!(
             classify_callback_route(&payload("h:transfer")),
             CallbackRoute::Help
+        );
+        assert_eq!(
+            classify_callback_route(&payload("lk:rt")),
+            CallbackRoute::Lookup
         );
         assert_eq!(
             classify_callback_route(&payload("d:r:run:8:1")),
@@ -450,6 +463,7 @@ mod tests {
     fn test_callback_prefixes_are_unique_by_route() {
         let samples = [
             ("h:transfer", CallbackRoute::Help),
+            ("lk:rt", CallbackRoute::Lookup),
             ("d:f:run:8:1", CallbackRoute::Downloads),
             ("j:p:42", CallbackRoute::Job),
             ("cfg:a:gc:10", CallbackRoute::Config),

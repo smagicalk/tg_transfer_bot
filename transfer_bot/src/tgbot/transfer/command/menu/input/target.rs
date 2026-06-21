@@ -393,7 +393,7 @@ mod tests {
             crate::config::TargetsConfig::default(),
             crate::config::AccessControlConfig::default(),
         );
-        assert_eq!(resolve_default_target_for_test(&config, 1), None);
+        assert_eq!(resolve_default_target_for_test(&config, 1), Some(1));
 
         install_target_runtime(
             crate::config::TargetsConfig {

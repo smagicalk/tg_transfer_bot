@@ -249,6 +249,8 @@ pub(in crate::tgbot::transfer::command) enum AdminInputAction {
     BillingSetItemCost,
     BillingSetInitialUserPoints,
     BillingSetAnnouncement,
+    PointsAddUser,
+    PointsSubUser,
 }
 
 impl AdminInputAction {
@@ -284,6 +286,8 @@ impl AdminInputAction {
         Self::BillingSetItemCost,
         Self::BillingSetInitialUserPoints,
         Self::BillingSetAnnouncement,
+        Self::PointsAddUser,
+        Self::PointsSubUser,
     ];
 }
 
@@ -321,6 +325,24 @@ fn billing_input_meta(
         .map(|spec| (spec.input_title, spec.input_detail, spec.input_placeholder))
 }
 
+fn points_input_meta(
+    action: AdminInputAction,
+) -> Option<(&'static str, &'static str, &'static str)> {
+    match action {
+        AdminInputAction::PointsAddUser => Some((
+            "添加积分",
+            "请回复积分数，或回复“积分 理由”，例如 10 admin_adjust；发送 /cancel 取消。",
+            "输入 amount [reason]，或发送 /cancel",
+        )),
+        AdminInputAction::PointsSubUser => Some((
+            "扣减积分",
+            "请回复积分数，或回复“积分 理由”，例如 10 admin_adjust；发送 /cancel 取消。",
+            "输入 amount [reason]，或发送 /cancel",
+        )),
+        _ => None,
+    }
+}
+
 impl AdminInputAction {
     /// 对外展示的稳定标题。
     pub(super) fn input_title(self) -> &'static str {
@@ -331,6 +353,9 @@ impl AdminInputAction {
             return spec.input_title;
         }
         if let Some((title, _, _)) = billing_input_meta(self) {
+            return title;
+        }
+        if let Some((title, _, _)) = points_input_meta(self) {
             return title;
         }
         if let Some(spec) = config_field_spec(self) {
@@ -367,6 +392,7 @@ impl AdminInputAction {
             | Self::BillingSetItemCost
             | Self::BillingSetInitialUserPoints
             | Self::BillingSetAnnouncement => unreachable!("billing input title uses spec"),
+            Self::PointsAddUser | Self::PointsSubUser => unreachable!("points input title uses spec"),
         }
     }
 
@@ -379,6 +405,9 @@ impl AdminInputAction {
             return spec.input_detail;
         }
         if let Some((_, detail, _)) = billing_input_meta(self) {
+            return detail;
+        }
+        if let Some((_, detail, _)) = points_input_meta(self) {
             return detail;
         }
         if let Some(spec) = config_field_spec(self) {
@@ -415,6 +444,7 @@ impl AdminInputAction {
             | Self::BillingSetItemCost
             | Self::BillingSetInitialUserPoints
             | Self::BillingSetAnnouncement => unreachable!("billing input detail uses spec"),
+            Self::PointsAddUser | Self::PointsSubUser => unreachable!("points input detail uses spec"),
         }
     }
 
@@ -427,6 +457,9 @@ impl AdminInputAction {
             return spec.input_placeholder;
         }
         if let Some((_, _, placeholder)) = billing_input_meta(self) {
+            return placeholder;
+        }
+        if let Some((_, _, placeholder)) = points_input_meta(self) {
             return placeholder;
         }
         if let Some(spec) = config_field_spec(self) {
@@ -463,6 +496,9 @@ impl AdminInputAction {
             | Self::BillingSetItemCost
             | Self::BillingSetInitialUserPoints
             | Self::BillingSetAnnouncement => unreachable!("billing input placeholder uses spec"),
+            Self::PointsAddUser | Self::PointsSubUser => {
+                unreachable!("points input placeholder uses spec")
+            }
         }
     }
 
@@ -496,6 +532,8 @@ impl AdminInputAction {
             Self::BillingSetItemCost => "billing_set_item_cost",
             Self::BillingSetInitialUserPoints => "billing_set_initial_points",
             Self::BillingSetAnnouncement => "billing_set_announcement",
+            Self::PointsAddUser => "points_add_user",
+            Self::PointsSubUser => "points_sub_user",
         }
     }
 
@@ -532,6 +570,8 @@ impl AdminInputAction {
             "billing_set_item_cost" => Some(Self::BillingSetItemCost),
             "billing_set_initial_points" => Some(Self::BillingSetInitialUserPoints),
             "billing_set_announcement" => Some(Self::BillingSetAnnouncement),
+            "points_add_user" => Some(Self::PointsAddUser),
+            "points_sub_user" => Some(Self::PointsSubUser),
             _ => None,
         }
     }
@@ -571,6 +611,10 @@ pub(super) enum MenuInputStep {
         request_chat_id_input: Option<i64>,
     },
     PointLedgerUserId,
+    PointsAdjust {
+        action: AdminInputAction,
+        target_user_id: i64,
+    },
 }
 
 /// 菜单输入草稿。
@@ -597,6 +641,7 @@ impl MenuInputDraft {
             MenuInputStep::AdminInput { action } => action.input_title(),
             MenuInputStep::AdminChatPicker { action, .. } => action.input_title(),
             MenuInputStep::PointLedgerUserId => "用户积分流水",
+            MenuInputStep::PointsAdjust { action, .. } => action.input_title(),
         }
     }
 
@@ -648,6 +693,13 @@ impl MenuInputDraft {
     /// 构造等待用户 ID 的积分流水草稿。
     pub(super) fn point_ledger_user_id() -> Self {
         Self::new(MenuInputStep::PointLedgerUserId)
+    }
+
+    pub(super) fn points_adjust(action: AdminInputAction, target_user_id: i64) -> Self {
+        Self::new(MenuInputStep::PointsAdjust {
+            action,
+            target_user_id,
+        })
     }
 
     /// 每次写回草稿都刷新过期时间。
@@ -708,6 +760,10 @@ impl MenuInputDraft {
                 request_chat_id_input: model.target_chat_id,
             },
             "point_ledger_user_id" => MenuInputStep::PointLedgerUserId,
+            "points_adjust" => MenuInputStep::PointsAdjust {
+                action: AdminInputAction::parse(model.job_action.as_deref()?)?,
+                target_user_id: model.target_chat_id?,
+            },
             _ => return None,
         };
         Some(Self { step })
@@ -797,6 +853,16 @@ impl DraftFields {
                 job_action: None,
                 source_link: None,
                 target_chat_id: None,
+            },
+            MenuInputStep::PointsAdjust {
+                action,
+                target_user_id,
+            } => Self {
+                step: "points_adjust",
+                input_kind: None,
+                job_action: Some(action.code()),
+                source_link: None,
+                target_chat_id: Some(target_user_id),
             },
         }
     }
@@ -1127,7 +1193,8 @@ pub(super) fn target_context_from_step(step: &MenuInputStep) -> Option<(MenuInpu
         | MenuInputStep::JobId { .. }
         | MenuInputStep::AdminInput { .. }
         | MenuInputStep::AdminChatPicker { .. }
-        | MenuInputStep::PointLedgerUserId => None,
+        | MenuInputStep::PointLedgerUserId
+        | MenuInputStep::PointsAdjust { .. } => None,
     }
 }
 

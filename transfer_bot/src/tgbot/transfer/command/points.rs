@@ -8,15 +8,15 @@ use crate::tgbot::transfer::store;
 mod callback;
 mod render;
 
+#[cfg(test)]
+use super::common::balance_history_command;
 use super::build_menu_home_button_data;
 pub(in crate::tgbot::transfer::command) use callback::points_callback_query;
 use render::{format_balance_text, format_ledger_page_text, ledger_button_rows};
 
-#[cfg(test)]
-use render::balance_history_command;
-
 /// 积分流水 callback 前缀。
 const POINTS_CALLBACK_PREFIX: &str = "pt:";
+const POINTS_ADJUST_CALLBACK_PREFIX: &str = "pta:";
 /// 积分流水默认每页条数。
 const DEFAULT_LEDGER_LIMIT: u64 = 10;
 /// 积分流水单页最大条数，避免一次回复过长。
@@ -64,6 +64,15 @@ pub(super) fn build_points_history_home_callback_data(
     )
 }
 
+pub(super) fn build_points_adjust_home_callback_data(user_id: i64, add: bool) -> String {
+    format!(
+        "{}{}:{}",
+        POINTS_ADJUST_CALLBACK_PREFIX,
+        if add { "add" } else { "sub" },
+        user_id
+    )
+}
+
 /// `/balance` 命令入口。
 pub async fn balance_command(
     text: Vec<&str>,
@@ -101,9 +110,9 @@ pub async fn balance_command(
                     tdlib_rs::enums::ButtonStyle::Default,
                 ),
             ],
-            vec![send::build_copy_button(
-                "复制 /balance",
-                "/balance",
+            vec![send::build_callback_button(
+                "帮助",
+                &super::help::build_help_callback_data(Some("points")),
                 tdlib_rs::enums::ButtonStyle::Default,
             )],
         ])
@@ -194,11 +203,6 @@ pub async fn points_command(
                 &build_points_history_home_callback_data(user_id, DEFAULT_LEDGER_LIMIT, 1),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
-            send::build_copy_button(
-                "复制余额命令",
-                &format!("/points show {}", user_id),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
             send::build_callback_button(
                 "菜单",
                 &build_menu_home_button_data(),
@@ -206,14 +210,14 @@ pub async fn points_command(
             ),
         ])
         .row(vec![
-            send::build_copy_button(
-                "复制加分",
-                &format!("/points add {} 10 admin_adjust", user_id),
+            send::build_callback_button(
+                "加分",
+                &build_points_adjust_home_callback_data(user_id, true),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-            send::build_copy_button(
-                "复制扣分",
-                &format!("/points sub {} 10 admin_adjust", user_id),
+            send::build_callback_button(
+                "扣分",
+                &build_points_adjust_home_callback_data(user_id, false),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
@@ -428,7 +432,7 @@ mod tests {
         assert!(text.contains("请求：‹100› / ‹200›"));
     }
 
-    // 流水页按钮使用 callback 原地翻页，当前页按钮保留 copy-text 方便复制命令。
+    // 流水页按钮全部使用 callback 原地翻页与刷新，避免再退回复制命令。
     #[test]
     fn test_ledger_button_rows() {
         let page = store::PointLedgerPage {
@@ -448,15 +452,15 @@ mod tests {
         assert_eq!(rows[1][0].text, "刷新");
         assert_eq!(rows[1][1].text, "返回");
         assert_eq!(rows[1][2].text, "菜单");
-        assert_eq!(rows[2][0].text, "复制余额");
+        assert_eq!(rows.len(), 2);
 
         assert!(matches!(
             rows[0][0].r#type,
-            tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
         assert!(matches!(
             rows[0][3].r#type,
-            tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
+            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
     }
 
@@ -509,11 +513,10 @@ mod tests {
 
         assert_eq!(rows[1][1].text, "返回");
         assert_eq!(decoded, "pt:bh:pts:9:10:1");
-        assert_eq!(rows[2][0].text, "复制当前页");
-        assert_ne!(rows[1][1].text, rows[2][0].text);
+        assert_eq!(rows.len(), 2);
     }
 
-    // 流水页不应同时出现“当前页复制”和独立“复制当前命令”两套完全等价入口。
+    // 流水页不应再出现复制型当前页入口。
     #[test]
     fn test_ledger_button_rows_drop_duplicate_current_command_copy() {
         let page = store::PointLedgerPage {
@@ -534,6 +537,8 @@ mod tests {
 
         assert!(labels.contains(&"1/1"));
         assert!(!labels.contains(&"复制当前命令"));
+        assert!(!labels.contains(&"复制当前页"));
+        assert!(!labels.contains(&"复制余额"));
     }
 
     // 普通用户流水页的“返回”按钮必须是独立返回动作，不能再复用刷新 payload。
@@ -576,8 +581,8 @@ mod tests {
     fn test_history_command_pairs() {
         assert_eq!(
             short_and_long(
-                balance_history_command(10, 1, true),
-                balance_history_command(10, 1, false)
+                balance_history_command(10, 1, super::super::common::CommandStyle::Short),
+                balance_history_command(10, 1, super::super::common::CommandStyle::Long)
             ),
             "‹/balance history 10 1›"
         );
@@ -644,11 +649,6 @@ mod tests {
                     &build_points_history_home_callback_data(42, DEFAULT_LEDGER_LIMIT, 1),
                     tdlib_rs::enums::ButtonStyle::Primary,
                 ),
-                send::build_copy_button(
-                    "复制余额命令",
-                    "/points show 42",
-                    tdlib_rs::enums::ButtonStyle::Default,
-                ),
                 send::build_callback_button(
                     "菜单",
                     &build_menu_home_button_data(),
@@ -656,14 +656,14 @@ mod tests {
                 ),
             ])
             .row(vec![
-                send::build_copy_button(
-                    "复制加分",
-                    "/points add 42 10 admin_adjust",
+                send::build_callback_button(
+                    "加分",
+                    &build_points_adjust_home_callback_data(42, true),
                     tdlib_rs::enums::ButtonStyle::Default,
                 ),
-                send::build_copy_button(
-                    "复制扣分",
-                    "/points sub 42 10 admin_adjust",
+                send::build_callback_button(
+                    "扣分",
+                    &build_points_adjust_home_callback_data(42, false),
                     tdlib_rs::enums::ButtonStyle::Default,
                 ),
             ]);
@@ -675,10 +675,13 @@ mod tests {
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
+        assert_eq!(rows[0][0].text, "查看流水");
+        assert_eq!(rows[0][1].text, "菜单");
+        assert_eq!(rows[1][0].text, "加分");
+        assert_eq!(rows[1][1].text, "扣分");
         assert!(labels.contains(&"查看流水"));
-        assert!(labels.contains(&"复制余额命令"));
-        assert!(labels.contains(&"复制加分"));
-        assert!(labels.contains(&"复制扣分"));
+        assert!(labels.contains(&"加分"));
+        assert!(labels.contains(&"扣分"));
     }
 
     // 积分流水 callback 前缀必须保持独立，避免被其他命令路由误判。

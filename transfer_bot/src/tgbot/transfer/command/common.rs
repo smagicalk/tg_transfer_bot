@@ -18,7 +18,8 @@ pub(crate) enum CommandStyle {
 /// 1. 命令参数显式指定数字 chat_id 或 `targets.aliases` 别名
 /// 2. 否则从 `targets.by_request_chat_id[request_chat_id]` 获取
 /// 3. 再否则尝试 `targets.default_chat_id` 兜底
-/// 4. 如果配置了 `allowed_target_chat_ids`，最终目标必须命中白名单
+/// 4. 仍未配置时，默认回退到当前请求 chat 本身
+/// 5. 如果配置了 `allowed_target_chat_ids`，最终目标必须命中白名单
 #[cfg(test)]
 pub(crate) fn resolve_target_chat_id(text: &[&str], request_chat_id: i64) -> anyhow::Result<i64> {
     resolve_target_chat_id_on(
@@ -45,7 +46,7 @@ pub(crate) fn resolve_target_chat_id_on(
     } else if targets_config.default_chat_id != 0 {
         targets_config.default_chat_id
     } else {
-        anyhow::bail!("not found transfer target")
+        request_chat_id
     };
 
     ensure_target_allowed(target_chat_id, &access_control)?;
@@ -400,6 +401,31 @@ pub(crate) struct RuntimeAdminHelpCopyButton {
     pub style: tdlib_rs::enums::ButtonStyle,
 }
 
+/// 把一组复制按钮按两列排版成按钮行。
+///
+/// 这类按钮通常只是“把命令复制出去”，信息密度不需要单独一行；
+/// 两列排列能明显减少帮助页和管理页的纵向长度。
+pub(crate) fn build_copy_button_rows(
+    buttons: Vec<tdlib_rs::types::InlineKeyboardButton>,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut rows = Vec::new();
+    let mut current_row = Vec::with_capacity(2);
+
+    for button in buttons {
+        current_row.push(button);
+        if current_row.len() == 2 {
+            rows.push(current_row);
+            current_row = Vec::with_capacity(2);
+        }
+    }
+
+    if !current_row.is_empty() {
+        rows.push(current_row);
+    }
+
+    rows
+}
+
 impl RuntimeAdminHelpCopyButton {
     /// 构造一条复制按钮定义。
     pub(crate) fn new(
@@ -448,20 +474,25 @@ pub(crate) fn build_runtime_admin_examples_block(
 }
 
 /// 把 descriptor 中的复制按钮定义渲染成 help 详情页按钮行。
+///
+/// help 详情页里这类管理页按钮较多，按两列排版可以明显降低页面高度，
+/// 但仍保留全部复制入口，避免把按钮区压成一长列。
 pub(crate) fn build_runtime_admin_help_copy_rows(
     descriptor: &RuntimeAdminHelpDescriptor,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    descriptor
-        .help_copy_buttons
-        .iter()
-        .map(|button| {
-            build_copy_only_row(crate::tgbot::send::build_copy_button(
-                &button.label,
-                &button.command,
-                button.style.clone(),
-            ))
-        })
-        .collect()
+    build_copy_button_rows(
+        descriptor
+            .help_copy_buttons
+            .iter()
+            .map(|button| {
+                crate::tgbot::send::build_copy_button(
+                    &button.label,
+                    &button.command,
+                    button.style.clone(),
+                )
+            })
+            .collect(),
+    )
 }
 
 /// 构造交互页统一空态说明。
@@ -720,6 +751,78 @@ mod tests {
             short_and_long("/d run".to_owned(), "/downloads run".to_owned()),
             "‹/downloads run› | ‹/d run›"
         );
+    }
+
+    // 管理页帮助复制按钮应按两列分组，减少 help 详情页高度。
+    #[test]
+    fn test_runtime_admin_help_copy_rows_group_buttons_by_two() {
+        let descriptor = RuntimeAdminHelpDescriptor {
+            synopsis: "synopsis".to_owned(),
+            usage_items: vec![],
+            interaction_items: vec![],
+            example_commands: vec![],
+            help_copy_buttons: vec![
+                RuntimeAdminHelpCopyButton::new(
+                    "复制一",
+                    "/one",
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                RuntimeAdminHelpCopyButton::new(
+                    "复制二",
+                    "/two",
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                RuntimeAdminHelpCopyButton::new(
+                    "复制三",
+                    "/three",
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
+        };
+
+        let rows = build_runtime_admin_help_copy_rows(&descriptor);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].len(), 2);
+        assert_eq!(rows[1].len(), 1);
+        assert_eq!(rows[0][0].text, "复制一");
+        assert_eq!(rows[0][1].text, "复制二");
+        assert_eq!(rows[1][0].text, "复制三");
+    }
+
+    // 通用复制按钮分组 helper 也应保持两列排版。
+    #[test]
+    fn test_build_copy_button_rows_group_buttons_by_two() {
+        let rows = build_copy_button_rows(vec![
+            crate::tgbot::send::build_copy_button(
+                "复制一",
+                "/one",
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            crate::tgbot::send::build_copy_button(
+                "复制二",
+                "/two",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            crate::tgbot::send::build_copy_button(
+                "复制三",
+                "/three",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            crate::tgbot::send::build_copy_button(
+                "复制四",
+                "/four",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ]);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].len(), 2);
+        assert_eq!(rows[1].len(), 2);
+        assert_eq!(rows[0][0].text, "复制一");
+        assert_eq!(rows[0][1].text, "复制二");
+        assert_eq!(rows[1][0].text, "复制三");
+        assert_eq!(rows[1][1].text, "复制四");
     }
 
     // 文件大小格式要在不同命令之间保持一致，避免排查下载进度时出现两套展示。

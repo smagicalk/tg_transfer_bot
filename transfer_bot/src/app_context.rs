@@ -27,6 +27,7 @@ pub struct AppContext {
     pub(crate) transfer_guards: Arc<TransferExecutionGuards>,
     pub(crate) send_capabilities: Arc<SendCapabilities>,
     pub(crate) home_announcement: Arc<HomeAnnouncementState>,
+    pub(crate) lookup_retry: Arc<LookupRetryState>,
 }
 
 impl Default for AppContext {
@@ -41,7 +42,79 @@ impl Default for AppContext {
             transfer_guards: Arc::new(TransferExecutionGuards::default()),
             send_capabilities: Arc::new(SendCapabilities::default()),
             home_announcement: Arc::new(HomeAnnouncementState::default()),
+            lookup_retry: Arc::new(LookupRetryState::default()),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LookupRetryContext {
+    pub source_link: String,
+    pub target_chat_id: i64,
+}
+
+#[derive(Default)]
+pub struct LookupRetryState {
+    by_message: RwLock<HashMap<(i64, i64, i64), LookupRetryEntry>>,
+    sequence: AtomicUsize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LookupRetryEntry {
+    context: LookupRetryContext,
+    sequence: usize,
+}
+
+impl LookupRetryState {
+    pub fn put_context(
+        &self,
+        request_chat_id: i64,
+        sender_user_id: i64,
+        message_id: i64,
+        context: LookupRetryContext,
+    ) {
+        let mut guard = recover_rwlock_write(&self.by_message, "lookup retry context");
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+        guard.insert(
+            (request_chat_id, sender_user_id, message_id),
+            LookupRetryEntry { context, sequence },
+        );
+        prune_lookup_retry_entries(&mut guard, request_chat_id, sender_user_id);
+    }
+
+    pub fn take_context(
+        &self,
+        request_chat_id: i64,
+        sender_user_id: i64,
+        message_id: i64,
+    ) -> Option<LookupRetryContext> {
+        recover_rwlock_write(&self.by_message, "lookup retry context")
+            .remove(&(request_chat_id, sender_user_id, message_id))
+            .map(|entry| entry.context)
+    }
+}
+
+const LOOKUP_RETRY_CONTEXT_LIMIT_PER_USER: usize = 8;
+
+fn prune_lookup_retry_entries(
+    entries: &mut HashMap<(i64, i64, i64), LookupRetryEntry>,
+    request_chat_id: i64,
+    sender_user_id: i64,
+) {
+    let mut scoped = entries
+        .iter()
+        .filter(|((chat_id, user_id, _), _)| {
+            *chat_id == request_chat_id && *user_id == sender_user_id
+        })
+        .map(|(key, entry)| (*key, entry.sequence))
+        .collect::<Vec<_>>();
+    if scoped.len() <= LOOKUP_RETRY_CONTEXT_LIMIT_PER_USER {
+        return;
+    }
+    scoped.sort_by_key(|(_, sequence)| *sequence);
+    let remove_count = scoped.len() - LOOKUP_RETRY_CONTEXT_LIMIT_PER_USER;
+    for (key, _) in scoped.into_iter().take(remove_count) {
+        entries.remove(&key);
     }
 }
 
@@ -681,6 +754,55 @@ mod tests {
         drop(first);
         assert!(!guards.is_job_running_in_process(7).await);
         assert!(guards.acquire_job_guard(7).await.is_some());
+    }
+
+    #[test]
+    fn lookup_retry_state_is_scoped_by_chat_user_and_message() {
+        let state = LookupRetryState::default();
+        state.put_context(
+            1,
+            2,
+            3,
+            LookupRetryContext {
+                source_link: "https://t.me/c/1/2".to_owned(),
+                target_chat_id: -100,
+            },
+        );
+
+        assert!(state.take_context(1, 2, 4).is_none());
+        assert_eq!(
+            state.take_context(1, 2, 3),
+            Some(LookupRetryContext {
+                source_link: "https://t.me/c/1/2".to_owned(),
+                target_chat_id: -100,
+            })
+        );
+        assert!(state.take_context(1, 2, 3).is_none());
+    }
+
+    #[test]
+    fn lookup_retry_state_keeps_multiple_recent_contexts_and_prunes_oldest() {
+        let state = LookupRetryState::default();
+        for index in 0..=LOOKUP_RETRY_CONTEXT_LIMIT_PER_USER {
+            state.put_context(
+                1,
+                2,
+                i64::try_from(index).expect("index should fit i64"),
+                LookupRetryContext {
+                    source_link: format!("https://t.me/c/1/{index}"),
+                    target_chat_id: -100 - i64::try_from(index).expect("index should fit i64"),
+                },
+            );
+        }
+
+        assert!(state.take_context(1, 2, 0).is_none());
+        assert_eq!(
+            state.take_context(1, 2, 1),
+            Some(LookupRetryContext {
+                source_link: "https://t.me/c/1/1".to_owned(),
+                target_chat_id: -101,
+            })
+        );
     }
 
     fn test_file(

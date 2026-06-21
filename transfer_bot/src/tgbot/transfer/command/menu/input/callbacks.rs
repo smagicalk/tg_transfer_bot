@@ -3,7 +3,7 @@
 
 pub(in crate::tgbot::transfer::command::menu) use super::callbacks_simple::{
     admin_input_callback_query, cancel_input_callback_query, job_id_input_callback_query,
-    point_ledger_user_input_callback_query,
+    point_ledger_user_input_callback_query, points_adjust_input_callback_query,
 };
 pub(in crate::tgbot::transfer::command::menu) use super::callbacks_target::{
     target_alias_callback_query, target_back_callback_query, target_confirm_callback_query,

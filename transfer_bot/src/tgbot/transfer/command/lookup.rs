@@ -18,6 +18,16 @@ use super::{
     build_job_stop_button_data, build_menu_home_button_data,
 };
 
+const LOOKUP_CALLBACK_PREFIX: &str = "lk:";
+
+pub(super) fn is_lookup_callback_data(data: &str) -> bool {
+    data.starts_with(LOOKUP_CALLBACK_PREFIX)
+}
+
+fn build_lookup_retry_transfer_callback_data() -> String {
+    format!("{LOOKUP_CALLBACK_PREFIX}rt")
+}
+
 /// 在指定上下文上执行 `/lookup`。
 pub async fn lookup_command_on(
     app: &crate::app_context::AppContext,
@@ -40,8 +50,6 @@ pub async fn lookup_command_on(
         target_chat_id,
         "lookup command started"
     );
-    let transfer_command = build_transfer_command(&source_link, target_chat_id, CommandStyle::Long);
-
     if let Some(job) =
         store::find_success_job_by_source_target(&source_link, target_chat_id, actor.owner_scope())
             .await?
@@ -158,13 +166,23 @@ pub async fn lookup_command_on(
         target_chat_id,
         "lookup command missed"
     );
-    send::ReplyPanel::card(format_lookup_miss_text(&source_link, target_chat_id))
-        .rows(build_lookup_miss_button_rows(
-            &transfer_command,
-            &source_link,
-        ))
-        .send(actor.request_chat_id, client_id)
-        .await
+    let sent = send::send_card_message_with_buttons_returning(
+        format_lookup_miss_text(&source_link, target_chat_id),
+        actor.request_chat_id,
+        build_lookup_miss_button_rows(&source_link),
+        client_id,
+    )
+    .await?;
+    app.lookup_retry.put_context(
+        actor.request_chat_id,
+        actor.user_id,
+        sent.id,
+        crate::app_context::LookupRetryContext {
+            source_link,
+            target_chat_id,
+        },
+    );
+    Ok(())
 }
 
 /// 构建 lookup 命中成功结果时的导航按钮。
@@ -195,16 +213,13 @@ fn build_lookup_success_navigation_buttons(
 
 /// 构建 lookup 未命中时的按钮。
 ///
-/// 这里没有已存在的任务可 callback 执行，因此只保留真正需要用户复制的数据和重发命令。
-fn build_lookup_miss_button_rows(
-    transfer_command: &str,
-    source_link: &str,
-) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+/// “重新转存”通过短 callback + 进程内上下文触发，避免把长链接塞进 callback_data。
+fn build_lookup_miss_button_rows(source_link: &str) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
         vec![
-            send::build_copy_button(
-                "复制转存命令",
-                transfer_command,
+            send::build_callback_button(
+                "重新转存",
+                &build_lookup_retry_transfer_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             send::build_callback_button(
@@ -219,6 +234,69 @@ fn build_lookup_miss_button_rows(
             tdlib_rs::enums::ButtonStyle::Default,
         )],
     ]
+}
+
+pub async fn lookup_callback_query_on(
+    app: &crate::app_context::AppContext,
+    update: tdlib_rs::types::UpdateNewCallbackQuery,
+    config: Arc<BotConfig>,
+    actor: crate::config::RequestActor,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let payload = match update.payload {
+        tdlib_rs::enums::CallbackQueryPayload::Data(data) => data.data,
+        _ => {
+            send::answer_callback_query(update.id, Some("暂不支持这种按钮类型"), client_id).await?;
+            return Ok(());
+        }
+    };
+    if payload != build_lookup_retry_transfer_callback_data() {
+        send::answer_callback_query(update.id, Some("查询按钮参数无效"), client_id).await?;
+        return Ok(());
+    }
+
+    let Some(context) =
+        app.lookup_retry
+            .take_context(update.chat_id, update.sender_user_id, update.message_id)
+    else {
+        send::answer_callback_query(update.id, Some("重试入口已失效"), client_id).await?;
+        send::ReplyPanel::card(super::menu::build_menu_recovery_text_for_outer(
+            "重新转存入口已失效",
+            "expired",
+            "请重新发送 /lookup，或直接发送 /transfer 发起新任务。",
+        ))
+        .row(vec![send::build_callback_button(
+            "菜单",
+            &build_menu_home_button_data(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        )])
+        .send(update.chat_id, client_id)
+        .await?;
+        return Ok(());
+    };
+
+    send::answer_callback_query(update.id, Some("开始重新转存"), client_id).await?;
+    super::menu::discard_menu_input_for_command(
+        update.chat_id,
+        update.sender_user_id,
+        client_id,
+    )
+    .await?;
+    let target = context.target_chat_id.to_string();
+    super::transfer_cmd::transfer_link_command_on(
+        Arc::new(app.clone()),
+        vec![
+            "/transfer",
+            context.source_link.as_str(),
+            target.as_str(),
+        ],
+        config,
+        update.chat_id,
+        update.message_id,
+        actor,
+        client_id,
+    )
+    .await
 }
 
 /// 构建 lookup 命中进行中任务时的直接控制按钮。
@@ -330,7 +408,7 @@ mod tests {
     use super::{
         build_lookup_active_control_buttons, build_lookup_miss_button_rows,
         build_lookup_success_navigation_buttons, format_lookup_active_text,
-        format_lookup_miss_text,
+        format_lookup_miss_text, is_lookup_callback_data,
     };
 
     // lookup 命中运行中任务时应使用 card 标记，避免 Markdown 原文泄露到消息里。
@@ -397,19 +475,22 @@ mod tests {
     // lookup 未命中时没有可执行 callback，只保留发起转存和源链接这两个必要复制入口。
     #[test]
     fn test_build_lookup_miss_button_rows_keep_only_needed_copy_buttons() {
-        let rows = build_lookup_miss_button_rows(
-            "/transfer https://t.me/c/1/2 -100",
-            "https://t.me/c/1/2",
-        );
+        let rows = build_lookup_miss_button_rows("https://t.me/c/1/2");
         let labels = rows
             .iter()
             .flatten()
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        assert!(labels.contains(&"复制转存命令"));
+        assert!(labels.contains(&"重新转存"));
         assert!(labels.contains(&"复制源链接"));
         assert!(labels.contains(&"菜单"));
         assert!(!labels.contains(&"复制查询命令"));
+    }
+
+    #[test]
+    fn test_lookup_retry_callback_prefix() {
+        assert!(is_lookup_callback_data("lk:rt"));
+        assert!(!is_lookup_callback_data("l:rt"));
     }
 }

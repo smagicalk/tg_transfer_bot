@@ -16,7 +16,8 @@ use crate::tgbot::send;
 
 use self::admin::{
     AdminCommandKind, admin_command_kind, parse_admin_input_payload, run_existing_acl_command,
-    run_existing_billing_command, run_existing_config_command, run_existing_targets_command,
+    run_existing_billing_command, run_existing_config_command, run_existing_points_command,
+    run_existing_targets_command,
 };
 pub(in crate::tgbot::transfer::command::menu) use self::flow_callbacks::handle_shared_chat_input_on;
 use self::flow_callbacks::{FlowRequestContext, continue_flow_input_on, handle_flow_input};
@@ -27,7 +28,8 @@ use self::simple::{
 use super::text::{build_menu_recovery_text, build_step_prompt_text};
 pub(super) use callbacks::{
     admin_input_callback_query, cancel_input_callback_query, job_id_input_callback_query,
-    point_ledger_user_input_callback_query, target_alias_callback_query,
+    point_ledger_user_input_callback_query, points_adjust_input_callback_query,
+    target_alias_callback_query,
     target_back_callback_query, target_confirm_callback_query, target_default_callback_query,
     target_manual_callback_query, target_request_chat_callback_query,
 };
@@ -164,6 +166,18 @@ pub(super) async fn continue_current_input_on(
                 ),
                 chat_id,
                 "输入 Telegram user_id，或发送 /cancel",
+                client_id,
+            )
+            .await?;
+        }
+        MenuInputStep::PointsAdjust {
+            action,
+            target_user_id: _,
+        } => {
+            send::send_card_message_with_force_reply_returning(
+                build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
+                chat_id,
+                action.input_placeholder(),
                 client_id,
             )
             .await?;
@@ -327,7 +341,7 @@ pub(super) async fn handle_menu_input_on(
                 admin_action = action.log_name(),
                 "menu input admin action received"
             );
-            let Some(command_owned) = parse_admin_input_payload(action, input) else {
+            let Some(command_owned) = parse_admin_input_payload(action, input, None) else {
                 put_draft(key, MenuInputDraft::admin_input(action)).await?;
                 tracing::debug!(
                     request_chat_id,
@@ -369,6 +383,9 @@ pub(super) async fn handle_menu_input_on(
                 Some(AdminCommandKind::Billing) => {
                     run_existing_billing_command(app, command_owned, request_chat_id, client_id)
                         .await?;
+                }
+                Some(AdminCommandKind::Points) => {
+                    run_existing_points_command(command_owned, actor, client_id).await?;
                 }
                 None => anyhow::bail!("unsupported admin input action: {}", action.log_name()),
             }
@@ -463,6 +480,27 @@ pub(super) async fn handle_menu_input_on(
             run_existing_points_history_command(user_id, actor, client_id).await?;
             Ok(true)
         }
+        MenuInputStep::PointsAdjust {
+            action,
+            target_user_id,
+        } => {
+            let Some(command_owned) =
+                parse_admin_input_payload(action, input, Some(target_user_id))
+            else {
+                put_draft(key, MenuInputDraft::points_adjust(action, target_user_id)).await?;
+                send::send_card_message_with_force_reply_returning(
+                    build_step_prompt_text("1/1", "输入格式不正确", action.input_detail()),
+                    request_chat_id,
+                    action.input_placeholder(),
+                    client_id,
+                )
+                .await?;
+                return Ok(true);
+            };
+
+            run_existing_points_command(command_owned, actor, client_id).await?;
+            Ok(true)
+        }
         MenuInputStep::SourceLink { .. }
         | MenuInputStep::TargetChoice { .. }
         | MenuInputStep::TargetChat { .. }
@@ -523,7 +561,7 @@ mod tests {
 
         assert!(text.contains("输入已过期"));
         assert!(text.contains("状态：‹expired›"));
-        assert!(text.contains("返回菜单：‹/menu›"));
+        assert!(text.contains("菜单：‹/menu›"));
     }
 
     // continue 输入的流程草稿若意外落到本层，也应继续走流程提示，而不是 panic。

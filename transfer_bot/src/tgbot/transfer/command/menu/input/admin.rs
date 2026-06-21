@@ -7,7 +7,7 @@ use crate::tgbot::transfer::command::billing::{
 };
 use crate::tgbot::transfer::command::config_cmd::config_field_spec_for_admin_action;
 use crate::tgbot::transfer::command::targets::targets_input_spec_for_admin_action;
-use crate::tgbot::transfer::command::{acl, billing, config_cmd, targets};
+use crate::tgbot::transfer::command::{acl, billing, config_cmd, points, targets};
 
 use super::state::AdminInputAction;
 
@@ -18,6 +18,7 @@ pub(super) enum AdminCommandKind {
     Acl,
     Billing,
     Config,
+    Points,
 }
 
 /// 根据规格反查输入动作所属命令，避免主输入流程维护重复 action 分类。
@@ -36,6 +37,12 @@ pub(super) fn admin_command_kind(action: AdminInputAction) -> Option<AdminComman
     if config_field_spec_for_admin_action(action).is_some() {
         return Some(AdminCommandKind::Config);
     }
+    if matches!(
+        action,
+        AdminInputAction::PointsAddUser | AdminInputAction::PointsSubUser
+    ) {
+        return Some(AdminCommandKind::Points);
+    }
     None
 }
 
@@ -43,6 +50,7 @@ pub(super) fn admin_command_kind(action: AdminInputAction) -> Option<AdminComman
 pub(super) fn parse_admin_input_payload(
     action: AdminInputAction,
     input: &str,
+    points_target_user_id: Option<i64>,
 ) -> Option<Vec<String>> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -125,6 +133,27 @@ pub(super) fn parse_admin_input_payload(
                 trimmed.to_owned(),
             ])
         }
+        AdminInputAction::PointsAddUser | AdminInputAction::PointsSubUser => {
+            let mut parts = trimmed.split_whitespace();
+            let amount = parts.next()?.to_owned();
+            let reason = parts.next().unwrap_or("admin_adjust").to_owned();
+            if parts.next().is_some() {
+                return None;
+            }
+            let target_user_id = points_target_user_id?;
+            let action_name = match action {
+                AdminInputAction::PointsAddUser => "add",
+                AdminInputAction::PointsSubUser => "sub",
+                _ => unreachable!("checked in outer match"),
+            };
+            Some(vec![
+                "/points".to_owned(),
+                action_name.to_owned(),
+                target_user_id.to_string(),
+                amount,
+                reason,
+            ])
+        }
     }
 }
 
@@ -172,6 +201,15 @@ pub(super) async fn run_existing_config_command(
     config_cmd::config_command_on(app, command_refs, request_chat_id, client_id).await
 }
 
+pub(super) async fn run_existing_points_command(
+    command_owned: Vec<String>,
+    actor: crate::config::RequestActor,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
+    points::points_command(command_refs, actor, client_id).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,7 +217,7 @@ mod tests {
     #[test]
     fn test_parse_admin_input_payload_targets() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::TargetsSetDefault, "-100123"),
+            parse_admin_input_payload(AdminInputAction::TargetsSetDefault, "-100123", None),
             Some(vec![
                 "/targets".to_owned(),
                 "set-default".to_owned(),
@@ -187,7 +225,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::TargetsSetRoute, "1 -100123"),
+            parse_admin_input_payload(AdminInputAction::TargetsSetRoute, "1 -100123", None),
             Some(vec![
                 "/targets".to_owned(),
                 "set-route".to_owned(),
@@ -196,7 +234,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::TargetsSetAlias, "archive -100123"),
+            parse_admin_input_payload(AdminInputAction::TargetsSetAlias, "archive -100123", None),
             Some(vec![
                 "/targets".to_owned(),
                 "set-alias".to_owned(),
@@ -209,7 +247,7 @@ mod tests {
     #[test]
     fn test_parse_admin_input_payload_acl() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::AclAddAdmin, "123456"),
+            parse_admin_input_payload(AdminInputAction::AclAddAdmin, "123456", None),
             Some(vec![
                 "/acl".to_owned(),
                 "add-admin".to_owned(),
@@ -217,7 +255,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::AclAddAllowTarget, "-100123"),
+            parse_admin_input_payload(AdminInputAction::AclAddAllowTarget, "-100123", None),
             Some(vec![
                 "/acl".to_owned(),
                 "add-allow-target".to_owned(),
@@ -229,7 +267,7 @@ mod tests {
     #[test]
     fn test_parse_admin_input_payload_billing() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::BillingSetBaseCost, "2"),
+            parse_admin_input_payload(AdminInputAction::BillingSetBaseCost, "2", None),
             Some(vec![
                 "/billing".to_owned(),
                 "set".to_owned(),
@@ -238,7 +276,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::BillingSetAnnouncement, "hello world"),
+            parse_admin_input_payload(AdminInputAction::BillingSetAnnouncement, "hello world", None),
             Some(vec![
                 "/billing".to_owned(),
                 "set".to_owned(),
@@ -251,7 +289,7 @@ mod tests {
     #[test]
     fn test_parse_admin_input_payload_config() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::ConfigSetJobConcurrency, "4"),
+            parse_admin_input_payload(AdminInputAction::ConfigSetJobConcurrency, "4", None),
             Some(vec![
                 "/config".to_owned(),
                 "set".to_owned(),
@@ -260,7 +298,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::ConfigSetMenuInputTimeoutSeconds, "900"),
+            parse_admin_input_payload(AdminInputAction::ConfigSetMenuInputTimeoutSeconds, "900", None),
             Some(vec![
                 "/config".to_owned(),
                 "set".to_owned(),
@@ -271,13 +309,37 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_admin_input_payload_points() {
+        assert_eq!(
+            parse_admin_input_payload(AdminInputAction::PointsAddUser, "10 bonus", Some(42)),
+            Some(vec![
+                "/points".to_owned(),
+                "add".to_owned(),
+                "42".to_owned(),
+                "10".to_owned(),
+                "bonus".to_owned(),
+            ])
+        );
+        assert_eq!(
+            parse_admin_input_payload(AdminInputAction::PointsSubUser, "5", Some(42)),
+            Some(vec![
+                "/points".to_owned(),
+                "sub".to_owned(),
+                "42".to_owned(),
+                "5".to_owned(),
+                "admin_adjust".to_owned(),
+            ])
+        );
+    }
+
+    #[test]
     fn test_parse_admin_input_payload_rejects_wrong_arity() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::TargetsSetRoute, "1"),
+            parse_admin_input_payload(AdminInputAction::TargetsSetRoute, "1", None),
             None
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::AclAddAdmin, "1 2"),
+            parse_admin_input_payload(AdminInputAction::AclAddAdmin, "1 2", None),
             None
         );
     }

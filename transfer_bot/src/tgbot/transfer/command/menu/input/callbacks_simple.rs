@@ -156,6 +156,47 @@ pub(in crate::tgbot::transfer::command::menu) async fn point_ledger_user_input_c
     Ok(())
 }
 
+pub(in crate::tgbot::transfer::command::menu) async fn points_adjust_input_callback_query(
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    action: AdminInputAction,
+    target_user_id: i64,
+    actor: crate::config::RequestActor,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    if !actor.is_admin() {
+        send::answer_callback_query(callback_query_id, Some("没有权限调整积分"), client_id)
+            .await?;
+        return Ok(());
+    }
+
+    put_draft(
+        (chat_id, sender_user_id),
+        MenuInputDraft::points_adjust(action, target_user_id),
+    )
+    .await?;
+    send::answer_callback_query(callback_query_id, Some("请输入积分和理由"), client_id).await?;
+    super::callbacks_target::edit_input_waiting_card(
+        chat_id,
+        message_id,
+        client_id,
+        "1/1",
+        action.input_title(),
+        action.input_detail(),
+    )
+    .await;
+    send::send_card_message_with_force_reply_returning(
+        build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
+        chat_id,
+        action.input_placeholder(),
+        client_id,
+    )
+    .await?;
+    Ok(())
+}
+
 /// 处理管理配置页里的“输入参数”按钮。
 ///
 /// 这里只启动输入草稿，不直接更新数据库；用户回复后会复用 `/targets`、`/acl`、`/billing`
