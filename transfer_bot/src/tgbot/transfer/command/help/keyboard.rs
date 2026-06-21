@@ -2,15 +2,25 @@
 // 详情页主要保留“复制完整示例”和页面切换，避免把短别名再次暴露给用户。
 
 use super::super::common::{
-    CommandStyle, balance_command, balance_history_command, build_copy_only_row,
-    build_refresh_return_menu_row, build_return_menu_row, build_runtime_admin_help_copy_rows,
-    cache_command, downloads_command, health_command, help_command as help_command_text,
-    job_command, points_change_command, points_history_command, points_show_command,
+    CommandStyle, balance_command, balance_history_command, build_copy_button_rows,
+    build_copy_only_row, build_refresh_return_menu_row, build_return_menu_row,
+    build_runtime_admin_help_copy_rows, cache_command, downloads_command, health_command,
+    help_command as help_command_text, job_command, points_change_command,
+    points_history_command, points_show_command,
 };
-use super::super::menu::build_menu_home_callback_data;
+use super::super::menu::{
+    build_menu_home_callback_data, build_menu_new_lookup_callback_data,
+    build_menu_new_transfer_callback_data, build_menu_quick_lookup_default_callback_data,
+    build_menu_quick_transfer_default_callback_data, build_menu_job_pause_input_button_data,
+    build_menu_job_resume_input_button_data, build_menu_job_status_input_button_data,
+    build_menu_job_stop_input_button_data, build_menu_point_ledger_input_button_data,
+};
 use super::super::{
     acl::acl_help_descriptor, billing::billing_help_descriptor, config_cmd::config_help_descriptor,
     targets::targets_help_descriptor,
+};
+use crate::tgbot::transfer::command::{
+    build_cache_button_data, build_downloads_filter_button_data, build_health_button_data,
 };
 use super::topic::normalize_help_topic;
 use crate::tgbot::send;
@@ -41,6 +51,11 @@ pub(super) fn parse_help_callback_data(data: &str) -> Option<Option<&str>> {
 pub(super) fn build_help_index_buttons(
     is_admin: bool,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let balance_history_copy = send::build_copy_button(
+        "复制流水",
+        &balance_history_command(10, 1, CommandStyle::Long),
+        tdlib_rs::enums::ButtonStyle::Default,
+    );
     let mut rows = vec![
         vec![
             help_nav_button("转存", "transfer", tdlib_rs::enums::ButtonStyle::Primary),
@@ -65,11 +80,7 @@ pub(super) fn build_help_index_buttons(
             help_nav_button("帮助说明", "help", tdlib_rs::enums::ButtonStyle::Default),
             menu_home_button(),
         ),
-        build_copy_only_row(send::build_copy_button(
-            "复制流水",
-            &balance_history_command(10, 1, CommandStyle::Long),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )),
+        build_copy_only_row(balance_history_copy.clone()),
     ];
 
     if is_admin {
@@ -89,7 +100,9 @@ pub(super) fn build_help_index_buttons(
                 help_nav_button("计费配置", "billing", tdlib_rs::enums::ButtonStyle::Default),
             ],
         );
-        rows.push(vec![
+        rows.pop();
+        rows.extend(build_copy_button_rows(vec![
+            balance_history_copy,
             send::build_copy_button(
                 "复制 /health",
                 &health_command(CommandStyle::Long),
@@ -100,17 +113,17 @@ pub(super) fn build_help_index_buttons(
                 "/config reset",
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-        ]);
-        rows.push(vec![send::build_copy_button(
-            "复制 /config show",
-            "/config show",
-            tdlib_rs::enums::ButtonStyle::Default,
-        )]);
-        rows.push(build_copy_only_row(send::build_copy_button(
-            "复制 /cache",
-            &cache_command(None, None, None, CommandStyle::Long),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )));
+            send::build_copy_button(
+                "复制 /config show",
+                "/config show",
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_copy_button(
+                "复制 /cache",
+                &cache_command(None, None, None, CommandStyle::Long),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ]));
     }
 
     rows
@@ -132,48 +145,111 @@ pub(super) fn build_help_detail_buttons(
             build_return_menu_row(help_index_button(), menu_home_button()),
         ],
         "transfer" => vec![
+            vec![
+                send::build_callback_button(
+                    "开始转存",
+                    &build_menu_new_transfer_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_callback_button(
+                    "快速转存",
+                    &build_menu_quick_transfer_default_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
             build_copy_only_row(send::build_copy_button(
-                "复制命令",
+                "复制示例",
                 "/transfer https://t.me/c/123/456",
                 tdlib_rs::enums::ButtonStyle::Primary,
             )),
             build_return_menu_row(help_index_button(), menu_home_button()),
         ],
         "lookup" => vec![
+            vec![
+                send::build_callback_button(
+                    "指定目标",
+                    &build_menu_new_lookup_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_callback_button(
+                    "快速查询",
+                    &build_menu_quick_lookup_default_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
             build_copy_only_row(send::build_copy_button(
-                "复制命令",
+                "复制示例",
                 "/lookup https://t.me/c/123/456",
                 tdlib_rs::enums::ButtonStyle::Primary,
             )),
             build_return_menu_row(help_index_button(), menu_home_button()),
         ],
         "points" => {
-            let mut rows = vec![
-                build_copy_only_row(send::build_copy_button(
+            let mut rows = vec![vec![
+                send::build_callback_button(
+                    "查看余额",
+                    &crate::tgbot::transfer::build_balance_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_callback_button(
+                    "查看流水",
+                    &crate::tgbot::transfer::command::points::build_balance_history_home_callback_data(
+                        10, 1,
+                    ),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ]];
+            if is_admin {
+                rows.push(vec![
+                    send::build_callback_button(
+                        "用户流水",
+                        &build_menu_point_ledger_input_button_data(),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                    send::build_callback_button(
+                        "加分",
+                        &crate::tgbot::transfer::command::points::build_points_adjust_home_callback_data(
+                            123456789,
+                            true,
+                        ),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                    send::build_callback_button(
+                        "扣分",
+                        &crate::tgbot::transfer::command::points::build_points_adjust_home_callback_data(
+                            123456789,
+                            false,
+                        ),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                ]);
+            }
+            let mut buttons = vec![
+                send::build_copy_button(
                     "复制 /balance",
                     &balance_command(CommandStyle::Long),
                     tdlib_rs::enums::ButtonStyle::Primary,
-                )),
-                build_copy_only_row(send::build_copy_button(
+                ),
+                send::build_copy_button(
                     "复制账户流水",
                     &balance_history_command(10, 1, CommandStyle::Long),
                     tdlib_rs::enums::ButtonStyle::Default,
-                )),
+                ),
             ];
             if is_admin {
-                rows.extend([
-                    build_copy_only_row(send::build_copy_button(
-                        "复制查看余额",
+                buttons.extend([
+                    send::build_copy_button(
+                        "复制余额查询",
                         &points_show_command(123456789, CommandStyle::Long),
                         tdlib_rs::enums::ButtonStyle::Default,
-                    )),
-                    build_copy_only_row(send::build_copy_button(
+                    ),
+                    send::build_copy_button(
                         "复制用户流水",
                         &points_history_command(123456789, 10, 1, CommandStyle::Long),
                         tdlib_rs::enums::ButtonStyle::Default,
-                    )),
-                    build_copy_only_row(send::build_copy_button(
-                        "复制加分命令",
+                    ),
+                    send::build_copy_button(
+                        "复制加分",
                         &points_change_command(
                             "add",
                             123456789,
@@ -182,9 +258,9 @@ pub(super) fn build_help_detail_buttons(
                             CommandStyle::Long,
                         ),
                         tdlib_rs::enums::ButtonStyle::Default,
-                    )),
-                    build_copy_only_row(send::build_copy_button(
-                        "复制扣分命令",
+                    ),
+                    send::build_copy_button(
+                        "复制扣分",
                         &points_change_command(
                             "sub",
                             123456789,
@@ -193,36 +269,65 @@ pub(super) fn build_help_detail_buttons(
                             CommandStyle::Long,
                         ),
                         tdlib_rs::enums::ButtonStyle::Default,
-                    )),
+                    ),
                 ]);
             }
-            rows.push(build_return_menu_row(
-                help_index_button(),
-                menu_home_button(),
-            ));
+            rows.extend(build_copy_button_rows(buttons));
+            rows.push(build_return_menu_row(help_index_button(), menu_home_button()));
             rows
         }
         "health" => vec![
+            vec![
+                send::build_callback_button(
+                    "打开健康页",
+                    &build_health_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_callback_button(
+                    "文件缓存",
+                    &build_cache_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
             build_copy_only_row(send::build_copy_button(
                 "复制 /health",
                 &health_command(CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            )),
-            build_return_menu_row(help_index_button(), menu_home_button()),
-        ],
-        "cache" => vec![
-            build_copy_only_row(send::build_copy_button(
-                "复制 /cache",
-                &cache_command(None, None, None, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制分页命令",
-                &cache_command(Some("page"), None, None, CommandStyle::Long),
                 tdlib_rs::enums::ButtonStyle::Default,
             )),
             build_return_menu_row(help_index_button(), menu_home_button()),
         ],
+        "cache" => vec![
+            vec![
+                send::build_callback_button(
+                    "打开缓存页",
+                    &build_cache_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_callback_button(
+                    "运行健康",
+                    &build_health_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
+            build_copy_button_rows(vec![
+                send::build_copy_button(
+                    "复制 /cache",
+                    &cache_command(None, None, None, CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制分页命令",
+                    &cache_command(Some("page"), None, None, CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ])
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
+            build_return_menu_row(help_index_button(), menu_home_button()),
+        ]
+        .into_iter()
+        .collect(),
         "config" => [
             build_runtime_admin_help_copy_rows(&config_help_descriptor()),
             vec![build_return_menu_row(
@@ -256,39 +361,93 @@ pub(super) fn build_help_detail_buttons(
         ]
         .concat(),
         "downloads" => vec![
-            build_copy_only_row(send::build_copy_button(
-                "复制 /downloads",
-                &downloads_command(None, None, None, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制运行列表",
-                &downloads_command(Some("run"), None, None, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
+            vec![
+                send::build_callback_button(
+                    "全部列表",
+                    &build_downloads_filter_button_data("all", 8)
+                        .expect("all downloads filter should exist"),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_callback_button(
+                    "运行列表",
+                    &build_downloads_filter_button_data("run", 8)
+                        .expect("run downloads filter should exist"),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_callback_button(
+                    "失败列表",
+                    &build_downloads_filter_button_data("fail", 8)
+                        .expect("fail downloads filter should exist"),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
+            build_copy_button_rows(vec![
+                send::build_copy_button(
+                    "复制 /downloads",
+                    &downloads_command(None, None, None, CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制运行列表",
+                    &downloads_command(Some("run"), None, None, CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ])
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
             build_return_menu_row(help_index_button(), menu_home_button()),
         ],
         "job" => vec![
-            build_copy_only_row(send::build_copy_button(
-                "复制暂停命令",
-                &job_command("pause", 123, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制恢复命令",
-                &job_command("resume", 123, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制停止命令",
-                &job_command("stop", 123, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
-            build_copy_only_row(send::build_copy_button(
-                "复制详情命令",
-                &job_command("status", 123, CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )),
+            vec![
+                send::build_callback_button(
+                    "输入详情",
+                    &build_menu_job_status_input_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                ),
+                send::build_callback_button(
+                    "输入暂停",
+                    &build_menu_job_pause_input_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
+            vec![
+                send::build_callback_button(
+                    "输入恢复",
+                    &build_menu_job_resume_input_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_callback_button(
+                    "输入停止",
+                    &build_menu_job_stop_input_button_data(),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ],
+            build_copy_button_rows(vec![
+                send::build_copy_button(
+                    "复制暂停命令",
+                    &job_command("pause", 123, CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制恢复命令",
+                    &job_command("resume", 123, CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制停止命令",
+                    &job_command("stop", 123, CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+                send::build_copy_button(
+                    "复制详情命令",
+                    &job_command("status", 123, CommandStyle::Long),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                ),
+            ])
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
             build_return_menu_row(help_index_button(), menu_home_button()),
         ],
         "menu" => vec![build_return_menu_row(
@@ -345,12 +504,36 @@ mod tests {
     fn test_help_detail_buttons_use_single_copy_rows() -> anyhow::Result<()> {
         let rows = build_help_detail_buttons("job", true)?;
 
-        assert_eq!(rows[0][0].text, "复制暂停命令");
-        assert_eq!(rows[1][0].text, "复制恢复命令");
-        assert_eq!(rows[2][0].text, "复制停止命令");
-        assert_eq!(rows[3][0].text, "复制详情命令");
-        assert_eq!(rows[4][0].text, "返回目录");
-        assert_eq!(rows[4][1].text, "菜单");
+        assert_eq!(rows[0][0].text, "输入详情");
+        assert_eq!(rows[0][1].text, "输入暂停");
+        assert_eq!(rows[1][0].text, "输入恢复");
+        assert_eq!(rows[1][1].text, "输入停止");
+        assert_eq!(rows[2][0].text, "复制暂停命令");
+        assert_eq!(rows[2][1].text, "复制恢复命令");
+        assert_eq!(rows[2][2].text, "复制停止命令");
+        assert_eq!(rows[2][3].text, "复制详情命令");
+        assert_eq!(rows[3][0].text, "返回目录");
+        assert_eq!(rows[3][1].text, "菜单");
+        Ok(())
+    }
+
+    #[test]
+    fn test_help_points_detail_buttons_group_copy_buttons_by_two() -> anyhow::Result<()> {
+        let rows = build_help_detail_buttons("points", true)?;
+
+        assert_eq!(rows[0][0].text, "查看余额");
+        assert_eq!(rows[0][1].text, "查看流水");
+        assert_eq!(rows[1][0].text, "用户流水");
+        assert_eq!(rows[1][1].text, "加分");
+        assert_eq!(rows[1][2].text, "扣分");
+        assert_eq!(rows[2][0].text, "复制 /balance");
+        assert_eq!(rows[2][1].text, "复制账户流水");
+        assert_eq!(rows[3][0].text, "复制余额查询");
+        assert_eq!(rows[3][1].text, "复制用户流水");
+        assert_eq!(rows[4][0].text, "复制加分");
+        assert_eq!(rows[4][1].text, "复制扣分");
+        assert_eq!(rows[5][0].text, "返回目录");
+        assert_eq!(rows[5][1].text, "菜单");
         Ok(())
     }
 

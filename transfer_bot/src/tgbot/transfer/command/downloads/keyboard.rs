@@ -2,7 +2,7 @@
 // 回调数据保持短格式，避免 Telegram callback payload 过长。
 
 use super::super::common::{
-    CommandStyle, build_copy_only_row, build_refresh_return_menu_row,
+    CommandStyle, build_refresh_return_menu_row,
     downloads_command as build_command,
 };
 use super::super::job::{
@@ -127,8 +127,6 @@ pub(super) fn build_downloads_keyboard(
     total_pages: u64,
     page_items: &[store::JobProgressSnapshot],
 ) -> tdlib_rs::types::ReplyMarkupInlineKeyboard {
-    let current_command =
-        build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short);
     let first_page = 1u64;
     let prev_page = args.page.saturating_sub(1).max(1);
     let next_page = (args.page + 1).min(total_pages);
@@ -156,31 +154,16 @@ pub(super) fn build_downloads_keyboard(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ));
-    rows.push(build_copy_only_row(send::build_copy_button(
-        "复制当前命令",
-        &current_command,
-        tdlib_rs::enums::ButtonStyle::Default,
-    )));
     rows.push(vec![
-        build_navigation_button("首页", args, first_page, current_command.clone()),
-        build_navigation_button("上页", args, prev_page, current_command.clone()),
+        build_navigation_button("首页", args, first_page),
+        build_navigation_button("上页", args, prev_page),
         build_callback_button(
             &format!("{}/{}", args.page, total_pages),
             &build_downloads_refresh_callback_data(args),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
-        build_navigation_button(
-            "下页",
-            args,
-            next_page,
-            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
-        ),
-        build_navigation_button(
-            "末页",
-            args,
-            last_page,
-            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
-        ),
+        build_navigation_button("下页", args, next_page),
+        build_navigation_button("末页", args, last_page),
     ]);
 
     tdlib_rs::types::ReplyMarkupInlineKeyboard { rows }
@@ -333,7 +316,6 @@ fn build_navigation_button(
     text: &str,
     args: &DownloadsArgs,
     target_page: u64,
-    _fallback_command: String,
 ) -> tdlib_rs::types::InlineKeyboardButton {
     let callback_data = if target_page == args.page {
         build_downloads_refresh_callback_data(args)

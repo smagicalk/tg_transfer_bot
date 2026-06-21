@@ -323,7 +323,7 @@ fn test_build_downloads_keyboard_current_page_is_refresh_callback() {
         page: 2,
     };
     let keyboard = build_downloads_keyboard(&args, 4, &[]);
-    let current = &keyboard.rows[6][2];
+    let current = &keyboard.rows[5][2];
     assert_eq!(current.text, "2/4");
     assert!(matches!(
         current.r#type,
@@ -342,7 +342,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
         page: 1,
     };
     let keyboard = build_downloads_keyboard(&args, 3, &[]);
-    let next = &keyboard.rows[6][3];
+    let next = &keyboard.rows[5][3];
 
     let data = match &next.r#type {
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
@@ -352,7 +352,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
     assert_eq!(decoded, "d:p:run:8:2");
 }
 
-// 列表页把“刷新 / 返回 / 菜单”单独放一行，复制命令再单独一行。
+// 列表页把“刷新 / 返回 / 菜单”单独放一行，分页单独放一行。
 #[test]
 fn test_build_downloads_keyboard_has_refresh_row() {
     let args = DownloadsArgs {
@@ -362,7 +362,7 @@ fn test_build_downloads_keyboard_has_refresh_row() {
     };
     let keyboard = build_downloads_keyboard(&args, 2, &[]);
 
-    assert_eq!(keyboard.rows.len(), 7);
+    assert_eq!(keyboard.rows.len(), 6);
     assert_eq!(keyboard.rows[4][0].text, "刷新");
     assert!(matches!(
         keyboard.rows[4][0].r#type,
@@ -374,7 +374,8 @@ fn test_build_downloads_keyboard_has_refresh_row() {
         keyboard.rows[4][2].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[5][0].text, "复制当前命令");
+    assert_eq!(keyboard.rows[5][0].text, "首页");
+    assert_eq!(keyboard.rows[5][4].text, "末页");
 }
 
 // 主操作区中的筛选按钮仍保留多行，分页单独放在最后一行。
@@ -406,8 +407,8 @@ fn test_build_downloads_keyboard_has_filter_row() {
     assert_eq!(keyboard.rows[3][0].text, "暂停");
     assert_eq!(keyboard.rows[3][1].text, "停止中");
     assert_eq!(keyboard.rows[3][2].text, "已停止");
-    assert_eq!(keyboard.rows[6][0].text, "首页");
-    assert_eq!(keyboard.rows[6][4].text, "末页");
+    assert_eq!(keyboard.rows[5][0].text, "首页");
+    assert_eq!(keyboard.rows[5][4].text, "末页");
 }
 
 // 构造最小任务快照，专门用于筛选器测试。

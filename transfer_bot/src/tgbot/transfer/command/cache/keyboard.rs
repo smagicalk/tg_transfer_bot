@@ -2,10 +2,7 @@
 
 use crate::tgbot::send;
 
-use super::super::common::{
-    CommandStyle, build_copy_only_row, build_refresh_return_menu_row,
-    cache_command as build_cache_command,
-};
+use super::super::common::build_refresh_return_menu_row;
 use super::types::{CacheArgs, CacheView};
 
 /// `/cache` callback 前缀。
@@ -102,28 +99,10 @@ pub(super) fn build_cache_keyboard(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ));
-    rows.push(build_copy_only_row(send::build_copy_button(
-        "复制当前命令",
-        &build_cache_page_command(args),
-        tdlib_rs::enums::ButtonStyle::Default,
-    )));
     if let Some(row) = pagination_row {
         rows.push(row);
     }
     tdlib_rs::types::ReplyMarkupInlineKeyboard { rows }
-}
-
-/// 生成当前缓存页对应的可复制命令。
-fn build_cache_page_command(args: &CacheArgs) -> String {
-    match args.view {
-        CacheView::Summary => build_cache_command(Some("summary"), None, None, CommandStyle::Long),
-        CacheView::Page => build_cache_command(
-            Some("page"),
-            Some(args.limit),
-            Some(args.page),
-            CommandStyle::Long,
-        ),
-    }
 }
 
 /// 构建分页导航按钮。

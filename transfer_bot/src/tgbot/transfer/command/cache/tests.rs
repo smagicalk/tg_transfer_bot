@@ -60,14 +60,14 @@ fn test_cache_keyboard_boundary_navigation_is_callback_button() {
         1,
     );
 
-    assert_eq!(keyboard.rows[3][0].text, "首页");
-    assert_eq!(keyboard.rows[3][1].text, "上页");
-    assert_eq!(keyboard.rows[3][3].text, "下页");
-    assert_eq!(keyboard.rows[3][4].text, "末页");
+    assert_eq!(keyboard.rows[2][0].text, "首页");
+    assert_eq!(keyboard.rows[2][1].text, "上页");
+    assert_eq!(keyboard.rows[2][3].text, "下页");
+    assert_eq!(keyboard.rows[2][4].text, "末页");
     for index in [0, 1, 3, 4] {
         assert!(
             matches!(
-                keyboard.rows[3][index].r#type,
+                keyboard.rows[2][index].r#type,
                 tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
             ),
             "cache boundary button should keep callback refresh behavior"
@@ -90,7 +90,7 @@ fn test_cache_keyboard_follow_row_hierarchy() {
     assert_eq!(keyboard.rows[1][0].text, "刷新");
     assert_eq!(keyboard.rows[1][1].text, "健康");
     assert_eq!(keyboard.rows[1][2].text, "菜单");
-    assert_eq!(keyboard.rows[2][0].text, "复制当前命令");
+    assert_eq!(keyboard.rows[2][0].text, "首页");
 }
 
 #[test]

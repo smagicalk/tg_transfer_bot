@@ -305,6 +305,34 @@ fn test_help_detail_buttons_have_back_callback() {
     ));
 }
 
+// transfer / lookup 详情页应直接提供进入交互流的 callback，而不只是复制模板。
+#[test]
+fn test_help_transfer_and_lookup_detail_buttons_have_interaction_entry() {
+    let transfer = build_help_detail_buttons("transfer", false).expect("transfer detail");
+    let lookup = build_help_detail_buttons("lookup", false).expect("lookup detail");
+
+    let transfer_labels = transfer
+        .iter()
+        .flatten()
+        .map(|button| button.text.as_str())
+        .collect::<Vec<_>>();
+    let lookup_labels = lookup
+        .iter()
+        .flatten()
+        .map(|button| button.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(transfer_labels.contains(&"开始转存"));
+    assert!(transfer_labels.contains(&"快速转存"));
+    assert!(transfer_labels.contains(&"复制示例"));
+    assert!(!transfer_labels.contains(&"复制命令"));
+
+    assert!(lookup_labels.contains(&"指定目标"));
+    assert!(lookup_labels.contains(&"快速查询"));
+    assert!(lookup_labels.contains(&"复制示例"));
+    assert!(!lookup_labels.contains(&"复制命令"));
+}
+
 // 普通用户的 `/help points` 详情页不应再暴露管理员积分操作复制按钮。
 #[test]
 fn test_help_points_detail_buttons_for_user_hide_admin_actions() {
@@ -315,12 +343,14 @@ fn test_help_points_detail_buttons_for_user_hide_admin_actions() {
         .map(|button| button.text.as_str())
         .collect::<Vec<_>>();
 
+    assert!(labels.contains(&"查看余额"));
+    assert!(labels.contains(&"查看流水"));
     assert!(labels.contains(&"复制 /balance"));
     assert!(labels.contains(&"复制账户流水"));
-    assert!(!labels.contains(&"复制查看余额"));
+    assert!(!labels.contains(&"复制余额查询"));
     assert!(!labels.contains(&"复制用户流水"));
-    assert!(!labels.contains(&"复制加分命令"));
-    assert!(!labels.contains(&"复制扣分命令"));
+    assert!(!labels.contains(&"复制加分"));
+    assert!(!labels.contains(&"复制扣分"));
 }
 
 // 管理员的 `/help points` 详情页仍应保留用户余额/流水与调分入口。
@@ -333,8 +363,13 @@ fn test_help_points_detail_buttons_for_admin_keep_admin_actions() {
         .map(|button| button.text.as_str())
         .collect::<Vec<_>>();
 
-    assert!(labels.contains(&"复制查看余额"));
+    assert!(labels.contains(&"查看余额"));
+    assert!(labels.contains(&"查看流水"));
+    assert!(labels.contains(&"用户流水"));
+    assert!(labels.contains(&"加分"));
+    assert!(labels.contains(&"扣分"));
+    assert!(labels.contains(&"复制余额查询"));
     assert!(labels.contains(&"复制用户流水"));
-    assert!(labels.contains(&"复制加分命令"));
-    assert!(labels.contains(&"复制扣分命令"));
+    assert!(labels.contains(&"复制加分"));
+    assert!(labels.contains(&"复制扣分"));
 }

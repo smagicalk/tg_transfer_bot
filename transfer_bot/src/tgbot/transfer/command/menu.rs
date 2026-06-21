@@ -39,12 +39,66 @@ pub(super) fn build_menu_home_callback_data() -> String {
     callback::menu_page_callback_data(MenuPage::Home)
 }
 
+/// 给菜单外部模块复用统一的恢复态卡片正文。
+pub(super) fn build_menu_recovery_text_for_outer(
+    title: &str,
+    status: &str,
+    detail: &str,
+) -> String {
+    text::build_menu_recovery_text(title, status, detail)
+}
+
 /// 生成菜单下载页 callback 数据。
 ///
 /// 供 `/downloads` 这类列表页放置“返回下载页”按钮，
 /// 让用户能从命令详情页回到菜单里的下载筛选总览。
 pub(super) fn build_menu_downloads_callback_data() -> String {
     callback::menu_page_callback_data(MenuPage::Downloads)
+}
+
+/// 生成菜单“开始转存”回调，供帮助页等外部模块直接跳入交互流程。
+pub(super) fn build_menu_new_transfer_callback_data() -> String {
+    callback::new_transfer_callback_data()
+}
+
+/// 生成菜单“快速转存”回调，供帮助页等外部模块复用。
+pub(super) fn build_menu_quick_transfer_default_callback_data() -> String {
+    callback::quick_transfer_default_callback_data()
+}
+
+/// 生成菜单“指定目标查询”回调，供帮助页等外部模块直接跳入查询流程。
+pub(super) fn build_menu_new_lookup_callback_data() -> String {
+    callback::new_lookup_callback_data()
+}
+
+/// 生成菜单“快速查询”回调，供帮助页等外部模块复用。
+pub(super) fn build_menu_quick_lookup_default_callback_data() -> String {
+    callback::quick_lookup_default_callback_data()
+}
+
+/// 生成菜单“用户流水输入”回调，供帮助页等外部模块复用。
+pub(super) fn build_menu_point_ledger_input_button_data() -> String {
+    callback::point_ledger_user_input_callback_data()
+}
+
+/// 生成菜单任务页里“输入 job_id”按钮的回调数据，供帮助页复用。
+pub(super) fn build_menu_job_status_input_button_data() -> String {
+    callback::job_id_input_callback_data(input::MenuJobAction::Status)
+}
+
+/// 生成菜单任务页里“输入暂停”按钮的回调数据，供帮助页复用。
+pub(super) fn build_menu_job_pause_input_button_data() -> String {
+    callback::job_id_input_callback_data(input::MenuJobAction::Pause)
+}
+
+/// 生成菜单任务页里“输入恢复”按钮的回调数据，供帮助页复用。
+pub(super) fn build_menu_job_resume_input_button_data() -> String {
+    callback::job_id_input_callback_data(input::MenuJobAction::Resume)
+}
+
+/// 生成菜单任务页里“输入停止”按钮的回调数据，供帮助页复用。
+pub(super) fn build_menu_job_stop_input_button_data() -> String {
+    callback::job_id_input_callback_data(input::MenuJobAction::Stop)
 }
 
 /// 生成菜单配置页 callback 数据。
@@ -87,6 +141,29 @@ pub(super) async fn start_admin_input_callback(
         message_id,
         sender_user_id,
         action,
+        client_id,
+    )
+    .await
+}
+
+pub(in crate::tgbot::transfer::command) async fn start_points_adjust_input_callback(
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    action: AdminInputAction,
+    target_user_id: i64,
+    actor: crate::config::RequestActor,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    input::points_adjust_input_callback_query(
+        callback_query_id,
+        chat_id,
+        message_id,
+        sender_user_id,
+        action,
+        target_user_id,
+        actor,
         client_id,
     )
     .await
