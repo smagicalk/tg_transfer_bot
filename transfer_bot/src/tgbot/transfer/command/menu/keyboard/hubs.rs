@@ -4,9 +4,7 @@
 use crate::tgbot::send;
 
 use super::super::super::super::store;
-use super::super::super::common::{
-    CommandStyle, build_copy_only_row, build_refresh_return_menu_row, downloads_command,
-};
+use super::super::super::common::build_refresh_return_menu_row;
 use super::super::super::{build_cache_button_data, build_health_button_data};
 use super::recent_jobs::recent_job_buttons;
 use super::{MenuPage, callback, downloads_button, menu_nav_button};
@@ -47,15 +45,8 @@ pub(super) fn tasks_hub_buttons(
             ),
         ],
     ];
-    let has_recent_jobs = !recent_jobs.is_empty();
-    if has_recent_jobs {
+    if !recent_jobs.is_empty() {
         rows.extend(recent_job_buttons(recent_jobs));
-    } else {
-        rows.push(build_copy_only_row(send::build_copy_button(
-            "复制当前列表",
-            &downloads_command(Some("all"), None, None, CommandStyle::Long),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )));
     }
     rows.push(hub_footer(MenuPage::TasksHub));
     rows

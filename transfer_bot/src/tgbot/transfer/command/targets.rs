@@ -584,14 +584,6 @@ pub(super) fn build_targets_buttons_on(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ));
-    rows.push(build_targets_copy_row([
-        ("复制 show", targets_show_command(CommandStyle::Long)),
-        targets_copy_item_for_action(super::menu::AdminInputAction::TargetsSetDefault),
-    ]));
-    rows.push(build_targets_copy_row([
-        targets_copy_item_for_action(super::menu::AdminInputAction::TargetsSetRoute),
-        targets_copy_item_for_action(super::menu::AdminInputAction::TargetsSetAlias),
-    ]));
     rows
 }
 
@@ -609,24 +601,6 @@ fn build_targets_input_row(
             )
         })
         .collect()
-}
-
-/// 构造 targets 复制按钮行。
-fn build_targets_copy_row<const N: usize>(
-    items: [(&str, String); N],
-) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
-    items
-        .into_iter()
-        .map(|(label, command)| {
-            send::build_copy_button(label, &command, tdlib_rs::enums::ButtonStyle::Default)
-        })
-        .collect()
-}
-
-/// 按输入动作构造 targets 复制按钮定义。
-fn targets_copy_item_for_action(action: super::menu::AdminInputAction) -> (&'static str, String) {
-    let spec = targets_input_spec_for_admin_action(action).expect("targets input spec exists");
-    (spec.copy_label, spec.example_command.to_owned())
 }
 
 fn parse_targets_callback_data(data: &str) -> Option<TargetsCallbackAction> {

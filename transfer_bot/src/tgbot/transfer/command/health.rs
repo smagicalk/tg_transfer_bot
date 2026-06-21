@@ -7,7 +7,7 @@ use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
 
 use super::common::{
-    CommandStyle, build_copy_only_row, build_page_command_section, build_ready_page_header,
+    CommandStyle, build_page_command_section, build_ready_page_header,
     build_refresh_return_menu_row, downloads_command as downloads_command_text,
 };
 
@@ -123,11 +123,6 @@ fn build_health_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ),
-        build_copy_only_row(send::build_copy_button(
-            "复制 /health",
-            "/health",
-            tdlib_rs::enums::ButtonStyle::Default,
-        )),
     ]
 }
 
@@ -287,21 +282,6 @@ mod tests {
         }
     }
 
-    // 健康页保留少量复制兜底，但主操作应优先使用 callback。
-    #[test]
-    fn test_build_health_buttons_keep_copy_fallbacks() {
-        let rows = build_health_buttons();
-        let labels = rows
-            .iter()
-            .flatten()
-            .map(|button| button.text.as_str())
-            .collect::<Vec<_>>();
-
-        assert!(labels.contains(&"帮助"));
-        assert!(labels.contains(&"菜单"));
-        assert!(labels.contains(&"复制 /health"));
-    }
-
     #[test]
     fn test_build_health_buttons_primary_row_hierarchy() {
         let rows = build_health_buttons();
@@ -311,7 +291,6 @@ mod tests {
         assert_eq!(rows[1][0].text, "刷新");
         assert_eq!(rows[1][1].text, "帮助");
         assert_eq!(rows[1][2].text, "菜单");
-        assert_eq!(rows[2][0].text, "复制 /health");
     }
 
     #[test]

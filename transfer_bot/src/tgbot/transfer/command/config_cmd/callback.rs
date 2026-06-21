@@ -2,7 +2,7 @@
 // 这里只承载按钮协议和按钮生成，配置读写仍留在上层命令实现里。
 
 use super::super::common::{
-    CommandStyle, build_copy_only_row, build_help_menu_row, config_set_command, config_show_command,
+    build_help_menu_row,
 };
 use super::super::help::build_help_callback_data;
 use super::super::menu::AdminInputAction;
@@ -87,7 +87,6 @@ pub(in crate::tgbot::transfer::command) struct ConfigFieldSpec {
     pub input_title: &'static str,
     pub input_detail: &'static str,
     pub input_placeholder: &'static str,
-    pub copy_label: &'static str,
     pub example_value: i64,
     pub adjust_step: i64,
     pub adjust_unit: &'static str,
@@ -105,7 +104,6 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         input_title: "设置并发",
         input_detail: "请回复并发数，范围 1-32；或发送 /cancel 取消。",
         input_placeholder: "输入并发数，或发送 /cancel",
-        copy_label: "复制并发=4",
         example_value: 4,
         adjust_step: 1,
         adjust_unit: "",
@@ -120,7 +118,6 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         input_title: "设置删除延迟",
         input_detail: "请回复删除延迟分钟数，范围 0-1440；或发送 /cancel 取消。",
         input_placeholder: "输入分钟数，或发送 /cancel",
-        copy_label: "复制删除=3m",
         example_value: 3,
         adjust_step: 1,
         adjust_unit: "m",
@@ -135,7 +132,6 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         input_title: "设置 GC 间隔",
         input_detail: "请回复 GC 扫描间隔秒数，范围 5-3600；或发送 /cancel 取消。",
         input_placeholder: "输入秒数，或发送 /cancel",
-        copy_label: "复制GC=30s",
         example_value: 30,
         adjust_step: 10,
         adjust_unit: "s",
@@ -150,7 +146,6 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         input_title: "设置进度刷新间隔",
         input_detail: "请回复进度刷新秒数，范围 1-60；或发送 /cancel 取消。",
         input_placeholder: "输入秒数，或发送 /cancel",
-        copy_label: "复制进度=3s",
         example_value: 3,
         adjust_step: 1,
         adjust_unit: "s",
@@ -165,7 +160,6 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         input_title: "设置分页大小",
         input_detail: "请回复分页大小，范围 1-20；或发送 /cancel 取消。",
         input_placeholder: "输入分页大小，或发送 /cancel",
-        copy_label: "复制分页=10",
         example_value: 10,
         adjust_step: 1,
         adjust_unit: "",
@@ -180,7 +174,6 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         input_title: "设置菜单超时",
         input_detail: "请回复菜单超时秒数，范围 30-86400；或发送 /cancel 取消。",
         input_placeholder: "输入超时秒数，或发送 /cancel",
-        copy_label: "复制超时=900s",
         example_value: 900,
         adjust_step: 60,
         adjust_unit: "s",
@@ -268,11 +261,6 @@ pub(in crate::tgbot::transfer::command) fn build_config_buttons_on(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
-        vec![send::build_copy_button(
-            "复制 /config reset",
-            "/config reset",
-            tdlib_rs::enums::ButtonStyle::Default,
-        )],
         build_help_menu_row(
             send::build_callback_button(
                 "帮助",
@@ -285,19 +273,7 @@ pub(in crate::tgbot::transfer::command) fn build_config_buttons_on(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ),
-        build_copy_only_row(send::build_copy_button(
-            "复制 /config show",
-            &config_show_command(CommandStyle::Long),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )),
     ]);
-
-    rows.extend(
-        CONFIG_FIELD_SPECS
-            .chunks(2)
-            .map(build_config_copy_row)
-            .collect::<Vec<_>>(),
-    );
 
     let _ = app;
     rows
@@ -339,20 +315,6 @@ fn build_config_input_row(specs: &[ConfigFieldSpec]) -> Vec<tdlib_rs::types::Inl
             send::build_callback_button(
                 spec.input_label,
                 &build_config_callback_data(ConfigCallbackAction::Input { field: spec.field }),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )
-        })
-        .collect()
-}
-
-/// 构造配置复制按钮行。
-fn build_config_copy_row(specs: &[ConfigFieldSpec]) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
-    specs
-        .iter()
-        .map(|spec| {
-            send::build_copy_button(
-                spec.copy_label,
-                &config_set_command(spec.key, spec.example_value, CommandStyle::Long),
                 tdlib_rs::enums::ButtonStyle::Default,
             )
         })
@@ -452,7 +414,6 @@ mod tests {
         for expected in [
             "菜单",
             "重置默认",
-            "复制 /config reset",
             "设并发",
             "设删除",
             "设GC",
@@ -504,9 +465,7 @@ mod tests {
         assert_eq!(rows[7][2].text, "设超时");
         assert_eq!(rows[8][0].text, "刷新");
         assert_eq!(rows[8][1].text, "重置默认");
-        assert_eq!(rows[9][0].text, "复制 /config reset");
-        assert_eq!(rows[10][0].text, "帮助");
-        assert_eq!(rows[10][1].text, "菜单");
-        assert_eq!(rows[11][0].text, "复制 /config show");
+        assert_eq!(rows[9][0].text, "帮助");
+        assert_eq!(rows[9][1].text, "菜单");
     }
 }

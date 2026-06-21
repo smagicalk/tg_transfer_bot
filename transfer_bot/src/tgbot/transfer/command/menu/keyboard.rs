@@ -9,8 +9,7 @@ use crate::tgbot::send;
 
 use super::super::super::store;
 use super::super::common::{
-    CommandStyle, balance_history_command, build_copy_only_row, build_refresh_return_menu_row,
-    downloads_command,
+    CommandStyle, build_refresh_return_menu_row, downloads_command,
 };
 use super::super::downloads::build_downloads_menu_callback_data;
 use super::super::help;
@@ -98,11 +97,11 @@ fn transfer_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ),
-        build_copy_only_row(send::build_copy_button(
-            "复制取消命令",
-            "/cancel",
-            tdlib_rs::enums::ButtonStyle::Default,
-        )),
+        vec![send::build_callback_button(
+            "取消输入",
+            &callback::cancel_input_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Danger,
+        )],
     ]
 }
 
@@ -291,7 +290,7 @@ fn help_buttons(is_admin: bool) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton
             ),
         ],
         vec![send::build_callback_button(
-            "菜单帮助",
+            "菜单页",
             &help::build_help_callback_data(Some("menu")),
             tdlib_rs::enums::ButtonStyle::Default,
         )],
@@ -347,16 +346,18 @@ fn user_home_fallback_buttons(page: MenuPage) -> Vec<Vec<tdlib_rs::types::Inline
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ),
-        build_copy_only_row(send::build_copy_button(
-            "复制余额命令",
-            "/balance",
-            tdlib_rs::enums::ButtonStyle::Default,
-        )),
-        build_copy_only_row(send::build_copy_button(
-            "复制积分流水",
-            &balance_history_command(10, 1, CommandStyle::Long),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )),
+        vec![
+            send::build_callback_button(
+                "余额",
+                &super::super::points::build_balance_home_callback_data(),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "积分流水",
+                &super::super::points::build_balance_history_home_callback_data(10, 1),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
     ]
 }
 
@@ -523,7 +524,7 @@ mod tests {
         assert!(labels.contains(&"失败/已停"));
         assert!(labels.contains(&"快速查询"));
         assert!(labels.contains(&"查询页"));
-        assert!(labels.contains(&"复制当前列表"));
+        assert!(!labels.contains(&"复制当前列表"));
         assert!(!labels.contains(&"查看最近任务"));
     }
 
@@ -677,14 +678,14 @@ mod tests {
             "任务帮助",
             "积分帮助",
             "配置帮助",
-            "菜单帮助",
+            "菜单页",
             "帮助说明",
         ] {
             assert!(labels.contains(&expected), "missing help topic: {expected}");
         }
     }
 
-    // 普通用户隐藏 admin-only 配置帮助时，不能误删同一行的菜单帮助。
+    // 普通用户隐藏 admin-only 配置帮助时，不能误删同一行的菜单页入口。
     #[test]
     fn test_help_buttons_for_user_keep_menu_help_without_config() {
         let rows = build_menu_buttons(MenuPage::Help, &[], false, None);
@@ -694,7 +695,7 @@ mod tests {
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        assert!(labels.contains(&"菜单帮助"));
+        assert!(labels.contains(&"菜单页"));
         assert!(!labels.contains(&"配置帮助"));
         assert!(!labels.contains(&"复制帮助命令"));
     }
@@ -750,7 +751,8 @@ mod tests {
         let lookup_labels = labels(lookup);
 
         assert!(!transfer_labels.contains(&"复制转存模板".to_owned()));
-        assert!(transfer_labels.contains(&"复制取消命令".to_owned()));
+        assert!(transfer_labels.contains(&"取消输入".to_owned()));
+        assert!(!transfer_labels.contains(&"复制取消命令".to_owned()));
         assert!(!transfer_labels.contains(&"指定目标".to_owned()));
         assert!(!transfer_labels.contains(&"默认目标".to_owned()));
         assert!(!downloads_labels.contains(&"复制全部列表".to_owned()));
@@ -922,23 +924,12 @@ mod tests {
         assert_eq!(targets[0][0].text, "刷新");
         assert_eq!(acl[0][1].text, "刷新");
         assert_eq!(billing[0][1].text, "刷新");
-        assert!(
-            targets
-                .iter()
-                .flatten()
-                .any(|button| button.text == "复制默认")
-        );
-        assert!(
-            acl.iter()
-                .flatten()
-                .any(|button| button.text == "复制管理员")
-        );
-        assert!(
-            billing
-                .iter()
-                .flatten()
-                .any(|button| button.text == "复制公告")
-        );
+        assert!(targets.iter().flatten().any(|button| button.text == "设默认"));
+        assert!(targets.iter().flatten().any(|button| button.text == "选默认"));
+        assert!(acl.iter().flatten().any(|button| button.text == "加管理员"));
+        assert!(acl.iter().flatten().any(|button| button.text == "删管理员"));
+        assert!(billing.iter().flatten().any(|button| button.text == "设公告"));
+        assert!(billing.iter().flatten().any(|button| button.text == "设基础"));
     }
 
     // 普通用户打开数据库运行态配置页时，只能看到受限页导航，不能看到管理命令模板。
@@ -955,7 +946,9 @@ mod tests {
             assert_eq!(rows[0][0].text, "刷新");
             assert_eq!(rows[0][1].text, "首页");
             assert_eq!(rows[0][2].text, "帮助");
-            assert!(labels.contains(&"复制余额命令"));
+            assert!(labels.contains(&"余额"));
+            assert!(labels.contains(&"积分流水"));
+            assert!(!labels.contains(&"复制余额"));
             assert!(!labels.contains(&"复制 show"));
         }
     }
@@ -976,6 +969,8 @@ mod tests {
         assert_eq!(rows[0][0].text, "刷新");
         assert_eq!(rows[0][1].text, "首页");
         assert_eq!(rows[0][2].text, "帮助");
+        assert_eq!(rows[1][0].text, "余额");
+        assert_eq!(rows[1][1].text, "积分流水");
         assert_eq!(admin_rows[0][0].text, "刷新");
         assert_eq!(admin_rows[0][1].text, "首页");
         assert_eq!(admin_rows[0][2].text, "帮助");
@@ -993,8 +988,10 @@ mod tests {
 
         assert!(labels.contains(&"开始转存"));
         assert!(labels.contains(&"快速转存"));
+        assert!(labels.contains(&"取消输入"));
         assert!(!labels.contains(&"指定目标"));
         assert!(!labels.contains(&"默认目标"));
+        assert!(!labels.contains(&"复制取消命令"));
     }
 
     fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {

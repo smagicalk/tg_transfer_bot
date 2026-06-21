@@ -240,7 +240,7 @@ pub(super) fn build_user_account_menu_text() -> String {
         card::DIVIDER.to_owned(),
         card::section("当前无法显示按钮"),
         "当前发送端没有启用 bot reply_markup。正常配置应保持 interaction_client = bot。".to_owned(),
-        "下面命令可直接复制发送；修正配置后 /menu 会显示按钮菜单。".to_owned(),
+        "下面命令可直接发送；修正配置后 /menu 会显示按钮菜单。".to_owned(),
         card::section("常用命令"),
         card::command_line("快速转存", "/transfer <link> <target_chat_id>"),
         card::command_line("快速转存", "/transfer <link>"),
@@ -357,7 +357,7 @@ pub(super) fn build_menu_recovery_text(title: &str, status: &str, detail: &str) 
         build_menu_state_line(status),
         card::DIVIDER.to_owned(),
         card::note(detail),
-        card::command_line("返回菜单", "/menu"),
+        card::command_line("菜单", "/menu"),
     ]
     .join("\n")
 }
@@ -387,7 +387,7 @@ pub(super) fn build_permission_denied_menu_text(title: &str, detail: &str) -> St
         card::DIVIDER.to_owned(),
         card::section("权限"),
         card::note(detail),
-        card::command_line("返回菜单", "/menu"),
+        card::command_line("菜单", "/menu"),
     ]
     .join("\n")
 }
@@ -425,7 +425,7 @@ fn transfer_text() -> String {
         "点击“开始转存”，按提示发送源链接，然后选择目标群。".to_owned(),
         "点击“快速转存”，只回复源链接，目标 chat 使用预先配置的目标。".to_owned(),
         "普通用户只能把内容转到 ACL 允许的目标。".to_owned(),
-        "也可以复制长命令模板后手动补齐。".to_owned(),
+        "也可以使用命令模板手动补齐。".to_owned(),
         card::section("命令"),
         card::command_line("打开向导", "/transfer"),
         card::command_line("快速转存", "/transfer <link>"),
@@ -461,7 +461,7 @@ fn jobs_text() -> String {
         "先进入最近任务或运行任务，再点任务详情进行暂停、恢复、停止。".to_owned(),
         "知道 job_id 时可点“输入详情/暂停/恢复/停止”，按提示回复编号。".to_owned(),
         "普通用户只能控制自己的任务；管理员可控制全部任务。".to_owned(),
-        "命令模式仍可复制长命令模板手动输入。".to_owned(),
+        "命令模式仍可使用命令模板手动输入。".to_owned(),
         card::section("命令"),
         card::command_line("详情", "/job status <job_id>"),
         card::command_line("暂停", "/job pause <job_id>"),
@@ -501,7 +501,7 @@ fn config_text() -> String {
         card::code("progress_edit_interval_seconds"),
         card::code("downloads_default_page_size"),
         card::code("menu_input_timeout_seconds"),
-        "常用项可点按钮小步调整；其他字段复制命令后手动修改。".to_owned(),
+        "常用项可点按钮小步调整；其他字段可用命令模板手动修改。".to_owned(),
         card::section("命令"),
         card::command_line("查看配置", "/config show"),
         card::command_line("重置默认", "/config reset"),

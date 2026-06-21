@@ -113,7 +113,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text(is_admin:
             card::code("/help <command>")
         ),
         String::new(),
-        "可复制示例：".to_owned(),
+        "示例命令：".to_owned(),
         help_command_text(Some("transfer"), CommandStyle::Long),
         help_command_text(Some("lookup"), CommandStyle::Long),
     ]);

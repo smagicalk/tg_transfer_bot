@@ -8,7 +8,7 @@ use crate::tgbot::transfer::card;
 
 use super::common::{
     CommandStyle, RuntimeAdminHelpCopyButton, RuntimeAdminHelpDescriptor, RuntimeAdminUsageItem,
-    billing_show_command, build_command_examples, build_copy_only_row, build_help_menu_row,
+    billing_show_command, build_command_examples, build_help_menu_row,
     build_runtime_admin_page_intro, cleared_action_title, command_root,
     edit_runtime_admin_interaction_card_or_error, reset_action_title,
     send_runtime_admin_callback_error, updated_action_title,
@@ -578,7 +578,7 @@ pub(super) fn build_billing_buttons_on(
     } else {
         "开启计费"
     };
-    let mut rows = vec![
+    let rows = vec![
         vec![
             send::build_callback_button(
                 enabled_label,
@@ -628,22 +628,7 @@ pub(super) fn build_billing_buttons_on(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ),
-        vec![
-            send::build_copy_button(
-                "复制 show",
-                "/billing show",
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            build_billing_announcement_copy_button(),
-        ],
     ];
-    if config.announcement_text.is_some() {
-        rows.push(build_copy_only_row(send::build_copy_button(
-            "复制清空",
-            "/billing clear announcement_text",
-            tdlib_rs::enums::ButtonStyle::Default,
-        )));
-    }
     rows
 }
 
@@ -679,15 +664,6 @@ fn build_billing_input_button(field: BillingNumericField) -> tdlib_rs::types::In
         spec.input_label,
         // 数值输入也走 `/billing` 自己的 callback 前缀，保持本页按钮协议统一。
         &build_billing_callback_data(BillingCallbackAction::InputSetNumeric { field }),
-        tdlib_rs::enums::ButtonStyle::Default,
-    )
-}
-
-/// 构造公告复制按钮。
-fn build_billing_announcement_copy_button() -> tdlib_rs::types::InlineKeyboardButton {
-    send::build_copy_button(
-        BILLING_ANNOUNCEMENT_SPEC.copy_label,
-        BILLING_ANNOUNCEMENT_SPEC.example_command,
         tdlib_rs::enums::ButtonStyle::Default,
     )
 }

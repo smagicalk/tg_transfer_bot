@@ -633,17 +633,6 @@ pub(super) fn build_acl_buttons_on(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ),
-        build_acl_copy_row([
-            ("复制 show", acl_show_command(CommandStyle::Long)),
-            acl_copy_item_for_action(super::menu::AdminInputAction::AclAddAdmin),
-        ]),
-        build_acl_copy_row([
-            acl_copy_item_for_action(super::menu::AdminInputAction::AclAddAllowUser),
-            acl_copy_item_for_action(super::menu::AdminInputAction::AclAddAllowTarget),
-        ]),
-        build_acl_copy_row([acl_copy_item_for_action(
-            super::menu::AdminInputAction::AclAddBan,
-        )]),
     ]
 }
 
@@ -662,24 +651,6 @@ fn build_acl_input_row(
             )
         })
         .collect()
-}
-
-/// 构造 ACL 复制按钮行。
-fn build_acl_copy_row<const N: usize>(
-    items: [(&str, String); N],
-) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
-    items
-        .into_iter()
-        .map(|(label, command)| {
-            send::build_copy_button(label, &command, tdlib_rs::enums::ButtonStyle::Default)
-        })
-        .collect()
-}
-
-/// 按输入动作构造 ACL 复制按钮定义。
-fn acl_copy_item_for_action(action: super::menu::AdminInputAction) -> (&'static str, String) {
-    let spec = acl_input_spec_for_admin_action(action).expect("acl input spec exists");
-    (spec.copy_label, spec.example_command.to_owned())
 }
 
 fn parse_acl_callback_data(data: &str) -> Option<AclCallbackAction> {
