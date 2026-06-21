@@ -60,6 +60,16 @@ pub(super) fn looks_like_telegram_link(input: &str) -> bool {
     input.starts_with("https://t.me/")
         || input.starts_with("http://t.me/")
         || input.starts_with("t.me/")
+        || parse_bot_message_source(input).is_some()
+}
+
+/// 解析 bot 可见消息的稳定源标识。
+pub(super) fn parse_bot_message_source(input: &str) -> Option<(i64, i64)> {
+    let payload = input.strip_prefix("bot-message:")?;
+    let (chat_id, message_id) = payload.split_once(':')?;
+    let chat_id = chat_id.parse::<i64>().ok()?;
+    let message_id = message_id.parse::<i64>().ok()?;
+    Some((chat_id, message_id))
 }
 
 #[cfg(test)]
@@ -71,6 +81,17 @@ mod tests {
     fn test_looks_like_telegram_link() {
         assert!(looks_like_telegram_link("https://t.me/c/1/2"));
         assert!(looks_like_telegram_link("t.me/c/1/2"));
+        assert!(looks_like_telegram_link("bot-message:-100123:456"));
         assert!(!looks_like_telegram_link("https://example.com"));
+    }
+
+    #[test]
+    fn test_parse_bot_message_source() {
+        assert_eq!(
+            parse_bot_message_source("bot-message:-100123:456"),
+            Some((-100123, 456))
+        );
+        assert_eq!(parse_bot_message_source("bot-message:bad:456"), None);
+        assert_eq!(parse_bot_message_source("https://t.me/c/1/2"), None);
     }
 }

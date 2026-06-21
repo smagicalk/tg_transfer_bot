@@ -556,18 +556,39 @@ pub async fn handle_update(
                 return Ok(());
             }
             if tgbot::transfer::is_transferable_message(&request_message) {
+                let Some((source_chat_id, source_message_id)) =
+                    tgbot::transfer::transferable_message_source_location(&request_message)
+                else {
+                    tracing::warn!(
+                        chat_id,
+                        sender_id,
+                        message_id = request_message.id,
+                        "transferable media message has no resolvable source location"
+                    );
+                    send_auto_transfer_hint_message(
+                        &anyhow::anyhow!(
+                            "无法定位原始消息，请改用消息链接或回复 bot 可见媒体后再试"
+                        ),
+                        chat_id,
+                        interaction_client_id,
+                    )
+                    .await?;
+                    return Ok(());
+                };
                 tracing::info!(
                     chat_id,
                     sender_id,
                     message_id = request_message.id,
                     content_kind = message_content_kind(&request_message.content),
-                    "admin media message received, dispatching auto transfer"
+                    "media message received, entering transfer target selection"
                 );
-                match tgbot::transfer::transfer_bot_message_auto_command_on(
-                    app_context.clone(),
+                match tgbot::transfer::start_transfer_target_choice_from_bot_message(
+                    app_context.as_ref(),
                     config.clone(),
-                    request_message.clone(),
-                    actor,
+                    chat_id,
+                    sender_id,
+                    source_chat_id,
+                    source_message_id,
                     interaction_client_id,
                 )
                 .await
@@ -577,7 +598,7 @@ pub async fn handle_update(
                             chat_id,
                             sender_id,
                             message_id = request_message.id,
-                            "admin media message auto transfer dispatched"
+                            "media message transfer target selection started"
                         );
                     }
                     Err(err) => {
@@ -586,7 +607,7 @@ pub async fn handle_update(
                             sender_id,
                             message_id = request_message.id,
                             error = %err,
-                            "admin media auto transfer failed"
+                            "media transfer target selection failed"
                         );
                         send_auto_transfer_hint_message(&err, chat_id, interaction_client_id)
                             .await?;

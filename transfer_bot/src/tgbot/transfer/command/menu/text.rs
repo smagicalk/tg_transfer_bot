@@ -325,12 +325,22 @@ pub(super) fn build_menu_context_lines(
 
     let mut lines = vec![card::section("当前上下文")];
     if let Some(source_link) = source_link {
-        lines.push(card::field("来源", source_link));
+        lines.push(card::field("来源", format_source_context(source_link)));
     }
     if let Some(target_chat_id) = target_chat_id {
         lines.push(card::field("目标", target_chat_id));
     }
     lines
+}
+
+/// 把内部 source 标识转换成更易读的卡片文案。
+fn format_source_context(source_link: &str) -> String {
+    if let Some(payload) = source_link.strip_prefix("bot-message:")
+        && let Some((chat_id, message_id)) = payload.split_once(':')
+    {
+        return format!("bot 可见消息 {chat_id}/{message_id}");
+    }
+    source_link.to_owned()
 }
 
 /// 构造菜单输入流程的状态提示文本。

@@ -43,6 +43,7 @@ pub(super) use state::{
 };
 
 use self::callbacks_simple::send_targets_chat_picker_prompt;
+use self::target::{TargetPromptContext, send_target_choice_prompt};
 
 /// Telegram 原生选群按钮 ID。
 ///
@@ -88,6 +89,31 @@ fn build_continue_input_expired_text_on(app: &crate::app_context::AppContext) ->
 fn build_continue_input_expired_text() -> String {
     let app_context = crate::app_context::app_context();
     build_continue_input_expired_text_on(app_context.as_ref())
+}
+
+/// 从已知源消息直接启动目标选择流程。
+pub(super) async fn start_transfer_target_choice_with_source_on(
+    app: &crate::app_context::AppContext,
+    config: std::sync::Arc<BotConfig>,
+    chat_id: i64,
+    sender_user_id: i64,
+    kind: MenuInputKind,
+    source_link: String,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    state::put_target_choice_draft((chat_id, sender_user_id), kind, source_link.clone()).await?;
+    send_target_choice_prompt(
+        config.as_ref(),
+        TargetPromptContext {
+            app,
+            request_chat_id: chat_id,
+            sender_user_id,
+            client_id,
+        },
+        kind,
+        &source_link,
+    )
+    .await
 }
 
 /// 读取当前输入草稿摘要，不消费草稿。

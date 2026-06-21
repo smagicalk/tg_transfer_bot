@@ -84,34 +84,6 @@ pub(in crate::tgbot::transfer::command) async fn transfer_link_command_on(
     .await
 }
 
-/// 在指定上下文上执行 bot 可见媒体自动转存。
-pub async fn transfer_bot_message_auto_command_on(
-    app_context: std::sync::Arc<crate::app_context::AppContext>,
-    config: Arc<BotConfig>,
-    request_message: tdlib_rs::types::Message,
-    actor: RequestActor,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    let request_message_id = request_message.id;
-    let source = ResolvedTransferSource {
-        source_link: bot_message_source_link(request_message.chat_id, request_message.id),
-        source_kind: SourceKind::BotMessage,
-        preferred_source_client_role: ClientRole::Bot,
-        source_message_chat_id: Some(request_message.chat_id),
-        source_message_id: Some(request_message.id),
-    };
-    run_transfer_plan_on(
-        app_context,
-        vec!["/t", "bot-message-source"],
-        source,
-        config,
-        request_message_id,
-        actor,
-        client_id,
-    )
-    .await
-}
-
 /// 在指定上下文上创建计划、发送进度卡片并派发后台任务。
 async fn run_transfer_plan_on(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
@@ -260,6 +232,16 @@ fn resolve_transfer_source(
         });
     }
 
+    if let Some((chat_id, message_id)) = forwarded_message_location(request_message) {
+        return Ok(ResolvedTransferSource {
+            source_link: bot_message_source_link(chat_id, message_id),
+            source_kind: SourceKind::BotMessage,
+            preferred_source_client_role: ClientRole::Bot,
+            source_message_chat_id: Some(chat_id),
+            source_message_id: Some(message_id),
+        });
+    }
+
     anyhow::bail!(
         "usage: /transfer <link> [target], or reply a bot-visible media message with /transfer [target]"
     )
@@ -348,6 +330,54 @@ fn replied_message_location(message: &tdlib_rs::types::Message) -> Option<(i64, 
     Some((chat_id, reply.message_id))
 }
 
+/// 从转发消息中提取原始消息定位。
+///
+/// 优先使用 TDLib 给出的 `forward_info.source`，因为它包含“上一次转发来源”的真实 chat/message；
+/// 如果没有 source，再退回 channel origin 的 `chat_id/message_id`。匿名来源或普通用户来源没有稳定
+/// message_id 时不返回，避免生成伪源标识。
+fn forwarded_message_location(message: &tdlib_rs::types::Message) -> Option<(i64, i64)> {
+    let forward = message.forward_info.as_ref()?;
+    if let Some(source) = &forward.source
+        && source.chat_id != 0
+        && source.message_id != 0
+    {
+        return Some((source.chat_id, source.message_id));
+    }
+
+    match &forward.origin {
+        tdlib_rs::enums::MessageOrigin::Channel(channel)
+            if channel.chat_id != 0 && channel.message_id != 0 =>
+        {
+            Some((channel.chat_id, channel.message_id))
+        }
+        _ => None,
+    }
+}
+
+/// 对外提供统一的“媒体消息源定位”提取。
+///
+/// 优先级：
+/// 1. reply_to 指向的原消息
+/// 2. forwarded 来源里可还原的原始 chat/message
+/// 3. 当前 bot 可见消息本身
+///
+/// 特殊规则：
+/// - 如果消息本身是 forwarded，但转发来源无法还原稳定 message_id，则返回 None，交给上层提示用户
+///   改用消息链接或回复 bot 可见媒体，避免把“转发壳消息”的新 message_id 当成伪源。
+pub(in crate::tgbot) fn transferable_message_source_location(
+    message: &tdlib_rs::types::Message,
+) -> Option<(i64, i64)> {
+    if let Some(reply) = replied_message_location(message) {
+        return Some(reply);
+    }
+
+    if message.forward_info.is_some() {
+        return forwarded_message_location(message);
+    }
+
+    Some((message.chat_id, message.id))
+}
+
 /// 构造 `/transfer` 首次回执卡片。
 ///
 /// 后台任务启动后会持续编辑同一条消息，因此初始卡片也使用 card 格式，避免样式闪变。
@@ -379,7 +409,8 @@ fn format_transfer_accepted_text(plan: &TransferPlan) -> String {
 mod tests {
     use super::{
         ResolvedTransferSource, bot_message_source_link, build_transfer_accepted_button_rows,
-        format_transfer_accepted_text, resolve_transfer_target_chat_id,
+        format_transfer_accepted_text, forwarded_message_location,
+        resolve_transfer_target_chat_id,
     };
     use crate::ClientRole;
     use crate::app_context::app_context;
@@ -446,6 +477,375 @@ mod tests {
     #[test]
     fn test_bot_message_source_link() {
         assert_eq!(bot_message_source_link(100, 200), "bot-message:100:200");
+    }
+
+    #[test]
+    fn test_forwarded_message_location_prefers_forward_source() {
+        let message = tdlib_rs::types::Message {
+            id: 1,
+            sender_id: tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
+                user_id: 1,
+            }),
+            chat_id: 1000,
+            sending_state: None,
+            scheduling_state: None,
+            is_outgoing: false,
+            is_pinned: false,
+            is_from_offline: false,
+            can_be_saved: true,
+            has_timestamped_media: false,
+            is_channel_post: false,
+            is_paid_star_suggested_post: false,
+            is_paid_ton_suggested_post: false,
+            contains_unread_mention: false,
+            date: 0,
+            edit_date: 0,
+            forward_info: Some(tdlib_rs::types::MessageForwardInfo {
+                origin: tdlib_rs::enums::MessageOrigin::Channel(
+                    tdlib_rs::types::MessageOriginChannel {
+                        chat_id: -2000,
+                        message_id: 88,
+                        author_signature: String::new(),
+                    },
+                ),
+                date: 0,
+                source: Some(tdlib_rs::types::ForwardSource {
+                    chat_id: -3000,
+                    message_id: 99,
+                    sender_id: None,
+                    sender_name: String::new(),
+                    date: 0,
+                    is_outgoing: false,
+                }),
+                public_service_announcement_type: String::new(),
+            }),
+            import_info: None,
+            interaction_info: None,
+            unread_reactions: vec![],
+            fact_check: None,
+            suggested_post_info: None,
+            reply_to: None,
+            topic_id: None,
+            self_destruct_type: None,
+            self_destruct_in: 0.0,
+            auto_delete_in: 0.0,
+            via_bot_user_id: 0,
+            sender_business_bot_user_id: 0,
+            sender_boost_count: 0,
+            sender_tag: String::new(),
+            paid_message_star_count: 0,
+            author_signature: String::new(),
+            media_album_id: 0,
+            effect_id: 0,
+            restriction_info: None,
+            summary_language_code: String::new(),
+            content: tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
+                text: tdlib_rs::types::FormattedText {
+                    text: "test".to_owned(),
+                    entities: vec![],
+                },
+                link_preview: None,
+                link_preview_options: None,
+            }),
+            reply_markup: None,
+        };
+
+        assert_eq!(forwarded_message_location(&message), Some((-3000, 99)));
+    }
+
+    #[test]
+    fn test_forwarded_message_location_falls_back_to_channel_origin() {
+        let message = tdlib_rs::types::Message {
+            id: 1,
+            sender_id: tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
+                user_id: 1,
+            }),
+            chat_id: 1000,
+            sending_state: None,
+            scheduling_state: None,
+            is_outgoing: false,
+            is_pinned: false,
+            is_from_offline: false,
+            can_be_saved: true,
+            has_timestamped_media: false,
+            is_channel_post: false,
+            is_paid_star_suggested_post: false,
+            is_paid_ton_suggested_post: false,
+            contains_unread_mention: false,
+            date: 0,
+            edit_date: 0,
+            forward_info: Some(tdlib_rs::types::MessageForwardInfo {
+                origin: tdlib_rs::enums::MessageOrigin::Channel(
+                    tdlib_rs::types::MessageOriginChannel {
+                        chat_id: -2000,
+                        message_id: 88,
+                        author_signature: String::new(),
+                    },
+                ),
+                date: 0,
+                source: None,
+                public_service_announcement_type: String::new(),
+            }),
+            import_info: None,
+            interaction_info: None,
+            unread_reactions: vec![],
+            fact_check: None,
+            suggested_post_info: None,
+            reply_to: None,
+            topic_id: None,
+            self_destruct_type: None,
+            self_destruct_in: 0.0,
+            auto_delete_in: 0.0,
+            via_bot_user_id: 0,
+            sender_business_bot_user_id: 0,
+            sender_boost_count: 0,
+            sender_tag: String::new(),
+            paid_message_star_count: 0,
+            author_signature: String::new(),
+            media_album_id: 0,
+            effect_id: 0,
+            restriction_info: None,
+            summary_language_code: String::new(),
+            content: tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
+                text: tdlib_rs::types::FormattedText {
+                    text: "test".to_owned(),
+                    entities: vec![],
+                },
+                link_preview: None,
+                link_preview_options: None,
+            }),
+            reply_markup: None,
+        };
+
+        assert_eq!(forwarded_message_location(&message), Some((-2000, 88)));
+    }
+
+    #[test]
+    fn test_forwarded_message_location_rejects_unstable_origin() {
+        let message = tdlib_rs::types::Message {
+            id: 1,
+            sender_id: tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
+                user_id: 1,
+            }),
+            chat_id: 1000,
+            sending_state: None,
+            scheduling_state: None,
+            is_outgoing: false,
+            is_pinned: false,
+            is_from_offline: false,
+            can_be_saved: true,
+            has_timestamped_media: false,
+            is_channel_post: false,
+            is_paid_star_suggested_post: false,
+            is_paid_ton_suggested_post: false,
+            contains_unread_mention: false,
+            date: 0,
+            edit_date: 0,
+            forward_info: Some(tdlib_rs::types::MessageForwardInfo {
+                origin: tdlib_rs::enums::MessageOrigin::User(
+                    tdlib_rs::types::MessageOriginUser { sender_user_id: 42 },
+                ),
+                date: 0,
+                source: None,
+                public_service_announcement_type: String::new(),
+            }),
+            import_info: None,
+            interaction_info: None,
+            unread_reactions: vec![],
+            fact_check: None,
+            suggested_post_info: None,
+            reply_to: None,
+            topic_id: None,
+            self_destruct_type: None,
+            self_destruct_in: 0.0,
+            auto_delete_in: 0.0,
+            via_bot_user_id: 0,
+            sender_business_bot_user_id: 0,
+            sender_boost_count: 0,
+            sender_tag: String::new(),
+            paid_message_star_count: 0,
+            author_signature: String::new(),
+            media_album_id: 0,
+            effect_id: 0,
+            restriction_info: None,
+            summary_language_code: String::new(),
+            content: tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
+                text: tdlib_rs::types::FormattedText {
+                    text: "test".to_owned(),
+                    entities: vec![],
+                },
+                link_preview: None,
+                link_preview_options: None,
+            }),
+            reply_markup: None,
+        };
+
+        assert_eq!(forwarded_message_location(&message), None);
+    }
+
+    #[test]
+    fn test_transferable_message_source_location_prefers_reply_then_forward_then_self() {
+        let base_message = tdlib_rs::types::Message {
+            id: 7,
+            sender_id: tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
+                user_id: 1,
+            }),
+            chat_id: 1000,
+            sending_state: None,
+            scheduling_state: None,
+            is_outgoing: false,
+            is_pinned: false,
+            is_from_offline: false,
+            can_be_saved: true,
+            has_timestamped_media: false,
+            is_channel_post: false,
+            is_paid_star_suggested_post: false,
+            is_paid_ton_suggested_post: false,
+            contains_unread_mention: false,
+            date: 0,
+            edit_date: 0,
+            forward_info: Some(tdlib_rs::types::MessageForwardInfo {
+                origin: tdlib_rs::enums::MessageOrigin::Channel(
+                    tdlib_rs::types::MessageOriginChannel {
+                        chat_id: -2000,
+                        message_id: 88,
+                        author_signature: String::new(),
+                    },
+                ),
+                date: 0,
+                source: Some(tdlib_rs::types::ForwardSource {
+                    chat_id: -3000,
+                    message_id: 99,
+                    sender_id: None,
+                    sender_name: String::new(),
+                    date: 0,
+                    is_outgoing: false,
+                }),
+                public_service_announcement_type: String::new(),
+            }),
+            import_info: None,
+            interaction_info: None,
+            unread_reactions: vec![],
+            fact_check: None,
+            suggested_post_info: None,
+            reply_to: None,
+            topic_id: None,
+            self_destruct_type: None,
+            self_destruct_in: 0.0,
+            auto_delete_in: 0.0,
+            via_bot_user_id: 0,
+            sender_business_bot_user_id: 0,
+            sender_boost_count: 0,
+            sender_tag: String::new(),
+            paid_message_star_count: 0,
+            author_signature: String::new(),
+            media_album_id: 0,
+            effect_id: 0,
+            restriction_info: None,
+            summary_language_code: String::new(),
+            content: tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
+                text: tdlib_rs::types::FormattedText {
+                    text: "test".to_owned(),
+                    entities: vec![],
+                },
+                link_preview: None,
+                link_preview_options: None,
+            }),
+            reply_markup: None,
+        };
+
+        let mut replied = base_message.clone();
+        replied.reply_to = Some(tdlib_rs::enums::MessageReplyTo::Message(
+            tdlib_rs::types::MessageReplyToMessage {
+                chat_id: -4000,
+                message_id: 66,
+                quote: None,
+                checklist_task_id: 0,
+                origin: None,
+                origin_send_date: 0,
+                content: None,
+            },
+        ));
+        assert_eq!(
+            super::transferable_message_source_location(&replied),
+            Some((-4000, 66))
+        );
+
+        let forwarded = base_message.clone();
+        assert_eq!(
+            super::transferable_message_source_location(&forwarded),
+            Some((-3000, 99))
+        );
+
+        let mut self_only = base_message;
+        self_only.forward_info = None;
+        assert_eq!(
+            super::transferable_message_source_location(&self_only),
+            Some((1000, 7))
+        );
+    }
+
+    #[test]
+    fn test_transferable_message_source_location_rejects_unstable_forward_shell() {
+        let message = tdlib_rs::types::Message {
+            id: 7,
+            sender_id: tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
+                user_id: 1,
+            }),
+            chat_id: 1000,
+            sending_state: None,
+            scheduling_state: None,
+            is_outgoing: false,
+            is_pinned: false,
+            is_from_offline: false,
+            can_be_saved: true,
+            has_timestamped_media: false,
+            is_channel_post: false,
+            is_paid_star_suggested_post: false,
+            is_paid_ton_suggested_post: false,
+            contains_unread_mention: false,
+            date: 0,
+            edit_date: 0,
+            forward_info: Some(tdlib_rs::types::MessageForwardInfo {
+                origin: tdlib_rs::enums::MessageOrigin::User(
+                    tdlib_rs::types::MessageOriginUser { sender_user_id: 42 },
+                ),
+                date: 0,
+                source: None,
+                public_service_announcement_type: String::new(),
+            }),
+            import_info: None,
+            interaction_info: None,
+            unread_reactions: vec![],
+            fact_check: None,
+            suggested_post_info: None,
+            reply_to: None,
+            topic_id: None,
+            self_destruct_type: None,
+            self_destruct_in: 0.0,
+            auto_delete_in: 0.0,
+            via_bot_user_id: 0,
+            sender_business_bot_user_id: 0,
+            sender_boost_count: 0,
+            sender_tag: String::new(),
+            paid_message_star_count: 0,
+            author_signature: String::new(),
+            media_album_id: 0,
+            effect_id: 0,
+            restriction_info: None,
+            summary_language_code: String::new(),
+            content: tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
+                text: tdlib_rs::types::FormattedText {
+                    text: "test".to_owned(),
+                    entities: vec![],
+                },
+                link_preview: None,
+                link_preview_options: None,
+            }),
+            reply_markup: None,
+        };
+
+        assert_eq!(super::transferable_message_source_location(&message), None);
     }
 
     // 回复媒体模式下第二个参数应当被当成 target，而不是 source link。

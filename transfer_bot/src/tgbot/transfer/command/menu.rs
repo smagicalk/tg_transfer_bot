@@ -669,6 +669,30 @@ pub(super) async fn start_transfer_input_from_command(
     Ok(())
 }
 
+/// 从 bot 可见媒体消息直接启动“已带源”的转存目标选择流程。
+///
+/// 这样用户发送媒体后不必再补打一条 `/transfer`，而是直接选择目标并确认执行。
+pub(in crate::tgbot) async fn start_transfer_target_choice_from_bot_message(
+    app: &crate::app_context::AppContext,
+    config: Arc<BotConfig>,
+    chat_id: i64,
+    sender_user_id: i64,
+    source_chat_id: i64,
+    source_message_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    input::start_transfer_target_choice_with_source_on(
+        app,
+        config,
+        chat_id,
+        sender_user_id,
+        MenuInputKind::Transfer,
+        format!("bot-message:{}:{}", source_chat_id, source_message_id),
+        client_id,
+    )
+    .await
+}
+
 /// 在指定上下文上处理菜单 ForceReply 输入。
 pub(in crate::tgbot) async fn handle_menu_text_input_on(
     app: &crate::app_context::AppContext,

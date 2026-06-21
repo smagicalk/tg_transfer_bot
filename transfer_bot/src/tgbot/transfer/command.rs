@@ -30,11 +30,11 @@ pub(in crate::tgbot) use lookup::lookup_command_on;
 pub(in crate::tgbot) use menu::menu_command_on;
 pub use menu::{cancel_menu_input, discard_menu_input, discard_menu_input_for_command};
 pub(in crate::tgbot) use menu::{handle_menu_shared_chat_input_on, handle_menu_text_input_on};
+pub(in crate::tgbot) use menu::start_transfer_target_choice_from_bot_message;
 pub use points::{balance_command, points_command};
 pub(in crate::tgbot) use targets::targets_command_on;
-pub(in crate::tgbot) use transfer_cmd::{
-    transfer_bot_message_auto_command_on, transfer_command_on,
-};
+pub(in crate::tgbot) use transfer_cmd::transfer_command_on;
+pub(in crate::tgbot) use transfer_cmd::transferable_message_source_location;
 
 /// 给转存结果/进度卡片生成“任务详情”按钮数据。
 ///

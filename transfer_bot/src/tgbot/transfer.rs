@@ -17,8 +17,9 @@ mod workflow;
 pub(in crate::tgbot) use command::{
     acl_command_on, billing_command_on, cache_command_on, config_command_on, downloads_command_on,
     handle_menu_shared_chat_input_on, handle_menu_text_input_on, health_command_on, job_command_on,
-    lookup_command_on, menu_command_on, targets_command_on, transfer_bot_message_auto_command_on,
-    transfer_callback_query_on, transfer_command_on,
+    lookup_command_on, menu_command_on, start_transfer_target_choice_from_bot_message,
+    targets_command_on, transfer_callback_query_on, transfer_command_on,
+    transferable_message_source_location,
 };
 pub use command::{
     balance_command, cancel_menu_input, discard_menu_input, discard_menu_input_for_command,

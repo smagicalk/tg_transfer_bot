@@ -286,6 +286,19 @@ cargo run -p transfer_bot -- -c config.json
 /transfer archive
 ```
 
+私聊 bot 直接发送一条 bot 可见媒体时：
+
+```text
+不需要先补 /transfer
+-> 直接进入“选择目标 -> 确认执行”流程
+```
+
+私聊 bot 转发一条能还原原始 chat/message_id 的消息时：
+
+```text
+也会直接进入“选择目标 -> 确认执行”流程
+```
+
 进入菜单向导：
 
 ```text
