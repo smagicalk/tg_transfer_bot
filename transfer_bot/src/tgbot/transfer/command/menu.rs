@@ -146,6 +146,38 @@ pub(super) async fn start_admin_input_callback(
     .await
 }
 
+/// 启动带上下文的管理输入。
+///
+/// 供运行时管理页把“已选中的现有项”挂到草稿上，例如先选 alias，再只输入新的 target_chat_id。
+pub(super) async fn start_admin_input_callback_with_context(
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    action: AdminInputAction,
+    context_text: Option<String>,
+    context_i64: Option<i64>,
+    prompt_title: Option<String>,
+    prompt_detail: Option<String>,
+    prompt_placeholder: Option<String>,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    input::admin_input_callback_query_with_context(
+        callback_query_id,
+        chat_id,
+        message_id,
+        sender_user_id,
+        action,
+        context_text,
+        context_i64,
+        prompt_title,
+        prompt_detail,
+        prompt_placeholder,
+        client_id,
+    )
+    .await
+}
+
 pub(in crate::tgbot::transfer::command) async fn start_points_adjust_input_callback(
     callback_query_id: i64,
     chat_id: i64,
@@ -688,6 +720,26 @@ pub(in crate::tgbot) async fn start_transfer_target_choice_from_bot_message(
         sender_user_id,
         MenuInputKind::Transfer,
         format!("bot-message:{}:{}", source_chat_id, source_message_id),
+        client_id,
+    )
+    .await
+}
+
+/// 从私聊里发送的单独一条链接文本直接启动目标选择流程。
+pub(in crate::tgbot) async fn start_transfer_target_choice_from_link_message(
+    app: &crate::app_context::AppContext,
+    config: Arc<BotConfig>,
+    chat_id: i64,
+    sender_user_id: i64,
+    source_link: String,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    input::start_transfer_target_choice_from_link_on(
+        app,
+        config,
+        chat_id,
+        sender_user_id,
+        source_link,
         client_id,
     )
     .await

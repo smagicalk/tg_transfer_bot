@@ -2,7 +2,8 @@
 // 具体实现按职责拆到目标流程和单步输入两个文件，外层仍通过本模块导入，避免调用方感知文件结构变化。
 
 pub(in crate::tgbot::transfer::command::menu) use super::callbacks_simple::{
-    admin_input_callback_query, cancel_input_callback_query, job_id_input_callback_query,
+    admin_input_callback_query, admin_input_callback_query_with_context,
+    cancel_input_callback_query, job_id_input_callback_query,
     point_ledger_user_input_callback_query, points_adjust_input_callback_query,
 };
 pub(in crate::tgbot::transfer::command::menu) use super::callbacks_target::{

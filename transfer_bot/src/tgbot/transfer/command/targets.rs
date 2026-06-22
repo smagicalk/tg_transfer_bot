@@ -5,6 +5,7 @@
 use crate::config::TargetsConfig;
 use crate::tgbot::send;
 use crate::tgbot::transfer::card;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
 use super::common::{
     CommandStyle, RuntimeAdminHelpCopyButton, RuntimeAdminHelpDescriptor, RuntimeAdminUsageItem,
@@ -16,13 +17,14 @@ use super::common::{
 /// 目标页标题。
 const TARGETS_PAGE_TITLE: &str = "目标配置";
 /// 目标页简要说明。
-const TARGETS_PAGE_DETAIL: &str = "管理默认目标、请求路由和目标别名；点输入按钮后按提示回复参数。";
+const TARGETS_PAGE_DETAIL: &str =
+    "默认目标未显式设置时会回落到当前请求私聊；可按现有路由/别名逐项选择后再修改。";
 
 /// `/targets` callback 前缀。
 const TARGETS_CALLBACK_PREFIX: &str = "tcfg:";
 
 /// `/targets` callback 动作。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum TargetsCallbackAction {
     Refresh,
     Reset,
@@ -34,21 +36,37 @@ enum TargetsCallbackAction {
     InputDelRoute,
     InputSetAlias,
     InputDelAlias,
+    ViewRoute(i64),
+    ViewAlias(String),
+    EditRoute(i64),
+    EditAlias(String),
+    DeleteRoute(i64),
+    DeleteAlias(String),
+    UseRouteAsDefault(i64),
+    UseAliasAsDefault(String),
 }
 
 impl TargetsCallbackAction {
-    fn started_tip(self) -> &'static str {
+    fn started_tip(&self) -> &'static str {
         match self {
             Self::Refresh => "正在刷新目标配置",
             Self::Reset => "正在重置目标配置",
-            Self::ClearDefault => "正在清空默认目标",
+            Self::ClearDefault => "正在恢复私聊默认目标",
             Self::InputSetDefault
             | Self::PickSetDefault
             | Self::InputSetRoute
             | Self::PickSetRoute
             | Self::InputDelRoute
             | Self::InputSetAlias
-            | Self::InputDelAlias => "请回复参数",
+            | Self::InputDelAlias
+            | Self::EditRoute(_)
+            | Self::EditAlias(_) => "请回复参数",
+            Self::ViewRoute(_)
+            | Self::ViewAlias(_)
+            | Self::DeleteRoute(_)
+            | Self::DeleteAlias(_)
+            | Self::UseRouteAsDefault(_)
+            | Self::UseAliasAsDefault(_) => "正在打开目标详情",
         }
     }
 }
@@ -56,7 +74,7 @@ impl TargetsCallbackAction {
 /// `/targets` 单步输入动作规格。
 ///
 /// callback 按钮、help 示例、ForceReply 文案和输入解析都从这里读取，避免新增目标动作时漏改多处。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(in crate::tgbot::transfer::command) struct TargetsInputSpec {
     pub action: super::menu::AdminInputAction,
     callback_action: TargetsCallbackAction,
@@ -78,52 +96,52 @@ pub(in crate::tgbot::transfer::command) const TARGETS_INPUT_SPECS: &[TargetsInpu
         callback_action: TargetsCallbackAction::InputSetDefault,
         button_label: "设默认",
         input_title: "设置默认目标",
-        input_detail: "请回复目标 chat_id，例如 -1001234567890；或发送 /cancel 取消。",
+        input_detail: "请回复目标私聊 chat_id，例如 123456789；或发送 /cancel 取消。",
         input_placeholder: "输入 target_chat_id，或发送 /cancel",
         subcommand: "set-default",
         expected_parts: 1,
-        example_command: "/targets set-default -1001234567890",
+        example_command: "/targets set-default 123456789",
         copy_label: "复制默认",
         interaction_detail: "设默认：回复 target_chat_id。",
     },
     TargetsInputSpec {
         action: super::menu::AdminInputAction::TargetsPickDefault,
         callback_action: TargetsCallbackAction::PickSetDefault,
-        button_label: "选默认",
+        button_label: "旧选默认",
         input_title: "选择默认目标",
-        input_detail: "点击后会弹出 Telegram 原生选群器，选中的群会写入 default_chat_id。",
-        input_placeholder: "选择目标群组",
+        input_detail: "旧版入口：当前版本默认目标推荐直接恢复为“当前请求私聊”。",
+        input_placeholder: "已不建议使用",
         subcommand: "set-default",
         expected_parts: 1,
-        example_command: "/targets set-default -1001234567890",
+        example_command: "/targets set-default 123456789",
         copy_label: "复制默认",
-        interaction_detail: "选默认：通过 Telegram 原生选群器选择目标群组。",
+        interaction_detail: "旧选默认：兼容保留，推荐改用“恢复私聊默认”或手动输入。 ",
     },
     TargetsInputSpec {
         action: super::menu::AdminInputAction::TargetsSetRoute,
         callback_action: TargetsCallbackAction::InputSetRoute,
         button_label: "设路由",
         input_title: "设置请求路由",
-        input_detail: "请回复 request_chat_id 和 target_chat_id，例如 123456789 -1001234567890。",
+        input_detail: "请回复 request_chat_id 和目标私聊 chat_id，例如 123456789 987654321。",
         input_placeholder: "输入 request_chat_id target_chat_id",
         subcommand: "set-route",
         expected_parts: 2,
-        example_command: "/targets set-route 123456789 -1001234567890",
+        example_command: "/targets set-route 123456789 987654321",
         copy_label: "复制路由",
         interaction_detail: "设路由：回复 request_chat_id target_chat_id。",
     },
     TargetsInputSpec {
         action: super::menu::AdminInputAction::TargetsPickRoute,
         callback_action: TargetsCallbackAction::PickSetRoute,
-        button_label: "选路由",
+        button_label: "旧选路由",
         input_title: "选择请求路由目标",
-        input_detail: "先回复 request_chat_id，再通过 Telegram 原生选群器选择目标群组。",
-        input_placeholder: "输入 request_chat_id，随后选择群组",
+        input_detail: "旧版入口：当前版本建议直接输入 request_chat_id 和目标私聊 chat_id。",
+        input_placeholder: "已不建议使用",
         subcommand: "set-route",
         expected_parts: 2,
-        example_command: "/targets set-route 123456789 -1001234567890",
+        example_command: "/targets set-route 123456789 987654321",
         copy_label: "复制路由",
-        interaction_detail: "选路由：先回复 request_chat_id，再用原生选群器选择目标群组。",
+        interaction_detail: "旧选路由：兼容保留，推荐直接输入 request_chat_id 和目标私聊 chat_id。",
     },
     TargetsInputSpec {
         action: super::menu::AdminInputAction::TargetsDelRoute,
@@ -143,11 +161,11 @@ pub(in crate::tgbot::transfer::command) const TARGETS_INPUT_SPECS: &[TargetsInpu
         callback_action: TargetsCallbackAction::InputSetAlias,
         button_label: "设别名",
         input_title: "设置目标别名",
-        input_detail: "请回复 alias 和 target_chat_id，例如 archive -1001234567890。",
+        input_detail: "请回复 alias 和目标私聊 chat_id，例如 archive 123456789。",
         input_placeholder: "输入 alias target_chat_id",
         subcommand: "set-alias",
         expected_parts: 2,
-        example_command: "/targets set-alias archive -1001234567890",
+        example_command: "/targets set-alias archive 123456789",
         copy_label: "复制别名",
         interaction_detail: "设别名：回复 alias target_chat_id。",
     },
@@ -177,11 +195,11 @@ pub(in crate::tgbot::transfer::command) fn targets_input_spec_for_admin_action(
 
 /// 根据 callback 动作反查 `/targets` 输入规格。
 fn targets_input_spec_for_callback_action(
-    action: TargetsCallbackAction,
+    action: &TargetsCallbackAction,
 ) -> Option<&'static TargetsInputSpec> {
     TARGETS_INPUT_SPECS
         .iter()
-        .find(|spec| spec.callback_action == action)
+        .find(|spec| spec.callback_action == *action)
 }
 
 /// 在指定上下文上执行 `/targets` 文本命令。
@@ -283,7 +301,10 @@ pub(in crate::tgbot::transfer::command) fn targets_help_descriptor() -> RuntimeA
 
 /// `/targets` 帮助页和卡片共用的交互说明。
 fn targets_interaction_items() -> Vec<String> {
-    let mut items = vec!["刷新 / 重置默认 / 清空默认：直接点按钮执行。".to_owned()];
+    let mut items = vec![
+        "刷新 / 重置默认 / 恢复私聊默认：直接点按钮执行。".to_owned(),
+        "现有路由 / 现有别名：可先点进详情，再修改或删除。".to_owned(),
+    ];
     items.extend(
         TARGETS_INPUT_SPECS
             .iter()
@@ -360,11 +381,11 @@ pub async fn targets_callback_query_on(
     };
     send::answer_callback_query(update.id, Some(action.started_tip()), client_id).await?;
 
-    let action_result = match action {
+    let action_result = match action.clone() {
         TargetsCallbackAction::Refresh => Ok(()),
         TargetsCallbackAction::Reset => reset_targets_config_to_default_on(app).await.map(|_| ()),
         TargetsCallbackAction::ClearDefault => {
-            update_targets_with_on(app, &cleared_action_title("默认目标"), |config| {
+            update_targets_with_on(app, &cleared_action_title("私聊默认目标"), |config| {
                 config.default_chat_id = 0;
             })
             .await
@@ -377,7 +398,7 @@ pub async fn targets_callback_query_on(
         | TargetsCallbackAction::InputDelRoute
         | TargetsCallbackAction::InputSetAlias
         | TargetsCallbackAction::InputDelAlias => {
-            let Some(spec) = targets_input_spec_for_callback_action(action) else {
+            let Some(spec) = targets_input_spec_for_callback_action(&action) else {
                 anyhow::bail!(
                     "missing targets input spec for callback action: {:?}",
                     action
@@ -392,6 +413,124 @@ pub async fn targets_callback_query_on(
                 client_id,
             )
             .await;
+        }
+        TargetsCallbackAction::ViewRoute(request_chat_id) => {
+            let config = crate::tgbot::transfer::targets_runtime_config_on(app);
+            let Some(target_chat_id) = config.by_request_chat_id.get(&request_chat_id).copied()
+            else {
+                anyhow::bail!("route request_chat_id not found: {}", request_chat_id);
+            };
+            let (text, keyboard) =
+                send::ReplyPanel::card(format_route_detail_text(request_chat_id, target_chat_id))
+                    .rows(build_route_detail_buttons(request_chat_id))
+                    .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "目标配置",
+                "/targets show",
+            )
+            .await?;
+            return Ok(());
+        }
+        TargetsCallbackAction::ViewAlias(alias) => {
+            let config = crate::tgbot::transfer::targets_runtime_config_on(app);
+            let Some(target_chat_id) = config.aliases.get(&alias).copied() else {
+                anyhow::bail!("alias not found: {}", alias);
+            };
+            let (text, keyboard) =
+                send::ReplyPanel::card(format_alias_detail_text(&alias, target_chat_id))
+                    .rows(build_alias_detail_buttons(&alias))
+                    .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "目标配置",
+                "/targets show",
+            )
+            .await?;
+            return Ok(());
+        }
+        TargetsCallbackAction::EditRoute(request_chat_id) => {
+            return super::menu::start_admin_input_callback_with_context(
+                update.id,
+                update.chat_id,
+                update.message_id,
+                update.sender_user_id,
+                super::menu::AdminInputAction::TargetsSetRoute,
+                None,
+                Some(request_chat_id),
+                Some("修改请求路由".to_owned()),
+                Some(format!(
+                    "已选 request_chat_id：{}。请只回复新的目标私聊 chat_id；或发送 /cancel 取消。",
+                    request_chat_id
+                )),
+                Some("输入新的 target_chat_id，或发送 /cancel".to_owned()),
+                client_id,
+            )
+            .await;
+        }
+        TargetsCallbackAction::EditAlias(alias) => {
+            return super::menu::start_admin_input_callback_with_context(
+                update.id,
+                update.chat_id,
+                update.message_id,
+                update.sender_user_id,
+                super::menu::AdminInputAction::TargetsSetAlias,
+                Some(alias.clone()),
+                None,
+                Some("修改目标别名".to_owned()),
+                Some(format!(
+                    "已选 alias：{}。请只回复新的目标私聊 chat_id；或发送 /cancel 取消。",
+                    alias
+                )),
+                Some("输入新的 target_chat_id，或发送 /cancel".to_owned()),
+                client_id,
+            )
+            .await;
+        }
+        TargetsCallbackAction::DeleteRoute(request_chat_id) => {
+            update_targets_with_on(app, &deleted_action_title("请求路由"), |config| {
+                config.by_request_chat_id.remove(&request_chat_id);
+            })
+            .await
+            .map(|_| ())
+        }
+        TargetsCallbackAction::DeleteAlias(alias) => {
+            update_targets_with_on(app, &deleted_action_title("目标别名"), |config| {
+                config.aliases.remove(&alias);
+            })
+            .await
+            .map(|_| ())
+        }
+        TargetsCallbackAction::UseRouteAsDefault(request_chat_id) => {
+            let config = crate::tgbot::transfer::targets_runtime_config_on(app);
+            let Some(target_chat_id) = config.by_request_chat_id.get(&request_chat_id).copied()
+            else {
+                anyhow::bail!("route request_chat_id not found: {}", request_chat_id);
+            };
+            update_targets_with_on(app, &updated_action_title("默认目标"), |config| {
+                config.default_chat_id = target_chat_id;
+            })
+            .await
+            .map(|_| ())
+        }
+        TargetsCallbackAction::UseAliasAsDefault(alias) => {
+            let config = crate::tgbot::transfer::targets_runtime_config_on(app);
+            let Some(target_chat_id) = config.aliases.get(&alias).copied() else {
+                anyhow::bail!("alias not found: {}", alias);
+            };
+            update_targets_with_on(app, &updated_action_title("默认目标"), |config| {
+                config.default_chat_id = target_chat_id;
+            })
+            .await
+            .map(|_| ())
         }
     };
     if let Err(err) = action_result {
@@ -423,6 +562,108 @@ pub(super) fn format_targets_text_on(app: &crate::app_context::AppContext, title
         title,
         &crate::tgbot::transfer::targets_runtime_config_on(app),
     )
+}
+
+/// 现有请求路由详情卡片。
+fn format_route_detail_text(request_chat_id: i64, target_chat_id: i64) -> String {
+    [
+        "请求路由".to_owned(),
+        card::field("request_chat_id", request_chat_id),
+        card::field("target_chat_id", target_chat_id),
+        String::new(),
+        card::section("下一步"),
+        "可以直接修改目标、设为默认，或删除这条路由。".to_owned(),
+    ]
+    .join("\n")
+}
+
+/// 现有目标别名详情卡片。
+fn format_alias_detail_text(alias: &str, target_chat_id: i64) -> String {
+    [
+        "目标别名".to_owned(),
+        card::field("alias", alias),
+        card::field("target_chat_id", target_chat_id),
+        String::new(),
+        card::section("下一步"),
+        "可以直接修改目标、设为默认，或删除这个别名。".to_owned(),
+    ]
+    .join("\n")
+}
+
+/// 请求路由详情页按钮。
+fn build_route_detail_buttons(
+    request_chat_id: i64,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![
+            send::build_callback_button(
+                "改目标",
+                &build_targets_callback_data(TargetsCallbackAction::EditRoute(request_chat_id)),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "设默认",
+                &build_targets_callback_data(TargetsCallbackAction::UseRouteAsDefault(
+                    request_chat_id,
+                )),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "删路由",
+                &build_targets_callback_data(TargetsCallbackAction::DeleteRoute(request_chat_id)),
+                tdlib_rs::enums::ButtonStyle::Danger,
+            ),
+        ],
+        build_help_menu_row(
+            send::build_callback_button(
+                "返回目标",
+                &build_targets_callback_data(TargetsCallbackAction::Refresh),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &super::build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ),
+    ]
+}
+
+/// 别名详情页按钮。
+fn build_alias_detail_buttons(alias: &str) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![
+            send::build_callback_button(
+                "改目标",
+                &build_targets_callback_data(TargetsCallbackAction::EditAlias(alias.to_owned())),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "设默认",
+                &build_targets_callback_data(TargetsCallbackAction::UseAliasAsDefault(
+                    alias.to_owned(),
+                )),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "删别名",
+                &build_targets_callback_data(TargetsCallbackAction::DeleteAlias(alias.to_owned())),
+                tdlib_rs::enums::ButtonStyle::Danger,
+            ),
+        ],
+        build_help_menu_row(
+            send::build_callback_button(
+                "返回目标",
+                &build_targets_callback_data(TargetsCallbackAction::Refresh),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &super::build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ),
+    ]
 }
 
 /// 在指定上下文上按闭包更新 targets 配置并立即刷新运行时状态。
@@ -473,12 +714,38 @@ fn normalize_targets_config(config: &mut TargetsConfig) {
     config.aliases.retain(|alias, _| !alias.trim().is_empty());
 }
 
+/// 以稳定顺序返回请求路由，便于文本渲染和按钮布局。
+fn sorted_routes(config: &TargetsConfig) -> Vec<(i64, i64)> {
+    let mut routes = config
+        .by_request_chat_id
+        .iter()
+        .map(|(request_chat_id, target_chat_id)| (*request_chat_id, *target_chat_id))
+        .collect::<Vec<_>>();
+    routes.sort_by_key(|(request_chat_id, _)| *request_chat_id);
+    routes
+}
+
+/// 以稳定顺序返回目标别名，便于文本渲染和按钮布局。
+fn sorted_aliases(config: &TargetsConfig) -> Vec<(String, i64)> {
+    let mut aliases = config
+        .aliases
+        .iter()
+        .map(|(alias, target_chat_id)| (alias.clone(), *target_chat_id))
+        .collect::<Vec<_>>();
+    aliases.sort_by(|left, right| left.0.cmp(&right.0));
+    aliases
+}
+
 /// 格式化 targets 配置卡片。
 fn format_targets_config_text(title: &str, config: &TargetsConfig) -> String {
     let mut lines = build_runtime_admin_page_intro(title, TARGETS_PAGE_DETAIL);
     lines.extend([
         card::section("默认目标"),
-        card::field("default_chat_id", config.default_chat_id),
+        if config.default_chat_id == 0 {
+            card::note("未显式配置时，默认回落到当前请求私聊。")
+        } else {
+            card::field("default_chat_id", config.default_chat_id)
+        },
         String::new(),
         card::section("请求路由"),
     ]);
@@ -486,13 +753,7 @@ fn format_targets_config_text(title: &str, config: &TargetsConfig) -> String {
     if config.by_request_chat_id.is_empty() {
         lines.push(card::note("当前没有按请求 chat 的单独路由。"));
     } else {
-        let mut routes = config
-            .by_request_chat_id
-            .iter()
-            .map(|(request_chat_id, target_chat_id)| (*request_chat_id, *target_chat_id))
-            .collect::<Vec<_>>();
-        routes.sort_by_key(|(request_chat_id, _)| *request_chat_id);
-        for (request_chat_id, target_chat_id) in routes {
+        for (request_chat_id, target_chat_id) in sorted_routes(config) {
             lines.push(format!(
                 "{} -> {}",
                 card::code(request_chat_id),
@@ -505,13 +766,7 @@ fn format_targets_config_text(title: &str, config: &TargetsConfig) -> String {
     if config.aliases.is_empty() {
         lines.push(card::note("当前没有目标别名。"));
     } else {
-        let mut aliases = config
-            .aliases
-            .iter()
-            .map(|(alias, target_chat_id)| (alias.clone(), *target_chat_id))
-            .collect::<Vec<_>>();
-        aliases.sort_by(|left, right| left.0.cmp(&right.0));
-        for (alias, target_chat_id) in aliases {
+        for (alias, target_chat_id) in sorted_aliases(config) {
             lines.push(format!(
                 "{} -> {}",
                 card::code(alias),
@@ -540,37 +795,59 @@ pub(super) fn build_targets_buttons_on(
     app: &crate::app_context::AppContext,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let config = crate::tgbot::transfer::targets_runtime_config_on(app);
-    let mut rows = vec![vec![
-        send::build_callback_button(
-            "刷新",
-            &build_targets_callback_data(TargetsCallbackAction::Refresh),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        send::build_callback_button(
-            "重置默认",
-            &build_targets_callback_data(TargetsCallbackAction::Reset),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ]];
-    if config.default_chat_id != 0 {
-        rows[0].push(send::build_callback_button(
-            "清空默认",
-            &build_targets_callback_data(TargetsCallbackAction::ClearDefault),
-            tdlib_rs::enums::ButtonStyle::Danger,
-        ));
-    }
+    let mut rows = vec![
+        vec![
+            send::build_callback_button(
+                "刷新",
+                &build_targets_callback_data(TargetsCallbackAction::Refresh),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "重置默认",
+                &build_targets_callback_data(TargetsCallbackAction::Reset),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "恢复私聊默认",
+                &build_targets_callback_data(TargetsCallbackAction::ClearDefault),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        build_targets_input_row(&[
+            TARGETS_INPUT_SPECS[0].clone(),
+            TARGETS_INPUT_SPECS[2].clone(),
+            TARGETS_INPUT_SPECS[5].clone(),
+        ]),
+    ];
+    let route_buttons = sorted_routes(&config)
+        .into_iter()
+        .map(|(request_chat_id, _target_chat_id)| {
+            send::build_callback_button(
+                &format!("路由 {}", request_chat_id),
+                &build_targets_callback_data(TargetsCallbackAction::ViewRoute(request_chat_id)),
+                tdlib_rs::enums::ButtonStyle::Default,
+            )
+        })
+        .collect::<Vec<_>>();
+    rows.extend(chunk_buttons(route_buttons, 2));
+    let alias_buttons = sorted_aliases(&config)
+        .into_iter()
+        .map(|(alias, _target_chat_id)| {
+            let callback_data =
+                build_targets_callback_data(TargetsCallbackAction::ViewAlias(alias.clone()));
+            send::build_callback_button(
+                &alias,
+                &callback_data,
+                tdlib_rs::enums::ButtonStyle::Default,
+            )
+        })
+        .collect::<Vec<_>>();
+    rows.extend(chunk_buttons(alias_buttons, 2));
     rows.push(build_targets_input_row(&[
-        TARGETS_INPUT_SPECS[0],
-        TARGETS_INPUT_SPECS[1],
-    ]));
-    rows.push(build_targets_input_row(&[
-        TARGETS_INPUT_SPECS[2],
-        TARGETS_INPUT_SPECS[3],
-        TARGETS_INPUT_SPECS[4],
-    ]));
-    rows.push(build_targets_input_row(&[
-        TARGETS_INPUT_SPECS[5],
-        TARGETS_INPUT_SPECS[6],
+        TARGETS_INPUT_SPECS[1].clone(),
+        TARGETS_INPUT_SPECS[3].clone(),
+        TARGETS_INPUT_SPECS[4].clone(),
+        TARGETS_INPUT_SPECS[6].clone(),
     ]));
     rows.push(build_help_menu_row(
         send::build_callback_button(
@@ -587,6 +864,17 @@ pub(super) fn build_targets_buttons_on(
     rows
 }
 
+/// 把按钮按列数分行。
+fn chunk_buttons(
+    buttons: Vec<tdlib_rs::types::InlineKeyboardButton>,
+    chunk_size: usize,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    if chunk_size == 0 {
+        return vec![buttons];
+    }
+    buttons.chunks(chunk_size).map(<[_]>::to_vec).collect()
+}
+
 /// 构造 targets 输入按钮行。
 fn build_targets_input_row(
     specs: &[TargetsInputSpec],
@@ -596,11 +884,22 @@ fn build_targets_input_row(
         .map(|spec| {
             send::build_callback_button(
                 spec.button_label,
-                &build_targets_callback_data(spec.callback_action),
+                &build_targets_callback_data(spec.callback_action.clone()),
                 tdlib_rs::enums::ButtonStyle::Default,
             )
         })
         .collect()
+}
+
+/// 编码 alias 到 callback payload。
+fn encode_alias_payload(alias: &str) -> String {
+    URL_SAFE_NO_PAD.encode(alias)
+}
+
+/// 从 callback payload 解码 alias。
+fn decode_alias_payload(payload: &str) -> Option<String> {
+    let decoded = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    String::from_utf8(decoded).ok()
 }
 
 fn parse_targets_callback_data(data: &str) -> Option<TargetsCallbackAction> {
@@ -616,7 +915,32 @@ fn parse_targets_callback_data(data: &str) -> Option<TargetsCallbackAction> {
         "id" => Some(TargetsCallbackAction::InputDelRoute),
         "ia" => Some(TargetsCallbackAction::InputSetAlias),
         "ix" => Some(TargetsCallbackAction::InputDelAlias),
-        _ => None,
+        _ => {
+            let (kind, raw) = payload.split_once(':')?;
+            match kind {
+                "vr" => raw
+                    .parse::<i64>()
+                    .ok()
+                    .map(TargetsCallbackAction::ViewRoute),
+                "er" => raw
+                    .parse::<i64>()
+                    .ok()
+                    .map(TargetsCallbackAction::EditRoute),
+                "dr" => raw
+                    .parse::<i64>()
+                    .ok()
+                    .map(TargetsCallbackAction::DeleteRoute),
+                "ur" => raw
+                    .parse::<i64>()
+                    .ok()
+                    .map(TargetsCallbackAction::UseRouteAsDefault),
+                "va" => decode_alias_payload(raw).map(TargetsCallbackAction::ViewAlias),
+                "ea" => decode_alias_payload(raw).map(TargetsCallbackAction::EditAlias),
+                "da" => decode_alias_payload(raw).map(TargetsCallbackAction::DeleteAlias),
+                "ua" => decode_alias_payload(raw).map(TargetsCallbackAction::UseAliasAsDefault),
+                _ => None,
+            }
+        }
     }
 }
 
@@ -632,6 +956,42 @@ fn build_targets_callback_data(action: TargetsCallbackAction) -> String {
         TargetsCallbackAction::InputDelRoute => "id",
         TargetsCallbackAction::InputSetAlias => "ia",
         TargetsCallbackAction::InputDelAlias => "ix",
+        TargetsCallbackAction::ViewRoute(request_chat_id) => {
+            return format!("{TARGETS_CALLBACK_PREFIX}vr:{request_chat_id}");
+        }
+        TargetsCallbackAction::ViewAlias(alias) => {
+            return format!(
+                "{TARGETS_CALLBACK_PREFIX}va:{}",
+                encode_alias_payload(&alias)
+            );
+        }
+        TargetsCallbackAction::EditRoute(request_chat_id) => {
+            return format!("{TARGETS_CALLBACK_PREFIX}er:{request_chat_id}");
+        }
+        TargetsCallbackAction::EditAlias(alias) => {
+            return format!(
+                "{TARGETS_CALLBACK_PREFIX}ea:{}",
+                encode_alias_payload(&alias)
+            );
+        }
+        TargetsCallbackAction::DeleteRoute(request_chat_id) => {
+            return format!("{TARGETS_CALLBACK_PREFIX}dr:{request_chat_id}");
+        }
+        TargetsCallbackAction::DeleteAlias(alias) => {
+            return format!(
+                "{TARGETS_CALLBACK_PREFIX}da:{}",
+                encode_alias_payload(&alias)
+            );
+        }
+        TargetsCallbackAction::UseRouteAsDefault(request_chat_id) => {
+            return format!("{TARGETS_CALLBACK_PREFIX}ur:{request_chat_id}");
+        }
+        TargetsCallbackAction::UseAliasAsDefault(alias) => {
+            return format!(
+                "{TARGETS_CALLBACK_PREFIX}ua:{}",
+                encode_alias_payload(&alias)
+            );
+        }
     };
     format!("{TARGETS_CALLBACK_PREFIX}{suffix}")
 }
@@ -665,7 +1025,7 @@ fn parse_alias_arg(text: &[&str], index: usize, usage: &str) -> anyhow::Result<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::engine::general_purpose;
 
     #[test]
     fn test_targets_callback_roundtrip() {
@@ -674,6 +1034,11 @@ mod tests {
         let clear = build_targets_callback_data(TargetsCallbackAction::ClearDefault);
         let pick_default = build_targets_callback_data(TargetsCallbackAction::PickSetDefault);
         let pick_route = build_targets_callback_data(TargetsCallbackAction::PickSetRoute);
+        let view_route = build_targets_callback_data(TargetsCallbackAction::ViewRoute(42));
+        let view_alias =
+            build_targets_callback_data(TargetsCallbackAction::ViewAlias("archive".to_owned()));
+        let edit_alias =
+            build_targets_callback_data(TargetsCallbackAction::EditAlias("archive".to_owned()));
 
         assert!(is_targets_callback_data(&refresh));
         assert_eq!(
@@ -695,6 +1060,18 @@ mod tests {
         assert_eq!(
             parse_targets_callback_data(&pick_route),
             Some(TargetsCallbackAction::PickSetRoute)
+        );
+        assert_eq!(
+            parse_targets_callback_data(&view_route),
+            Some(TargetsCallbackAction::ViewRoute(42))
+        );
+        assert_eq!(
+            parse_targets_callback_data(&view_alias),
+            Some(TargetsCallbackAction::ViewAlias("archive".to_owned()))
+        );
+        assert_eq!(
+            parse_targets_callback_data(&edit_alias),
+            Some(TargetsCallbackAction::EditAlias("archive".to_owned()))
         );
         assert_eq!(parse_targets_callback_data("tcfg:bad"), None);
     }
@@ -721,6 +1098,8 @@ mod tests {
         let app = crate::app_context::app_context();
         app.targets_runtime.update_runtime_config(TargetsConfig {
             default_chat_id: -100,
+            by_request_chat_id: std::collections::HashMap::from([(1, 10001)]),
+            aliases: std::collections::HashMap::from([("archive".to_owned(), 10002)]),
             ..Default::default()
         });
 
@@ -732,10 +1111,10 @@ mod tests {
         let decoded =
             String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
         assert_eq!(decoded, "tcfg:r");
-        assert_eq!(rows[0][2].text, "清空默认");
+        assert_eq!(rows[0][2].text, "恢复私聊默认");
         assert!(rows.iter().flatten().any(|button| button.text == "设默认"));
-        assert!(rows.iter().flatten().any(|button| button.text == "选默认"));
-        assert!(rows.iter().flatten().any(|button| button.text == "选路由"));
+        assert!(rows.iter().flatten().any(|button| button.text == "路由 1"));
+        assert!(rows.iter().flatten().any(|button| button.text == "archive"));
         assert!(rows.iter().flatten().any(|button| button.text == "设别名"));
     }
 

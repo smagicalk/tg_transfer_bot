@@ -259,6 +259,7 @@ pub async fn handle_update(
                 message_id = message.id,
                 "authorized text message received"
             );
+            let direct_transfer_link = extract_direct_transfer_link(&message_text);
             let raw_text = message_text.text.text;
             let text = raw_text.split_whitespace().collect::<Vec<&str>>();
             if text.is_empty() {
@@ -526,6 +527,85 @@ pub async fn handle_update(
                     "admin text message consumed by menu input"
                 );
                 return Ok(());
+            } else if let Some(source_link) = direct_transfer_link {
+                tracing::info!(
+                    chat_id,
+                    sender_id,
+                    message_id = message.id,
+                    actor_role = actor.role.as_str(),
+                    "direct transfer link received, entering transfer target selection"
+                );
+                if let Err(err) = tgbot::transfer::start_transfer_target_choice_from_link_message(
+                    app_context.as_ref(),
+                    config.clone(),
+                    chat_id,
+                    sender_id,
+                    source_link,
+                    interaction_client_id,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        chat_id,
+                        sender_id,
+                        message_id = message.id,
+                        error = %err,
+                        "link text target selection failed"
+                    );
+                    send_command_error_message("/transfer", &err, chat_id, interaction_client_id)
+                        .await?;
+                }
+                return Ok(());
+            } else if request_message.forward_info.is_some()
+                && tgbot::transfer::is_transferable_message(&request_message)
+            {
+                let Some((source_chat_id, source_message_id)) =
+                    tgbot::transfer::transferable_message_source_location(&request_message)
+                else {
+                    tracing::warn!(
+                        chat_id,
+                        sender_id,
+                        message_id = request_message.id,
+                        "forwarded text message has no resolvable source location"
+                    );
+                    send_auto_transfer_hint_message(
+                        &anyhow::anyhow!(
+                            "无法定位原始消息，请改用消息链接或回复 bot 可见媒体后再试"
+                        ),
+                        chat_id,
+                        interaction_client_id,
+                    )
+                    .await?;
+                    return Ok(());
+                };
+                tracing::info!(
+                    chat_id,
+                    sender_id,
+                    message_id = message.id,
+                    actor_role = actor.role.as_str(),
+                    "forwarded text message received, entering transfer target selection"
+                );
+                if let Err(err) = tgbot::transfer::start_transfer_target_choice_from_bot_message(
+                    app_context.as_ref(),
+                    config.clone(),
+                    chat_id,
+                    sender_id,
+                    source_chat_id,
+                    source_message_id,
+                    interaction_client_id,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        chat_id,
+                        sender_id,
+                        message_id = message.id,
+                        error = %err,
+                        "forwarded text target selection failed"
+                    );
+                    send_auto_transfer_hint_message(&err, chat_id, interaction_client_id).await?;
+                }
+                return Ok(());
             } else {
                 tracing::debug!(
                     chat_id,
@@ -730,6 +810,88 @@ fn normalize_bot_command(command: &str) -> &str {
     command.split_once('@').map_or(command, |(name, _)| name)
 }
 
+/// 从文本消息中提取“可直接进入转存流程”的 Telegram 源链接。
+///
+/// 支持三种入口：
+/// - 整条纯文本就是 `t.me/...`
+/// - 文本实体里是隐藏链接 `TextUrl`
+/// - TDLib 已经生成 Telegram 链接预览
+///
+/// 这里只做轻量提取；真正链接是否合法仍交给 spider 层。
+fn extract_direct_transfer_link(message_text: &tdlib_rs::types::MessageText) -> Option<String> {
+    let trimmed = message_text.text.text.trim();
+    if !trimmed.is_empty()
+        && trimmed.split_whitespace().count() == 1
+        && looks_like_transfer_link_text(trimmed)
+    {
+        return Some(trimmed.to_owned());
+    }
+
+    for entity in &message_text.text.entities {
+        match &entity.r#type {
+            tdlib_rs::enums::TextEntityType::TextUrl(url)
+                if looks_like_transfer_link_text(&url.url) =>
+            {
+                return Some(url.url.clone());
+            }
+            tdlib_rs::enums::TextEntityType::Url => {
+                if let Some(value) = extract_entity_text_slice(&message_text.text.text, entity)
+                    && looks_like_transfer_link_text(value.trim())
+                {
+                    return Some(value.trim().to_owned());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(link_preview) = &message_text.link_preview
+        && looks_like_transfer_link_text(link_preview.url.trim())
+    {
+        return Some(link_preview.url.trim().to_owned());
+    }
+
+    None
+}
+
+/// 轻量判断一条文本是否像 Telegram 消息链接。
+fn looks_like_transfer_link_text(input: &str) -> bool {
+    input.starts_with("https://t.me/")
+        || input.starts_with("http://t.me/")
+        || input.starts_with("t.me/")
+}
+
+/// 按 TDLib 的 UTF-16 offset/length 规则切出实体文本。
+///
+/// 这里只用于 URL 实体的轻量识别，因此失败时直接返回 `None`。
+fn extract_entity_text_slice<'a>(
+    text: &'a str,
+    entity: &tdlib_rs::types::TextEntity,
+) -> Option<&'a str> {
+    let start = usize::try_from(entity.offset).ok()?;
+    let len = usize::try_from(entity.length).ok()?;
+    let end = start.checked_add(len)?;
+    let start_byte = utf16_offset_to_byte_index(text, start)?;
+    let end_byte = utf16_offset_to_byte_index(text, end)?;
+    text.get(start_byte..end_byte)
+}
+
+/// 把 TDLib 的 UTF-16 offset 映射到 Rust `str` 的 byte index。
+fn utf16_offset_to_byte_index(text: &str, target_utf16_offset: usize) -> Option<usize> {
+    let mut current_utf16_offset = 0usize;
+    for (byte_index, ch) in text.char_indices() {
+        if current_utf16_offset == target_utf16_offset {
+            return Some(byte_index);
+        }
+        current_utf16_offset += ch.len_utf16();
+    }
+    if current_utf16_offset == target_utf16_offset {
+        Some(text.len())
+    } else {
+        None
+    }
+}
+
 /// 判断交互消息是否来自 bot 私聊。
 ///
 /// 本项目不支持群聊命令交互；目标群只作为转存目的地出现。
@@ -848,8 +1010,9 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose};
 
     use super::{
-        command_error_hint, decode_callback_query_payload, is_private_interaction_chat,
-        normalize_bot_command, should_process_interactive_update, should_send_private_only_notice,
+        command_error_hint, decode_callback_query_payload, extract_direct_transfer_link,
+        is_private_interaction_chat, normalize_bot_command, should_process_interactive_update,
+        should_send_private_only_notice,
     };
     use crate::config::ClientRole;
 
@@ -957,6 +1120,109 @@ mod tests {
         assert!(should_send_private_only_notice(&command));
         assert!(!should_send_private_only_notice(&text));
         assert!(!should_send_private_only_notice(&non_text));
+    }
+
+    // 单独一条 Telegram 链接文本应直接进入目标选择，不需要先手输 /transfer。
+    #[test]
+    fn test_extract_direct_transfer_link_from_plain_text() {
+        let message_text = tdlib_rs::types::MessageText {
+            text: tdlib_rs::types::FormattedText {
+                text: "https://t.me/c/123/456".to_owned(),
+                entities: vec![],
+            },
+            link_preview: None,
+            link_preview_options: None,
+        };
+
+        assert_eq!(
+            extract_direct_transfer_link(&message_text),
+            Some("https://t.me/c/123/456".to_owned())
+        );
+    }
+
+    // 隐藏链接文本也应能提取出真实 Telegram URL。
+    #[test]
+    fn test_extract_direct_transfer_link_from_text_url_entity() {
+        let message_text = tdlib_rs::types::MessageText {
+            text: tdlib_rs::types::FormattedText {
+                text: "点我打开".to_owned(),
+                entities: vec![tdlib_rs::types::TextEntity {
+                    offset: 0,
+                    length: 4,
+                    r#type: tdlib_rs::enums::TextEntityType::TextUrl(
+                        tdlib_rs::types::TextEntityTypeTextUrl {
+                            url: "https://t.me/c/123/456".to_owned(),
+                        },
+                    ),
+                }],
+            },
+            link_preview: None,
+            link_preview_options: None,
+        };
+
+        assert_eq!(
+            extract_direct_transfer_link(&message_text),
+            Some("https://t.me/c/123/456".to_owned())
+        );
+    }
+
+    // Telegram 链接预览消息也应能作为直接入口。
+    #[test]
+    fn test_extract_direct_transfer_link_from_link_preview() {
+        let message_text = tdlib_rs::types::MessageText {
+            text: tdlib_rs::types::FormattedText {
+                text: "转这个".to_owned(),
+                entities: vec![],
+            },
+            link_preview: Some(tdlib_rs::types::LinkPreview {
+                url: "https://t.me/c/123/456".to_owned(),
+                display_url: "t.me/c/123/456".to_owned(),
+                site_name: "Telegram".to_owned(),
+                title: String::new(),
+                description: tdlib_rs::types::FormattedText {
+                    text: String::new(),
+                    entities: vec![],
+                },
+                author: String::new(),
+                r#type: tdlib_rs::enums::LinkPreviewType::Article(
+                    tdlib_rs::types::LinkPreviewTypeArticle { photo: None },
+                ),
+                has_large_media: false,
+                show_large_media: false,
+                show_media_above_description: false,
+                skip_confirmation: false,
+                show_above_text: false,
+                instant_view_version: 0,
+            }),
+            link_preview_options: None,
+        };
+
+        assert_eq!(
+            extract_direct_transfer_link(&message_text),
+            Some("https://t.me/c/123/456".to_owned())
+        );
+    }
+
+    // UTF-16 实体切片必须正确处理 emoji 等双单元字符，避免 URL 实体定位错位。
+    #[test]
+    fn test_extract_direct_transfer_link_from_url_entity_with_utf16_offset() {
+        let message_text = tdlib_rs::types::MessageText {
+            text: tdlib_rs::types::FormattedText {
+                text: "📦 https://t.me/c/123/456".to_owned(),
+                entities: vec![tdlib_rs::types::TextEntity {
+                    offset: 3,
+                    length: 22,
+                    r#type: tdlib_rs::enums::TextEntityType::Url,
+                }],
+            },
+            link_preview: None,
+            link_preview_options: None,
+        };
+
+        assert_eq!(
+            extract_direct_transfer_link(&message_text),
+            Some("https://t.me/c/123/456".to_owned())
+        );
     }
 
     // 余额不足应提示用户查看余额和联系管理员，而不是只显示英文异常。

@@ -51,6 +51,8 @@ pub(super) fn parse_admin_input_payload(
     action: AdminInputAction,
     input: &str,
     points_target_user_id: Option<i64>,
+    context_text: Option<&str>,
+    context_i64: Option<i64>,
 ) -> Option<Vec<String>> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -70,11 +72,30 @@ pub(super) fn parse_admin_input_payload(
         | AdminInputAction::TargetsSetAlias
         | AdminInputAction::TargetsDelAlias => {
             let spec = targets_input_spec_for_admin_action(action)?;
-            (parts.len() == spec.expected_parts).then(|| {
-                let mut command = vec!["/targets".to_owned(), spec.subcommand.to_owned()];
-                command.extend(parts.iter().cloned());
-                command
-            })
+            match action {
+                AdminInputAction::TargetsSetRoute if context_i64.is_some() && parts.len() == 1 => {
+                    Some(vec![
+                        "/targets".to_owned(),
+                        spec.subcommand.to_owned(),
+                        context_i64?.to_string(),
+                        parts[0].clone(),
+                    ])
+                }
+                AdminInputAction::TargetsSetAlias if context_text.is_some() && parts.len() == 1 => {
+                    Some(vec![
+                        "/targets".to_owned(),
+                        spec.subcommand.to_owned(),
+                        context_text?.to_owned(),
+                        parts[0].clone(),
+                    ])
+                }
+                _ if parts.len() == spec.expected_parts => {
+                    let mut command = vec!["/targets".to_owned(), spec.subcommand.to_owned()];
+                    command.extend(parts.iter().cloned());
+                    Some(command)
+                }
+                _ => None,
+            }
         }
         AdminInputAction::AclAddAdmin
         | AdminInputAction::AclDelAdmin
@@ -217,7 +238,13 @@ mod tests {
     #[test]
     fn test_parse_admin_input_payload_targets() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::TargetsSetDefault, "-100123", None),
+            parse_admin_input_payload(
+                AdminInputAction::TargetsSetDefault,
+                "-100123",
+                None,
+                None,
+                None
+            ),
             Some(vec![
                 "/targets".to_owned(),
                 "set-default".to_owned(),
@@ -225,7 +252,13 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::TargetsSetRoute, "1 -100123", None),
+            parse_admin_input_payload(
+                AdminInputAction::TargetsSetRoute,
+                "1 -100123",
+                None,
+                None,
+                None
+            ),
             Some(vec![
                 "/targets".to_owned(),
                 "set-route".to_owned(),
@@ -234,7 +267,13 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::TargetsSetAlias, "archive -100123", None),
+            parse_admin_input_payload(
+                AdminInputAction::TargetsSetAlias,
+                "archive -100123",
+                None,
+                None,
+                None
+            ),
             Some(vec![
                 "/targets".to_owned(),
                 "set-alias".to_owned(),
@@ -242,12 +281,42 @@ mod tests {
                 "-100123".to_owned()
             ])
         );
+        assert_eq!(
+            parse_admin_input_payload(
+                AdminInputAction::TargetsSetRoute,
+                "123456",
+                None,
+                None,
+                Some(42)
+            ),
+            Some(vec![
+                "/targets".to_owned(),
+                "set-route".to_owned(),
+                "42".to_owned(),
+                "123456".to_owned(),
+            ])
+        );
+        assert_eq!(
+            parse_admin_input_payload(
+                AdminInputAction::TargetsSetAlias,
+                "123456",
+                None,
+                Some("archive"),
+                None
+            ),
+            Some(vec![
+                "/targets".to_owned(),
+                "set-alias".to_owned(),
+                "archive".to_owned(),
+                "123456".to_owned(),
+            ])
+        );
     }
 
     #[test]
     fn test_parse_admin_input_payload_acl() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::AclAddAdmin, "123456", None),
+            parse_admin_input_payload(AdminInputAction::AclAddAdmin, "123456", None, None, None),
             Some(vec![
                 "/acl".to_owned(),
                 "add-admin".to_owned(),
@@ -255,7 +324,13 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::AclAddAllowTarget, "-100123", None),
+            parse_admin_input_payload(
+                AdminInputAction::AclAddAllowTarget,
+                "-100123",
+                None,
+                None,
+                None
+            ),
             Some(vec![
                 "/acl".to_owned(),
                 "add-allow-target".to_owned(),
@@ -267,7 +342,7 @@ mod tests {
     #[test]
     fn test_parse_admin_input_payload_billing() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::BillingSetBaseCost, "2", None),
+            parse_admin_input_payload(AdminInputAction::BillingSetBaseCost, "2", None, None, None),
             Some(vec![
                 "/billing".to_owned(),
                 "set".to_owned(),
@@ -276,7 +351,13 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::BillingSetAnnouncement, "hello world", None),
+            parse_admin_input_payload(
+                AdminInputAction::BillingSetAnnouncement,
+                "hello world",
+                None,
+                None,
+                None
+            ),
             Some(vec![
                 "/billing".to_owned(),
                 "set".to_owned(),
@@ -289,7 +370,13 @@ mod tests {
     #[test]
     fn test_parse_admin_input_payload_config() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::ConfigSetJobConcurrency, "4", None),
+            parse_admin_input_payload(
+                AdminInputAction::ConfigSetJobConcurrency,
+                "4",
+                None,
+                None,
+                None
+            ),
             Some(vec![
                 "/config".to_owned(),
                 "set".to_owned(),
@@ -298,7 +385,13 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::ConfigSetMenuInputTimeoutSeconds, "900", None),
+            parse_admin_input_payload(
+                AdminInputAction::ConfigSetMenuInputTimeoutSeconds,
+                "900",
+                None,
+                None,
+                None
+            ),
             Some(vec![
                 "/config".to_owned(),
                 "set".to_owned(),
@@ -311,7 +404,13 @@ mod tests {
     #[test]
     fn test_parse_admin_input_payload_points() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::PointsAddUser, "10 bonus", Some(42)),
+            parse_admin_input_payload(
+                AdminInputAction::PointsAddUser,
+                "10 bonus",
+                Some(42),
+                None,
+                None
+            ),
             Some(vec![
                 "/points".to_owned(),
                 "add".to_owned(),
@@ -321,7 +420,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::PointsSubUser, "5", Some(42)),
+            parse_admin_input_payload(AdminInputAction::PointsSubUser, "5", Some(42), None, None),
             Some(vec![
                 "/points".to_owned(),
                 "sub".to_owned(),
@@ -335,11 +434,11 @@ mod tests {
     #[test]
     fn test_parse_admin_input_payload_rejects_wrong_arity() {
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::TargetsSetRoute, "1", None),
+            parse_admin_input_payload(AdminInputAction::TargetsSetRoute, "1", None, None, None),
             None
         );
         assert_eq!(
-            parse_admin_input_payload(AdminInputAction::AclAddAdmin, "1 2", None),
+            parse_admin_input_payload(AdminInputAction::AclAddAdmin, "1 2", None, None, None),
             None
         );
     }

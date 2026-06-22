@@ -6,16 +6,16 @@ mod callback;
 
 use super::common::{
     CommandStyle, RuntimeAdminHelpCopyButton, RuntimeAdminHelpDescriptor, RuntimeAdminUsageItem,
-    build_command_examples, build_runtime_admin_page_intro, config_set_command,
-    config_show_command, edit_runtime_admin_interaction_card_or_error, reset_action_title,
-    send_runtime_admin_callback_error, updated_action_title,
+    build_command_examples, build_help_menu_row, build_runtime_admin_page_intro,
+    config_set_command, config_show_command, edit_runtime_admin_interaction_card_or_error,
+    reset_action_title, send_runtime_admin_callback_error, updated_action_title,
 };
 use crate::tgbot::send;
 use crate::tgbot::transfer::card;
-use callback::{CONFIG_FIELD_SPECS, ConfigCallbackAction, ConfigField, parse_config_callback_data};
+use callback::{CONFIG_FIELD_SPECS, ConfigCallbackAction, parse_config_callback_data};
 
-pub(in crate::tgbot::transfer::command) use callback::ConfigFieldSpec;
 pub(super) use callback::build_config_buttons_on;
+pub(in crate::tgbot::transfer::command) use callback::{ConfigField, ConfigFieldSpec};
 
 /// 根据菜单输入动作反查配置字段规格。
 pub(in crate::tgbot::transfer::command) fn config_field_spec_for_admin_action(
@@ -24,6 +24,13 @@ pub(in crate::tgbot::transfer::command) fn config_field_spec_for_admin_action(
     CONFIG_FIELD_SPECS
         .iter()
         .find(|spec| spec.admin_input_action == action)
+}
+
+/// 构造配置字段详情页按钮数据，供帮助页等外层入口复用。
+pub(in crate::tgbot::transfer::command) fn build_config_field_detail_button_data(
+    field: ConfigField,
+) -> String {
+    callback::build_config_detail_callback_data(ConfigCallbackAction::View { field })
 }
 
 /// `config` 管理页的最小帮助 descriptor。
@@ -122,6 +129,68 @@ const CONFIG_PAGE_TITLE: &str = "运行配置";
 const CONFIG_PAGE_DETAIL: &str =
     "按钮可直接微调；点“设并发 / 设删除 / 设GC / 设进度 / 设分页 / 设超时”后回复一个值。";
 
+/// 配置字段详情页。
+fn format_config_field_detail_text(
+    config: &crate::config::TransferConfig,
+    field: ConfigField,
+) -> String {
+    let spec = field.spec();
+    [
+        spec.input_title.to_owned(),
+        card::field(spec.key, current_config_field_value(config, field)),
+        String::new(),
+        card::section("说明"),
+        format!("可直接微调，或点“{}”进入输入流。", spec.input_label),
+    ]
+    .join("\n")
+}
+
+/// 配置字段详情页按钮。
+fn build_config_field_detail_buttons(
+    field: ConfigField,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let spec = field.spec();
+    let minus_delta = -spec.adjust_step;
+    let plus_delta = spec.adjust_step;
+    vec![
+        vec![
+            send::build_callback_button(
+                &format!("{} {}{}", spec.short_label, minus_delta, spec.adjust_unit),
+                &callback::build_config_detail_callback_data(ConfigCallbackAction::Adjust {
+                    field,
+                    delta: minus_delta,
+                }),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                &format!("{} +{}{}", spec.short_label, plus_delta, spec.adjust_unit),
+                &callback::build_config_detail_callback_data(ConfigCallbackAction::Adjust {
+                    field,
+                    delta: plus_delta,
+                }),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+        ],
+        vec![send::build_callback_button(
+            spec.input_label,
+            &callback::build_config_detail_callback_data(ConfigCallbackAction::Input { field }),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )],
+        build_help_menu_row(
+            send::build_callback_button(
+                "返回配置",
+                &callback::build_config_detail_callback_data(ConfigCallbackAction::Refresh),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &super::build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ),
+    ]
+}
+
 /// 在指定上下文上执行 `/config`。
 pub async fn config_command_on(
     app: &crate::app_context::AppContext,
@@ -195,6 +264,24 @@ pub async fn config_callback_query_on(
     let action_result = match action {
         ConfigCallbackAction::Refresh => Ok(()),
         ConfigCallbackAction::Reset => reset_transfer_config_to_default_on(app).await.map(|_| ()),
+        ConfigCallbackAction::View { field } => {
+            let config = crate::tgbot::transfer::runtime_config_on(app);
+            let (text, keyboard) =
+                send::ReplyPanel::card(format_config_field_detail_text(&config, field))
+                    .rows(build_config_field_detail_buttons(field))
+                    .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "运行配置",
+                "/config show",
+            )
+            .await?;
+            return Ok(());
+        }
         ConfigCallbackAction::Adjust { field, delta } => {
             adjust_transfer_config_on(app, field, delta).await
         }
@@ -457,6 +544,18 @@ fn format_transfer_config_text(title: &str, config: &crate::config::TransferConf
     ]);
     lines.extend(build_command_examples(config_example_commands()));
     lines.join("\n")
+}
+
+/// 读取配置字段当前值，用于详情页渲染。
+fn current_config_field_value(config: &crate::config::TransferConfig, field: ConfigField) -> i64 {
+    match field {
+        ConfigField::JobConcurrency => config.job_concurrency as i64,
+        ConfigField::FileDeleteDelayMinutes => config.file_delete_delay_minutes,
+        ConfigField::FileGcIntervalSeconds => config.file_gc_interval_seconds as i64,
+        ConfigField::ProgressEditIntervalSeconds => config.progress_edit_interval_seconds as i64,
+        ConfigField::DownloadsDefaultPageSize => config.downloads_default_page_size as i64,
+        ConfigField::MenuInputTimeoutSeconds => config.menu_input_timeout_seconds as i64,
+    }
 }
 
 /// 把整数限制在安全区间内。

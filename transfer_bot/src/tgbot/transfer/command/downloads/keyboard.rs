@@ -2,8 +2,7 @@
 // 回调数据保持短格式，避免 Telegram callback payload 过长。
 
 use super::super::common::{
-    CommandStyle, build_refresh_return_menu_row,
-    downloads_command as build_command,
+    CommandStyle, build_refresh_return_menu_row, downloads_command as build_command,
 };
 use super::super::job::{
     build_job_pause_callback_data, build_job_resume_callback_data, build_job_status_callback_data,

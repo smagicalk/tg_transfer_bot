@@ -27,6 +27,11 @@ const BILLING_CALLBACK_PREFIX: &str = "bcfg:";
 enum BillingCallbackAction {
     Refresh,
     Reset,
+    ViewEnabled,
+    ViewNumeric {
+        field: BillingNumericField,
+    },
+    ViewAnnouncement,
     ToggleEnabled,
     Adjust {
         field: BillingNumericField,
@@ -40,10 +45,13 @@ enum BillingCallbackAction {
 }
 
 impl BillingCallbackAction {
-    fn started_tip(self) -> &'static str {
+    fn started_tip(&self) -> &'static str {
         match self {
             Self::Refresh => "正在刷新计费配置",
             Self::Reset => "正在重置计费配置",
+            Self::ViewEnabled | Self::ViewNumeric { .. } | Self::ViewAnnouncement => {
+                "正在打开字段详情"
+            }
             Self::ToggleEnabled => "正在更新计费开关",
             Self::Adjust { .. } => "正在更新计费参数",
             Self::ClearAnnouncement => "正在清空公告",
@@ -195,6 +203,24 @@ pub(in crate::tgbot::transfer::command) fn billing_announcement_spec_for_admin_a
     (BILLING_ANNOUNCEMENT_SPEC.admin_input_action == action).then_some(&BILLING_ANNOUNCEMENT_SPEC)
 }
 
+/// 构造“计费开关详情”按钮数据。
+pub(in crate::tgbot::transfer::command) fn build_billing_enabled_detail_button_data() -> String {
+    build_billing_callback_data(BillingCallbackAction::ViewEnabled)
+}
+
+/// 构造“计费数值字段详情”按钮数据。
+pub(in crate::tgbot::transfer::command) fn build_billing_numeric_detail_button_data(
+    field: BillingNumericField,
+) -> String {
+    build_billing_callback_data(BillingCallbackAction::ViewNumeric { field })
+}
+
+/// 构造“公告详情”按钮数据。
+pub(in crate::tgbot::transfer::command) fn build_billing_announcement_detail_button_data() -> String
+{
+    build_billing_callback_data(BillingCallbackAction::ViewAnnouncement)
+}
+
 /// 在指定上下文上执行 `/billing` 文本命令。
 pub async fn billing_command_on(
     app: &crate::app_context::AppContext,
@@ -269,6 +295,7 @@ fn billing_interaction_items() -> Vec<String> {
     vec![
         "开启/关闭计费、基础扣分增减、单项扣分增减、新用户积分增减、清空公告：直接点按钮执行。"
             .to_owned(),
+        "也可以先点字段详情，再决定是微调、输入还是清空。".to_owned(),
         "设基础 / 设单项 / 设初始：进入输入流，回复一个非负整数。".to_owned(),
         "设公告：进入输入流，回复公告全文。".to_owned(),
     ]
@@ -350,6 +377,60 @@ pub async fn billing_callback_query_on(
     let action_result = match action {
         BillingCallbackAction::Refresh => Ok(()),
         BillingCallbackAction::Reset => reset_billing_to_default_on(app).await.map(|_| ()),
+        BillingCallbackAction::ViewEnabled => {
+            let config = crate::tgbot::transfer::billing_runtime_config_on(app);
+            let (text, keyboard) =
+                send::ReplyPanel::card(format_billing_enabled_detail_text(&config))
+                    .rows(build_billing_enabled_detail_buttons())
+                    .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "计费配置",
+                "/billing show",
+            )
+            .await?;
+            return Ok(());
+        }
+        BillingCallbackAction::ViewNumeric { field } => {
+            let config = crate::tgbot::transfer::billing_runtime_config_on(app);
+            let (text, keyboard) =
+                send::ReplyPanel::card(format_billing_numeric_detail_text(&config, field))
+                    .rows(build_billing_numeric_detail_buttons(field))
+                    .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "计费配置",
+                "/billing show",
+            )
+            .await?;
+            return Ok(());
+        }
+        BillingCallbackAction::ViewAnnouncement => {
+            let config = crate::tgbot::transfer::billing_runtime_config_on(app);
+            let (text, keyboard) =
+                send::ReplyPanel::card(format_billing_announcement_detail_text(&config))
+                    .rows(build_billing_announcement_detail_buttons())
+                    .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "计费配置",
+                "/billing show",
+            )
+            .await?;
+            return Ok(());
+        }
         BillingCallbackAction::ToggleEnabled => {
             let enabled = !crate::tgbot::transfer::billing_runtime_config_on(app).enabled;
             update_billing_with_on(app, &updated_action_title("计费开关"), |config| {
@@ -420,6 +501,49 @@ pub(super) fn format_billing_text_on(app: &crate::app_context::AppContext, title
         title,
         &crate::tgbot::transfer::billing_runtime_config_on(app),
     )
+}
+
+/// 计费开关详情页。
+fn format_billing_enabled_detail_text(config: &BillingConfig) -> String {
+    [
+        "计费开关".to_owned(),
+        card::field("enabled", if config.enabled { "true" } else { "false" }),
+        String::new(),
+        card::section("说明"),
+        "开启后转存会按当前计费规则扣分；关闭后不再扣分。".to_owned(),
+    ]
+    .join("\n")
+}
+
+/// 数值字段详情页。
+fn format_billing_numeric_detail_text(
+    config: &BillingConfig,
+    field: BillingNumericField,
+) -> String {
+    let spec = field.spec();
+    [
+        spec.title.to_owned(),
+        card::field(spec.key, billing_numeric_value(config, field)),
+        String::new(),
+        card::section("说明"),
+        format!("可直接微调，或点“{}”进入输入流。", spec.input_label),
+    ]
+    .join("\n")
+}
+
+/// 公告详情页。
+fn format_billing_announcement_detail_text(config: &BillingConfig) -> String {
+    [
+        "首页公告".to_owned(),
+        match &config.announcement_text {
+            Some(text) => card::field("announcement_text", text),
+            None => card::note("当前没有公告。"),
+        },
+        String::new(),
+        card::section("说明"),
+        "可以设置新的首页公告，或直接清空当前公告。".to_owned(),
+    ]
+    .join("\n")
 }
 
 async fn reset_billing_to_default_on(
@@ -596,6 +720,41 @@ pub(super) fn build_billing_buttons_on(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
+        vec![
+            send::build_callback_button(
+                "计费开关",
+                &build_billing_callback_data(BillingCallbackAction::ViewEnabled),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "基础扣分",
+                &build_billing_callback_data(BillingCallbackAction::ViewNumeric {
+                    field: BillingNumericField::BaseCost,
+                }),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "单项扣分",
+                &build_billing_callback_data(BillingCallbackAction::ViewNumeric {
+                    field: BillingNumericField::ItemCost,
+                }),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        vec![
+            send::build_callback_button(
+                "初始积分",
+                &build_billing_callback_data(BillingCallbackAction::ViewNumeric {
+                    field: BillingNumericField::InitialPoints,
+                }),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "公告",
+                &build_billing_callback_data(BillingCallbackAction::ViewAnnouncement),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
         build_billing_adjust_row(BillingNumericField::BaseCost),
         build_billing_adjust_row(BillingNumericField::ItemCost),
         build_billing_adjust_row(BillingNumericField::InitialPoints),
@@ -630,6 +789,81 @@ pub(super) fn build_billing_buttons_on(
         ),
     ];
     rows
+}
+
+/// 计费开关详情页按钮。
+fn build_billing_enabled_detail_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![send::build_callback_button(
+            "切换开关",
+            &build_billing_callback_data(BillingCallbackAction::ToggleEnabled),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        )],
+        build_help_menu_row(
+            send::build_callback_button(
+                "返回计费",
+                &build_billing_callback_data(BillingCallbackAction::Refresh),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &super::build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ),
+    ]
+}
+
+/// 数值字段详情页按钮。
+fn build_billing_numeric_detail_buttons(
+    field: BillingNumericField,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        build_billing_adjust_row(field),
+        vec![build_billing_input_button(field)],
+        build_help_menu_row(
+            send::build_callback_button(
+                "返回计费",
+                &build_billing_callback_data(BillingCallbackAction::Refresh),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &super::build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ),
+    ]
+}
+
+/// 公告详情页按钮。
+fn build_billing_announcement_detail_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![
+            send::build_callback_button(
+                BILLING_ANNOUNCEMENT_SPEC.input_label,
+                &build_billing_callback_data(BillingCallbackAction::InputSetAnnouncement),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "清空公告",
+                &build_billing_callback_data(BillingCallbackAction::ClearAnnouncement),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
+        build_help_menu_row(
+            send::build_callback_button(
+                "返回计费",
+                &build_billing_callback_data(BillingCallbackAction::Refresh),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &super::build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ),
+    ]
 }
 
 /// 构造计费数值字段微调按钮行。
@@ -715,6 +949,31 @@ fn parse_billing_callback_data(data: &str) -> Option<BillingCallbackAction> {
                 None
             }
         }
+        "v" => match parts.next()? {
+            "e" => {
+                if parts.next().is_none() {
+                    Some(BillingCallbackAction::ViewEnabled)
+                } else {
+                    None
+                }
+            }
+            "a" => {
+                if parts.next().is_none() {
+                    Some(BillingCallbackAction::ViewAnnouncement)
+                } else {
+                    None
+                }
+            }
+            "n" => {
+                let field = BillingNumericField::parse_code(parts.next()?)?;
+                if parts.next().is_none() {
+                    Some(BillingCallbackAction::ViewNumeric { field })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        },
         code => {
             let field = BillingNumericField::parse_code(code)?;
             parse_delta(parts).map(|delta| BillingCallbackAction::Adjust { field, delta })
@@ -734,6 +993,11 @@ fn build_billing_callback_data(action: BillingCallbackAction) -> String {
     match action {
         BillingCallbackAction::Refresh => format!("{BILLING_CALLBACK_PREFIX}r"),
         BillingCallbackAction::Reset => format!("{BILLING_CALLBACK_PREFIX}x"),
+        BillingCallbackAction::ViewEnabled => format!("{BILLING_CALLBACK_PREFIX}v:e"),
+        BillingCallbackAction::ViewNumeric { field } => {
+            format!("{}v:n:{}", BILLING_CALLBACK_PREFIX, field.spec().code)
+        }
+        BillingCallbackAction::ViewAnnouncement => format!("{BILLING_CALLBACK_PREFIX}v:a"),
         BillingCallbackAction::ToggleEnabled => format!("{BILLING_CALLBACK_PREFIX}e"),
         BillingCallbackAction::ClearAnnouncement => format!("{BILLING_CALLBACK_PREFIX}c"),
         BillingCallbackAction::InputSetNumeric { field } => {
@@ -855,15 +1119,31 @@ mod tests {
         let decoded =
             String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
         assert_eq!(decoded, "bcfg:e");
-        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[4][1].r#type
+        let base_input = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "设基础")
+            .expect("billing page should contain base input button");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &base_input.r#type
         else {
             panic!("base cost input button must be billing callback");
         };
         let decoded =
             String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
         assert_eq!(decoded, "bcfg:i:b");
-        assert_eq!(rows[6][0].text, "帮助");
-        assert_eq!(rows[6][1].text, "菜单");
+        let footer = rows.last().expect("billing page should have footer");
+        assert_eq!(footer[0].text, "帮助");
+        assert_eq!(footer[1].text, "菜单");
+        assert!(
+            rows.iter()
+                .flatten()
+                .any(|button| button.text == "计费开关")
+        );
+        assert!(
+            rows.iter()
+                .flatten()
+                .any(|button| button.text == "基础扣分")
+        );
         assert!(rows.iter().flatten().any(|button| button.text == "设公告"));
     }
 }

@@ -28,9 +28,10 @@ pub use job::job_command;
 pub(in crate::tgbot) use job::job_command_on;
 pub(in crate::tgbot) use lookup::lookup_command_on;
 pub(in crate::tgbot) use menu::menu_command_on;
+pub(in crate::tgbot) use menu::start_transfer_target_choice_from_bot_message;
+pub(in crate::tgbot) use menu::start_transfer_target_choice_from_link_message;
 pub use menu::{cancel_menu_input, discard_menu_input, discard_menu_input_for_command};
 pub(in crate::tgbot) use menu::{handle_menu_shared_chat_input_on, handle_menu_text_input_on};
-pub(in crate::tgbot) use menu::start_transfer_target_choice_from_bot_message;
 pub use points::{balance_command, points_command};
 pub(in crate::tgbot) use targets::targets_command_on;
 pub(in crate::tgbot) use transfer_cmd::transfer_command_on;
@@ -96,6 +97,11 @@ pub(in crate::tgbot) fn build_help_button_data(topic: Option<&str>) -> String {
 /// 给外层错误卡片生成“返回菜单”按钮数据。
 pub(in crate::tgbot) fn build_menu_home_button_data_for_outer() -> String {
     menu::build_menu_home_callback_data()
+}
+
+/// 给外层错误卡片生成“开始转存”按钮数据。
+pub(in crate::tgbot) fn build_menu_new_transfer_button_data_for_outer() -> String {
+    menu::build_menu_new_transfer_callback_data()
 }
 
 /// 给外层错误卡片生成“查看余额”按钮数据。

@@ -409,8 +409,7 @@ fn format_transfer_accepted_text(plan: &TransferPlan) -> String {
 mod tests {
     use super::{
         ResolvedTransferSource, bot_message_source_link, build_transfer_accepted_button_rows,
-        format_transfer_accepted_text, forwarded_message_location,
-        resolve_transfer_target_chat_id,
+        format_transfer_accepted_text, forwarded_message_location, resolve_transfer_target_chat_id,
     };
     use crate::ClientRole;
     use crate::app_context::app_context;
@@ -642,9 +641,9 @@ mod tests {
             date: 0,
             edit_date: 0,
             forward_info: Some(tdlib_rs::types::MessageForwardInfo {
-                origin: tdlib_rs::enums::MessageOrigin::User(
-                    tdlib_rs::types::MessageOriginUser { sender_user_id: 42 },
-                ),
+                origin: tdlib_rs::enums::MessageOrigin::User(tdlib_rs::types::MessageOriginUser {
+                    sender_user_id: 42,
+                }),
                 date: 0,
                 source: None,
                 public_service_announcement_type: String::new(),
@@ -807,9 +806,9 @@ mod tests {
             date: 0,
             edit_date: 0,
             forward_info: Some(tdlib_rs::types::MessageForwardInfo {
-                origin: tdlib_rs::enums::MessageOrigin::User(
-                    tdlib_rs::types::MessageOriginUser { sender_user_id: 42 },
-                ),
+                origin: tdlib_rs::enums::MessageOrigin::User(tdlib_rs::types::MessageOriginUser {
+                    sender_user_id: 42,
+                }),
                 date: 0,
                 source: None,
                 public_service_announcement_type: String::new(),

@@ -192,9 +192,9 @@ fn build_config_detail() -> String {
         "config".to_owned(),
         "用途：查看或修改可动态生效的运行配置。".to_owned(),
         "说明：配置页同时支持两种方式：".to_owned(),
-        "1. 直接点按钮做小步增减。".to_owned(),
-        "2. 点“设并发 / 设删除 / 设GC / 设进度 / 设分页 / 设超时”进入输入流，再回复一个值。"
-            .to_owned(),
+        "1. 先点字段详情：并发 / 删除 / GC / 进度 / 分页 / 超时。".to_owned(),
+        "2. 在详情页里做小步增减，或进入输入流回复一个值。".to_owned(),
+        "3. 主页面仍保留快捷微调和输入入口。".to_owned(),
         card::DIVIDER.to_owned(),
     ];
     lines.extend(build_runtime_admin_usage_block(&descriptor));
@@ -219,7 +219,9 @@ fn build_targets_detail() -> String {
     vec![
         "targets".to_owned(),
         "用途：管理转存默认目标、按请求 chat 路由和目标别名。".to_owned(),
+        "说明：默认目标未显式设置时，会直接回落到当前请求私聊。".to_owned(),
         "说明：targets 页支持直接 callback 操作，也支持按钮进入输入流。".to_owned(),
+        "说明：现有路由和别名可以先点进详情，再改目标、设默认或删除。".to_owned(),
         card::DIVIDER.to_owned(),
     ]
     .into_iter()
@@ -239,6 +241,8 @@ fn build_acl_detail() -> String {
         "说明：bootstrap_admin_user_ids 仍由 config.json 提供，这里只管理数据库运行态规则。"
             .to_owned(),
         "说明：ACL 页支持直接 callback 开关，也支持按钮进入输入流。".to_owned(),
+        "说明：现有管理员、允许用户、黑名单、请求白名单、目标白名单可以先点进详情，再删除。"
+            .to_owned(),
         card::DIVIDER.to_owned(),
     ]
     .into_iter()
@@ -255,7 +259,10 @@ fn build_billing_detail() -> String {
     vec![
         "billing".to_owned(),
         "用途：管理积分计费和首页公告。".to_owned(),
-        "说明：billing 页支持按钮直接调整数值，也支持按钮进入数值/公告输入流。".to_owned(),
+        "说明：billing 页支持先点字段详情：计费开关 / 基础扣分 / 单项扣分 / 初始积分 / 公告。"
+            .to_owned(),
+        "说明：详情页里可以切换开关、微调数值、进入输入流或清空公告。".to_owned(),
+        "说明：主页面仍保留快捷微调和输入入口。".to_owned(),
         card::DIVIDER.to_owned(),
     ]
     .into_iter()
@@ -352,6 +359,7 @@ fn build_menu_detail() -> String {
         "下载：覆盖全部筛选参数，并可进入分页列表；普通用户只看自己的任务。".to_owned(),
         "任务：从列表进入详情后可暂停、恢复、停止、刷新；普通用户只操作自己的任务。".to_owned(),
         "配置：config / targets / acl / billing 都支持按钮 + 输入流混合操作。".to_owned(),
+        "配置：targets / acl 支持先点现有项详情；billing / config 支持先点字段详情。".to_owned(),
         "帮助：覆盖所有 help topic，可原地切换详情页。".to_owned(),
         String::new(),
         "管理输入：".to_owned(),

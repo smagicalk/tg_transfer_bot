@@ -8,9 +8,7 @@ mod recent_jobs;
 use crate::tgbot::send;
 
 use super::super::super::store;
-use super::super::common::{
-    CommandStyle, build_refresh_return_menu_row, downloads_command,
-};
+use super::super::common::{CommandStyle, build_refresh_return_menu_row, downloads_command};
 use super::super::downloads::build_downloads_menu_callback_data;
 use super::super::help;
 use super::callback::{self, MenuPage};
@@ -924,12 +922,32 @@ mod tests {
         assert_eq!(targets[0][0].text, "刷新");
         assert_eq!(acl[0][1].text, "刷新");
         assert_eq!(billing[0][1].text, "刷新");
-        assert!(targets.iter().flatten().any(|button| button.text == "设默认"));
-        assert!(targets.iter().flatten().any(|button| button.text == "选默认"));
+        assert!(
+            targets
+                .iter()
+                .flatten()
+                .any(|button| button.text == "设默认")
+        );
+        assert!(
+            targets
+                .iter()
+                .flatten()
+                .any(|button| button.text == "恢复私聊默认")
+        );
         assert!(acl.iter().flatten().any(|button| button.text == "加管理员"));
         assert!(acl.iter().flatten().any(|button| button.text == "删管理员"));
-        assert!(billing.iter().flatten().any(|button| button.text == "设公告"));
-        assert!(billing.iter().flatten().any(|button| button.text == "设基础"));
+        assert!(
+            billing
+                .iter()
+                .flatten()
+                .any(|button| button.text == "设公告")
+        );
+        assert!(
+            billing
+                .iter()
+                .flatten()
+                .any(|button| button.text == "设基础")
+        );
     }
 
     // 普通用户打开数据库运行态配置页时，只能看到受限页导航，不能看到管理命令模板。

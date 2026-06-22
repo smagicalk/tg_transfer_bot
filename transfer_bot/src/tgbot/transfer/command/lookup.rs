@@ -214,7 +214,9 @@ fn build_lookup_success_navigation_buttons(
 /// 构建 lookup 未命中时的按钮。
 ///
 /// “重新转存”通过短 callback + 进程内上下文触发，避免把长链接塞进 callback_data。
-fn build_lookup_miss_button_rows(source_link: &str) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+fn build_lookup_miss_button_rows(
+    source_link: &str,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
         vec![
             send::build_callback_button(
@@ -276,20 +278,12 @@ pub async fn lookup_callback_query_on(
     };
 
     send::answer_callback_query(update.id, Some("开始重新转存"), client_id).await?;
-    super::menu::discard_menu_input_for_command(
-        update.chat_id,
-        update.sender_user_id,
-        client_id,
-    )
-    .await?;
+    super::menu::discard_menu_input_for_command(update.chat_id, update.sender_user_id, client_id)
+        .await?;
     let target = context.target_chat_id.to_string();
     super::transfer_cmd::transfer_link_command_on(
         Arc::new(app.clone()),
-        vec![
-            "/transfer",
-            context.source_link.as_str(),
-            target.as_str(),
-        ],
+        vec!["/transfer", context.source_link.as_str(), target.as_str()],
         config,
         update.chat_id,
         update.message_id,

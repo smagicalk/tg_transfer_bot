@@ -88,23 +88,28 @@ fn test_build_help_detail_text() {
     assert!(config.contains("downloads_default_page_size"));
     assert!(config.contains("menu_input_timeout_seconds"));
     assert!(config.contains("输入流"));
+    assert!(config.contains("字段详情"));
 
     let targets = build_help_detail_text("targets", true).unwrap();
-    assert!(targets.contains("/targets set-default -1001234567890"));
+    assert!(targets.contains("/targets set-default 123456789"));
     assert!(targets.contains("设默认：回复 target_chat_id"));
+    assert!(targets.contains("当前请求私聊"));
 
     let acl = build_help_detail_text("acl", true).unwrap();
     assert!(acl.contains("/acl add-admin 123456789"));
     assert!(acl.contains("加管理员 / 删管理员"));
+    assert!(acl.contains("先点进详情"));
 
     let billing = build_help_detail_text("billing", true).unwrap();
     assert!(billing.contains("/billing set enabled true"));
     assert!(billing.contains("设公告：进入输入流"));
+    assert!(billing.contains("字段详情"));
 
     let menu = build_help_detail_text("menu", false).unwrap();
     assert!(menu.contains("/menu"));
     assert!(menu.contains("/cancel"));
     assert!(menu.contains("ForceReply"));
+    assert!(menu.contains("字段详情"));
 
     assert!(build_help_detail_text("unknown", false).is_err());
 }

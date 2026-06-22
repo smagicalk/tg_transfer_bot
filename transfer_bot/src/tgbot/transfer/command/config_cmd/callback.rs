@@ -1,9 +1,7 @@
 // `/config` callback payload 与按钮布局。
 // 这里只承载按钮协议和按钮生成，配置读写仍留在上层命令实现里。
 
-use super::super::common::{
-    build_help_menu_row,
-};
+use super::super::common::build_help_menu_row;
 use super::super::help::build_help_callback_data;
 use super::super::menu::AdminInputAction;
 use super::super::menu::build_menu_home_callback_data;
@@ -17,6 +15,7 @@ const CONFIG_CALLBACK_PREFIX: &str = "cfg:";
 pub(super) enum ConfigCallbackAction {
     Refresh,
     Reset,
+    View { field: ConfigField },
     Adjust { field: ConfigField, delta: i64 },
     Input { field: ConfigField },
 }
@@ -29,6 +28,7 @@ impl ConfigCallbackAction {
         match self {
             Self::Refresh => "正在刷新",
             Self::Reset => "正在重置",
+            Self::View { .. } => "正在打开字段详情",
             Self::Adjust { .. } => "正在更新配置",
             Self::Input { .. } => "请回复参数",
         }
@@ -205,6 +205,13 @@ pub(super) fn parse_config_callback_data(data: &str) -> Option<ConfigCallbackAct
                 None
             }
         }
+        "v" => {
+            let field = ConfigField::parse(parts.next()?)?;
+            if parts.next().is_some() {
+                return None;
+            }
+            Some(ConfigCallbackAction::View { field })
+        }
         "a" => {
             let field = ConfigField::parse(parts.next()?)?;
             let delta = parts.next()?.parse::<i64>().ok()?;
@@ -240,6 +247,14 @@ pub(in crate::tgbot::transfer::command) fn build_config_buttons_on(
         .iter()
         .map(build_config_adjust_row)
         .collect::<Vec<_>>();
+
+    rows.splice(
+        0..0,
+        CONFIG_FIELD_SPECS
+            .chunks(3)
+            .map(build_config_view_row)
+            .collect::<Vec<_>>(),
+    );
 
     rows.extend(
         CONFIG_FIELD_SPECS
@@ -307,6 +322,24 @@ fn build_config_adjust_row(spec: &ConfigFieldSpec) -> Vec<tdlib_rs::types::Inlin
     ]
 }
 
+/// 构造配置字段详情入口按钮行。
+fn build_config_view_row(specs: &[ConfigFieldSpec]) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    specs
+        .iter()
+        .map(|spec| {
+            send::build_callback_button(
+                spec.short_label,
+                &build_config_callback_data(ConfigCallbackAction::View { field: spec.field }),
+                if spec.field == ConfigField::JobConcurrency {
+                    tdlib_rs::enums::ButtonStyle::Primary
+                } else {
+                    tdlib_rs::enums::ButtonStyle::Default
+                },
+            )
+        })
+        .collect()
+}
+
 /// 构造配置输入按钮行。
 fn build_config_input_row(specs: &[ConfigFieldSpec]) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
     specs
@@ -322,10 +355,15 @@ fn build_config_input_row(specs: &[ConfigFieldSpec]) -> Vec<tdlib_rs::types::Inl
 }
 
 /// 构造配置 callback payload。
-fn build_config_callback_data(action: ConfigCallbackAction) -> String {
+pub(in crate::tgbot::transfer::command) fn build_config_detail_callback_data(
+    action: ConfigCallbackAction,
+) -> String {
     match action {
         ConfigCallbackAction::Refresh => format!("{}r", CONFIG_CALLBACK_PREFIX),
         ConfigCallbackAction::Reset => format!("{}x", CONFIG_CALLBACK_PREFIX),
+        ConfigCallbackAction::View { field } => {
+            format!("{}v:{}", CONFIG_CALLBACK_PREFIX, field.code())
+        }
         ConfigCallbackAction::Adjust { field, delta } => {
             format!("{}a:{}:{}", CONFIG_CALLBACK_PREFIX, field.code(), delta)
         }
@@ -333,6 +371,10 @@ fn build_config_callback_data(action: ConfigCallbackAction) -> String {
             format!("{}i:{}", CONFIG_CALLBACK_PREFIX, field.code())
         }
     }
+}
+
+fn build_config_callback_data(action: ConfigCallbackAction) -> String {
+    build_config_detail_callback_data(action)
 }
 
 #[cfg(test)]
@@ -371,6 +413,17 @@ mod tests {
         );
         assert_eq!(parse_config_callback_data("cfg:a:bad:1"), None);
         assert_eq!(parse_config_callback_data("cfg:a:gc:x"), None);
+
+        let view = build_config_callback_data(ConfigCallbackAction::View {
+            field: ConfigField::JobConcurrency,
+        });
+        assert_eq!(view, "cfg:v:jc");
+        assert_eq!(
+            parse_config_callback_data(&view),
+            Some(ConfigCallbackAction::View {
+                field: ConfigField::JobConcurrency
+            })
+        );
 
         let progress = build_config_callback_data(ConfigCallbackAction::Adjust {
             field: ConfigField::ProgressEditIntervalSeconds,
@@ -414,6 +467,12 @@ mod tests {
         for expected in [
             "菜单",
             "重置默认",
+            "并发",
+            "删除",
+            "GC",
+            "进度",
+            "分页",
+            "超时",
             "设并发",
             "设删除",
             "设GC",
@@ -455,17 +514,17 @@ mod tests {
     fn test_build_config_buttons_follow_row_hierarchy() {
         let rows = build_config_buttons();
 
-        assert_eq!(rows[0][0].text, "并发 -1");
-        assert_eq!(rows[0][1].text, "并发 +1");
-        assert_eq!(rows[6][0].text, "设并发");
-        assert_eq!(rows[6][1].text, "设删除");
-        assert_eq!(rows[6][2].text, "设GC");
-        assert_eq!(rows[7][0].text, "设进度");
-        assert_eq!(rows[7][1].text, "设分页");
-        assert_eq!(rows[7][2].text, "设超时");
-        assert_eq!(rows[8][0].text, "刷新");
-        assert_eq!(rows[8][1].text, "重置默认");
-        assert_eq!(rows[9][0].text, "帮助");
-        assert_eq!(rows[9][1].text, "菜单");
+        assert_eq!(rows[0][0].text, "并发");
+        assert_eq!(rows[0][1].text, "删除");
+        assert_eq!(rows[0][2].text, "GC");
+        assert_eq!(rows[1][0].text, "进度");
+        assert_eq!(rows[1][1].text, "分页");
+        assert_eq!(rows[1][2].text, "超时");
+        assert!(rows.iter().flatten().any(|button| button.text == "并发 -1"));
+        assert!(rows.iter().flatten().any(|button| button.text == "并发 +1"));
+        assert!(rows.iter().flatten().any(|button| button.text == "设并发"));
+        let footer = rows.last().expect("config page should have footer");
+        assert_eq!(footer[0].text, "帮助");
+        assert_eq!(footer[1].text, "菜单");
     }
 }

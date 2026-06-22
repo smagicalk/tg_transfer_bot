@@ -18,8 +18,8 @@ pub(in crate::tgbot) use command::{
     acl_command_on, billing_command_on, cache_command_on, config_command_on, downloads_command_on,
     handle_menu_shared_chat_input_on, handle_menu_text_input_on, health_command_on, job_command_on,
     lookup_command_on, menu_command_on, start_transfer_target_choice_from_bot_message,
-    targets_command_on, transfer_callback_query_on, transfer_command_on,
-    transferable_message_source_location,
+    start_transfer_target_choice_from_link_message, targets_command_on, transfer_callback_query_on,
+    transfer_command_on, transferable_message_source_location,
 };
 pub use command::{
     balance_command, cancel_menu_input, discard_menu_input, discard_menu_input_for_command,
@@ -27,6 +27,7 @@ pub use command::{
 };
 pub(in crate::tgbot) use command::{
     build_balance_button_data, build_help_button_data, build_menu_home_button_data_for_outer,
+    build_menu_new_transfer_button_data_for_outer,
 };
 pub(in crate::tgbot) use outcome::{TransferErrorKind, classify_transfer_error_text};
 pub(in crate::tgbot) use runtime::billing_runtime_config_on;

@@ -167,8 +167,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn points_adjust_input_callb
     client_id: i32,
 ) -> anyhow::Result<()> {
     if !actor.is_admin() {
-        send::answer_callback_query(callback_query_id, Some("没有权限调整积分"), client_id)
-            .await?;
+        send::answer_callback_query(callback_query_id, Some("没有权限调整积分"), client_id).await?;
         return Ok(());
     }
 
@@ -207,6 +206,39 @@ pub(in crate::tgbot::transfer::command::menu) async fn admin_input_callback_quer
     message_id: i64,
     sender_user_id: i64,
     action: AdminInputAction,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    admin_input_callback_query_with_context(
+        callback_query_id,
+        chat_id,
+        message_id,
+        sender_user_id,
+        action,
+        None,
+        None,
+        None,
+        None,
+        None,
+        client_id,
+    )
+    .await
+}
+
+/// 处理带上下文的管理输入入口。
+///
+/// `targets` 里的“选中现有别名/路由后再改目标”会通过这里把 alias 或 request_chat_id
+/// 存进草稿，随后只需要用户输入新的 target_chat_id。
+pub(in crate::tgbot::transfer::command::menu) async fn admin_input_callback_query_with_context(
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    action: AdminInputAction,
+    context_text: Option<String>,
+    context_i64: Option<i64>,
+    prompt_title: Option<String>,
+    prompt_detail: Option<String>,
+    prompt_placeholder: Option<String>,
     client_id: i32,
 ) -> anyhow::Result<()> {
     if action == AdminInputAction::TargetsPickDefault {
@@ -260,38 +292,42 @@ pub(in crate::tgbot::transfer::command::menu) async fn admin_input_callback_quer
 
     put_draft(
         (chat_id, sender_user_id),
-        MenuInputDraft::admin_input(action),
+        MenuInputDraft::admin_input(action, context_text, context_i64),
     )
     .await?;
+    let prompt_title = prompt_title.unwrap_or_else(|| action.input_title().to_owned());
+    let prompt_detail = prompt_detail.unwrap_or_else(|| action.input_detail().to_owned());
+    let prompt_placeholder =
+        prompt_placeholder.unwrap_or_else(|| action.input_placeholder().to_owned());
     send::answer_callback_query(callback_query_id, Some("请输入参数"), client_id).await?;
     super::callbacks_target::edit_input_waiting_card(
         chat_id,
         message_id,
         client_id,
         "1/1",
-        action.input_title(),
+        &prompt_title,
         if is_targets_chat_picker_action(action) {
             "请先回复 request_chat_id，随后会弹出 Telegram 原生选群器。"
         } else {
-            action.input_detail()
+            &prompt_detail
         },
     )
     .await;
     send::send_card_message_with_force_reply_returning(
         build_step_prompt_text(
             "1/1",
-            action.input_title(),
+            &prompt_title,
             if is_targets_chat_picker_action(action) {
                 "请先回复 request_chat_id，随后会弹出 Telegram 原生选群器。"
             } else {
-                action.input_detail()
+                &prompt_detail
             },
         ),
         chat_id,
         if is_targets_chat_picker_action(action) {
             "输入 request_chat_id，或发送 /cancel"
         } else {
-            action.input_placeholder()
+            &prompt_placeholder
         },
         client_id,
     )

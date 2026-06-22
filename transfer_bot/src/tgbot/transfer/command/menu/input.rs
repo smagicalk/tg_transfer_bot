@@ -27,11 +27,12 @@ use self::simple::{
 };
 use super::text::{build_menu_recovery_text, build_step_prompt_text};
 pub(super) use callbacks::{
-    admin_input_callback_query, cancel_input_callback_query, job_id_input_callback_query,
+    admin_input_callback_query, admin_input_callback_query_with_context,
+    cancel_input_callback_query, job_id_input_callback_query,
     point_ledger_user_input_callback_query, points_adjust_input_callback_query,
-    target_alias_callback_query,
-    target_back_callback_query, target_confirm_callback_query, target_default_callback_query,
-    target_manual_callback_query, target_request_chat_callback_query,
+    target_alias_callback_query, target_back_callback_query, target_confirm_callback_query,
+    target_default_callback_query, target_manual_callback_query,
+    target_request_chat_callback_query,
 };
 pub(in crate::tgbot::transfer::command) use state::AdminInputAction;
 use state::{
@@ -116,6 +117,27 @@ pub(super) async fn start_transfer_target_choice_with_source_on(
     .await
 }
 
+/// 从纯链接文本直接启动目标选择流程。
+pub(super) async fn start_transfer_target_choice_from_link_on(
+    app: &crate::app_context::AppContext,
+    config: std::sync::Arc<BotConfig>,
+    chat_id: i64,
+    sender_user_id: i64,
+    source_link: String,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    start_transfer_target_choice_with_source_on(
+        app,
+        config,
+        chat_id,
+        sender_user_id,
+        MenuInputKind::Transfer,
+        source_link,
+        client_id,
+    )
+    .await
+}
+
 /// 读取当前输入草稿摘要，不消费草稿。
 pub(super) async fn current_draft_summary(
     chat_id: i64,
@@ -167,7 +189,11 @@ pub(super) async fn continue_current_input_on(
             )
             .await?;
         }
-        MenuInputStep::AdminInput { action } => {
+        MenuInputStep::AdminInput {
+            action,
+            context_text: _,
+            context_i64: _,
+        } => {
             send::send_card_message_with_force_reply_returning(
                 build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
                 chat_id,
@@ -359,7 +385,11 @@ pub(super) async fn handle_menu_input_on(
             run_existing_job_command(app, action, job_id, actor, client_id).await?;
             Ok(true)
         }
-        MenuInputStep::AdminInput { action } => {
+        MenuInputStep::AdminInput {
+            action,
+            context_text,
+            context_i64,
+        } => {
             tracing::debug!(
                 request_chat_id,
                 sender_user_id,
@@ -367,8 +397,18 @@ pub(super) async fn handle_menu_input_on(
                 admin_action = action.log_name(),
                 "menu input admin action received"
             );
-            let Some(command_owned) = parse_admin_input_payload(action, input, None) else {
-                put_draft(key, MenuInputDraft::admin_input(action)).await?;
+            let Some(command_owned) = parse_admin_input_payload(
+                action,
+                input,
+                None,
+                context_text.as_deref(),
+                context_i64,
+            ) else {
+                put_draft(
+                    key,
+                    MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
+                )
+                .await?;
                 tracing::debug!(
                     request_chat_id,
                     sender_user_id,
@@ -511,7 +551,7 @@ pub(super) async fn handle_menu_input_on(
             target_user_id,
         } => {
             let Some(command_owned) =
-                parse_admin_input_payload(action, input, Some(target_user_id))
+                parse_admin_input_payload(action, input, Some(target_user_id), None, None)
             else {
                 put_draft(key, MenuInputDraft::points_adjust(action, target_user_id)).await?;
                 send::send_card_message_with_force_reply_returning(

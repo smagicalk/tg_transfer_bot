@@ -23,7 +23,7 @@ const ACL_PAGE_DETAIL: &str =
 const ACL_CALLBACK_PREFIX: &str = "acfg:";
 
 /// `/acl` callback 动作。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum AclCallbackAction {
     Refresh,
     Reset,
@@ -38,10 +38,20 @@ enum AclCallbackAction {
     InputDelAllowTarget,
     InputAddAllowRequest,
     InputDelAllowRequest,
+    ViewAdmin(i64),
+    ViewAllowUser(i64),
+    ViewBanUser(i64),
+    ViewAllowTarget(i64),
+    ViewAllowRequest(i64),
+    DeleteAdmin(i64),
+    DeleteAllowUser(i64),
+    DeleteBanUser(i64),
+    DeleteAllowTarget(i64),
+    DeleteAllowRequest(i64),
 }
 
 impl AclCallbackAction {
-    fn started_tip(self) -> &'static str {
+    fn started_tip(&self) -> &'static str {
         match self {
             Self::Refresh => "正在刷新访问控制",
             Self::Reset => "正在重置访问控制",
@@ -56,6 +66,16 @@ impl AclCallbackAction {
             | Self::InputDelAllowTarget
             | Self::InputAddAllowRequest
             | Self::InputDelAllowRequest => "请回复参数",
+            Self::ViewAdmin(_)
+            | Self::ViewAllowUser(_)
+            | Self::ViewBanUser(_)
+            | Self::ViewAllowTarget(_)
+            | Self::ViewAllowRequest(_)
+            | Self::DeleteAdmin(_)
+            | Self::DeleteAllowUser(_)
+            | Self::DeleteBanUser(_)
+            | Self::DeleteAllowTarget(_)
+            | Self::DeleteAllowRequest(_) => "正在打开详情",
         }
     }
 }
@@ -63,7 +83,7 @@ impl AclCallbackAction {
 /// `/acl` 单步输入动作规格。
 ///
 /// 访问控制页动作数量较多，统一规格能避免 callback、help 和 ForceReply 文案漂移。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(in crate::tgbot::transfer::command) struct AclInputSpec {
     pub action: super::menu::AdminInputAction,
     callback_action: AclCallbackAction,
@@ -198,10 +218,10 @@ pub(in crate::tgbot::transfer::command) fn acl_input_spec_for_admin_action(
 }
 
 /// 根据 callback 动作反查 `/acl` 输入规格。
-fn acl_input_spec_for_callback_action(action: AclCallbackAction) -> Option<&'static AclInputSpec> {
+fn acl_input_spec_for_callback_action(action: &AclCallbackAction) -> Option<&'static AclInputSpec> {
     ACL_INPUT_SPECS
         .iter()
-        .find(|spec| spec.callback_action == action)
+        .find(|spec| spec.callback_action == *action)
 }
 
 /// 在指定上下文上执行 `/acl` 文本命令。
@@ -344,6 +364,7 @@ pub(in crate::tgbot::transfer::command) fn acl_help_descriptor() -> RuntimeAdmin
 fn acl_interaction_items() -> Vec<String> {
     vec![
         "开放/关闭任意私聊、刷新、重置默认：直接点按钮执行。".to_owned(),
+        "现有管理员 / 用户 / 黑名单 / 请求白名单 / 目标白名单：可先点进详情，再删除。".to_owned(),
         "加管理员 / 删管理员 / 加用户 / 删用户 / 封禁 / 解封：回复 user_id。".to_owned(),
         "加目标 / 删目标 / 加请求 / 删请求：回复 chat_id。".to_owned(),
     ]
@@ -417,7 +438,7 @@ pub async fn acl_callback_query_on(
     };
     send::answer_callback_query(update.id, Some(action.started_tip()), client_id).await?;
 
-    let action_result = match action {
+    let action_result = match action.clone() {
         AclCallbackAction::Refresh => Ok(()),
         AclCallbackAction::Reset => reset_acl_to_default_on(app).await.map(|_| ()),
         AclCallbackAction::ToggleAllowAllPrivateUsers => {
@@ -439,7 +460,7 @@ pub async fn acl_callback_query_on(
         | AclCallbackAction::InputDelAllowTarget
         | AclCallbackAction::InputAddAllowRequest
         | AclCallbackAction::InputDelAllowRequest => {
-            let Some(spec) = acl_input_spec_for_callback_action(action) else {
+            let Some(spec) = acl_input_spec_for_callback_action(&action) else {
                 anyhow::bail!("missing acl input spec for callback action: {:?}", action);
             };
             return super::menu::start_admin_input_callback(
@@ -451,6 +472,156 @@ pub async fn acl_callback_query_on(
                 client_id,
             )
             .await;
+        }
+        AclCallbackAction::ViewAdmin(user_id) => {
+            let (text, keyboard) = send::ReplyPanel::card(format_acl_entry_detail_text(
+                "管理员详情",
+                "user_id",
+                user_id,
+                "可以删除这名管理员。bootstrap_admin_user_ids 不会在这里显示为可删项。",
+            ))
+            .rows(build_acl_entry_detail_buttons(
+                AclCallbackAction::DeleteAdmin(user_id),
+            ))
+            .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "访问控制",
+                "/acl show",
+            )
+            .await?;
+            return Ok(());
+        }
+        AclCallbackAction::ViewAllowUser(user_id) => {
+            let (text, keyboard) = send::ReplyPanel::card(format_acl_entry_detail_text(
+                "允许用户详情",
+                "user_id",
+                user_id,
+                "可以删除这名允许用户。",
+            ))
+            .rows(build_acl_entry_detail_buttons(
+                AclCallbackAction::DeleteAllowUser(user_id),
+            ))
+            .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "访问控制",
+                "/acl show",
+            )
+            .await?;
+            return Ok(());
+        }
+        AclCallbackAction::ViewBanUser(user_id) => {
+            let (text, keyboard) = send::ReplyPanel::card(format_acl_entry_detail_text(
+                "封禁用户详情",
+                "user_id",
+                user_id,
+                "可以解除这名封禁用户。",
+            ))
+            .rows(build_acl_entry_detail_buttons(
+                AclCallbackAction::DeleteBanUser(user_id),
+            ))
+            .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "访问控制",
+                "/acl show",
+            )
+            .await?;
+            return Ok(());
+        }
+        AclCallbackAction::ViewAllowTarget(chat_id) => {
+            let (text, keyboard) = send::ReplyPanel::card(format_acl_entry_detail_text(
+                "目标白名单详情",
+                "chat_id",
+                chat_id,
+                "可以删除这条目标白名单记录。",
+            ))
+            .rows(build_acl_entry_detail_buttons(
+                AclCallbackAction::DeleteAllowTarget(chat_id),
+            ))
+            .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "访问控制",
+                "/acl show",
+            )
+            .await?;
+            return Ok(());
+        }
+        AclCallbackAction::ViewAllowRequest(chat_id) => {
+            let (text, keyboard) = send::ReplyPanel::card(format_acl_entry_detail_text(
+                "请求白名单详情",
+                "chat_id",
+                chat_id,
+                "可以删除这条请求白名单记录。",
+            ))
+            .rows(build_acl_entry_detail_buttons(
+                AclCallbackAction::DeleteAllowRequest(chat_id),
+            ))
+            .into_card_parts()?;
+            edit_runtime_admin_interaction_card_or_error(
+                text,
+                update.chat_id,
+                update.message_id,
+                keyboard,
+                client_id,
+                "访问控制",
+                "/acl show",
+            )
+            .await?;
+            return Ok(());
+        }
+        AclCallbackAction::DeleteAdmin(user_id) => {
+            update_acl_with_on(app, &deleted_action_title("管理员"), |config| {
+                config.admin_user_ids.retain(|id| *id != user_id);
+            })
+            .await
+            .map(|_| ())
+        }
+        AclCallbackAction::DeleteAllowUser(user_id) => {
+            update_acl_with_on(app, &deleted_action_title("允许用户"), |config| {
+                config.allowed_user_ids.retain(|id| *id != user_id);
+            })
+            .await
+            .map(|_| ())
+        }
+        AclCallbackAction::DeleteBanUser(user_id) => {
+            update_acl_with_on(app, &released_action_title("封禁用户"), |config| {
+                config.banned_user_ids.retain(|id| *id != user_id);
+            })
+            .await
+            .map(|_| ())
+        }
+        AclCallbackAction::DeleteAllowTarget(chat_id) => {
+            update_acl_with_on(app, &deleted_action_title("目标白名单"), |config| {
+                config.allowed_target_chat_ids.retain(|id| *id != chat_id);
+            })
+            .await
+            .map(|_| ())
+        }
+        AclCallbackAction::DeleteAllowRequest(chat_id) => {
+            update_acl_with_on(app, &deleted_action_title("请求白名单"), |config| {
+                config.allowed_request_chat_ids.retain(|id| *id != chat_id);
+            })
+            .await
+            .map(|_| ())
         }
     };
     if let Err(err) = action_result {
@@ -539,6 +710,53 @@ fn normalize_acl_config(config: &mut AccessControlConfig) {
     });
 }
 
+/// 排序后的管理员列表。
+fn sorted_admin_ids(config: &AccessControlConfig) -> Vec<i64> {
+    let mut ids = config.admin_user_ids.clone();
+    ids.sort_unstable();
+    ids
+}
+
+/// 排序后的允许用户列表。
+fn sorted_allowed_user_ids(config: &AccessControlConfig) -> Vec<i64> {
+    let mut ids = config.allowed_user_ids.clone();
+    ids.sort_unstable();
+    ids
+}
+
+/// 排序后的封禁用户列表。
+fn sorted_banned_user_ids(config: &AccessControlConfig) -> Vec<i64> {
+    let mut ids = config.banned_user_ids.clone();
+    ids.sort_unstable();
+    ids
+}
+
+/// 排序后的目标白名单。
+fn sorted_allowed_target_ids(config: &AccessControlConfig) -> Vec<i64> {
+    let mut ids = config.allowed_target_chat_ids.clone();
+    ids.sort_unstable();
+    ids
+}
+
+/// 排序后的请求白名单。
+fn sorted_allowed_request_ids(config: &AccessControlConfig) -> Vec<i64> {
+    let mut ids = config.allowed_request_chat_ids.clone();
+    ids.sort_unstable();
+    ids
+}
+
+/// ACL 现有项详情。
+fn format_acl_entry_detail_text(title: &str, label: &str, value: i64, detail: &str) -> String {
+    [
+        title.to_owned(),
+        card::field(label, value),
+        String::new(),
+        card::section("说明"),
+        detail.to_owned(),
+    ]
+    .join("\n")
+}
+
 fn format_acl_config_text(title: &str, config: &AccessControlConfig) -> String {
     let mut lines = build_runtime_admin_page_intro(title, ACL_PAGE_DETAIL);
     lines.extend([
@@ -570,6 +788,31 @@ fn format_acl_config_text(title: &str, config: &AccessControlConfig) -> String {
     lines.join("\n")
 }
 
+/// ACL 详情页按钮。
+fn build_acl_entry_detail_buttons(
+    delete_action: AclCallbackAction,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![send::build_callback_button(
+            "删除",
+            &build_acl_callback_data(delete_action),
+            tdlib_rs::enums::ButtonStyle::Danger,
+        )],
+        build_help_menu_row(
+            send::build_callback_button(
+                "返回权限",
+                &build_acl_callback_data(AclCallbackAction::Refresh),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "菜单",
+                &super::build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ),
+    ]
+}
+
 pub(super) fn build_acl_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let app_context = crate::app_context::app_context();
     build_acl_buttons_on(app_context.as_ref())
@@ -585,7 +828,7 @@ pub(super) fn build_acl_buttons_on(
     } else {
         "开放任意私聊"
     };
-    vec![
+    let mut rows = vec![
         vec![
             send::build_callback_button(
                 allow_all_label,
@@ -605,35 +848,60 @@ pub(super) fn build_acl_buttons_on(
         ],
         build_acl_input_row(&[
             super::menu::AdminInputAction::AclAddAdmin,
-            super::menu::AdminInputAction::AclDelAdmin,
-        ]),
-        build_acl_input_row(&[
             super::menu::AdminInputAction::AclAddAllowUser,
-            super::menu::AdminInputAction::AclDelAllowUser,
-            super::menu::AdminInputAction::AclAddBan,
         ]),
         build_acl_input_row(&[
+            super::menu::AdminInputAction::AclAddBan,
             super::menu::AdminInputAction::AclAddAllowTarget,
-            super::menu::AdminInputAction::AclDelAllowTarget,
             super::menu::AdminInputAction::AclAddAllowRequest,
         ]),
-        build_acl_input_row(&[
-            super::menu::AdminInputAction::AclDelAllowRequest,
-            super::menu::AdminInputAction::AclDelBan,
-        ]),
-        build_help_menu_row(
-            send::build_callback_button(
-                "帮助",
-                &super::help::build_help_callback_data(Some("acl")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "菜单",
-                &super::build_menu_home_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
+    ];
+    rows.extend(chunk_acl_id_buttons(
+        sorted_admin_ids(&config),
+        "管理员",
+        AclCallbackAction::ViewAdmin,
+    ));
+    rows.extend(chunk_acl_id_buttons(
+        sorted_allowed_user_ids(&config),
+        "允许用户",
+        AclCallbackAction::ViewAllowUser,
+    ));
+    rows.extend(chunk_acl_id_buttons(
+        sorted_banned_user_ids(&config),
+        "封禁",
+        AclCallbackAction::ViewBanUser,
+    ));
+    rows.extend(chunk_acl_id_buttons(
+        sorted_allowed_target_ids(&config),
+        "目标",
+        AclCallbackAction::ViewAllowTarget,
+    ));
+    rows.extend(chunk_acl_id_buttons(
+        sorted_allowed_request_ids(&config),
+        "请求",
+        AclCallbackAction::ViewAllowRequest,
+    ));
+    rows.push(build_acl_input_row(&[
+        super::menu::AdminInputAction::AclDelAdmin,
+        super::menu::AdminInputAction::AclDelAllowUser,
+        super::menu::AdminInputAction::AclAddBan,
+        super::menu::AdminInputAction::AclDelAllowTarget,
+        super::menu::AdminInputAction::AclDelAllowRequest,
+        super::menu::AdminInputAction::AclDelBan,
+    ]));
+    rows.push(build_help_menu_row(
+        send::build_callback_button(
+            "帮助",
+            &super::help::build_help_callback_data(Some("acl")),
+            tdlib_rs::enums::ButtonStyle::Default,
         ),
-    ]
+        send::build_callback_button(
+            "菜单",
+            &super::build_menu_home_button_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ));
+    rows
 }
 
 /// 构造 ACL 输入按钮行。
@@ -646,11 +914,30 @@ fn build_acl_input_row(
             let spec = acl_input_spec_for_admin_action(*action).expect("acl input spec exists");
             send::build_callback_button(
                 spec.button_label,
-                &build_acl_callback_data(spec.callback_action),
+                &build_acl_callback_data(spec.callback_action.clone()),
                 tdlib_rs::enums::ButtonStyle::Default,
             )
         })
         .collect()
+}
+
+/// 把 ACL 现有项分块成按钮行。
+fn chunk_acl_id_buttons(
+    ids: Vec<i64>,
+    prefix: &str,
+    action_builder: impl Fn(i64) -> AclCallbackAction,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let buttons = ids
+        .into_iter()
+        .map(|id| {
+            send::build_callback_button(
+                &format!("{prefix} {id}"),
+                &build_acl_callback_data(action_builder(id)),
+                tdlib_rs::enums::ButtonStyle::Default,
+            )
+        })
+        .collect::<Vec<_>>();
+    buttons.chunks(2).map(<[_]>::to_vec).collect()
 }
 
 fn parse_acl_callback_data(data: &str) -> Option<AclCallbackAction> {
@@ -669,7 +956,23 @@ fn parse_acl_callback_data(data: &str) -> Option<AclCallbackAction> {
         "td" => Some(AclCallbackAction::InputDelAllowTarget),
         "ra" => Some(AclCallbackAction::InputAddAllowRequest),
         "rd" => Some(AclCallbackAction::InputDelAllowRequest),
-        _ => None,
+        _ => {
+            let (kind, raw) = payload.split_once(':')?;
+            let id = raw.parse::<i64>().ok()?;
+            match kind {
+                "va" => Some(AclCallbackAction::ViewAdmin(id)),
+                "vu" => Some(AclCallbackAction::ViewAllowUser(id)),
+                "vb" => Some(AclCallbackAction::ViewBanUser(id)),
+                "vt" => Some(AclCallbackAction::ViewAllowTarget(id)),
+                "vr" => Some(AclCallbackAction::ViewAllowRequest(id)),
+                "da" => Some(AclCallbackAction::DeleteAdmin(id)),
+                "du" => Some(AclCallbackAction::DeleteAllowUser(id)),
+                "db" => Some(AclCallbackAction::DeleteBanUser(id)),
+                "dt" => Some(AclCallbackAction::DeleteAllowTarget(id)),
+                "dr" => Some(AclCallbackAction::DeleteAllowRequest(id)),
+                _ => None,
+            }
+        }
     }
 }
 
@@ -688,6 +991,36 @@ fn build_acl_callback_data(action: AclCallbackAction) -> String {
         AclCallbackAction::InputDelAllowTarget => "td",
         AclCallbackAction::InputAddAllowRequest => "ra",
         AclCallbackAction::InputDelAllowRequest => "rd",
+        AclCallbackAction::ViewAdmin(user_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}va:{user_id}");
+        }
+        AclCallbackAction::ViewAllowUser(user_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}vu:{user_id}");
+        }
+        AclCallbackAction::ViewBanUser(user_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}vb:{user_id}");
+        }
+        AclCallbackAction::ViewAllowTarget(chat_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}vt:{chat_id}");
+        }
+        AclCallbackAction::ViewAllowRequest(chat_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}vr:{chat_id}");
+        }
+        AclCallbackAction::DeleteAdmin(user_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}da:{user_id}");
+        }
+        AclCallbackAction::DeleteAllowUser(user_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}du:{user_id}");
+        }
+        AclCallbackAction::DeleteBanUser(user_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}db:{user_id}");
+        }
+        AclCallbackAction::DeleteAllowTarget(chat_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}dt:{chat_id}");
+        }
+        AclCallbackAction::DeleteAllowRequest(chat_id) => {
+            return format!("{ACL_CALLBACK_PREFIX}dr:{chat_id}");
+        }
     };
     format!("{ACL_CALLBACK_PREFIX}{suffix}")
 }
@@ -808,7 +1141,11 @@ mod tests {
     fn test_build_acl_buttons_use_callback_actions() {
         let app = crate::app_context::app_context();
         app.access_control_runtime
-            .update_runtime_config(AccessControlConfig::default());
+            .update_runtime_config(AccessControlConfig {
+                admin_user_ids: vec![11],
+                allowed_target_chat_ids: vec![22],
+                ..AccessControlConfig::default()
+            });
 
         let rows = build_acl_buttons();
         let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
@@ -818,13 +1155,20 @@ mod tests {
         let decoded =
             String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
         assert_eq!(decoded, "acfg:p");
-        assert_eq!(rows[5][0].text, "帮助");
-        assert_eq!(rows[5][1].text, "菜单");
+        let footer = rows.last().expect("acl page should have footer");
+        assert_eq!(footer[0].text, "帮助");
+        assert_eq!(footer[1].text, "菜单");
         assert!(
             rows.iter()
                 .flatten()
                 .any(|button| button.text == "加管理员")
         );
         assert!(rows.iter().flatten().any(|button| button.text == "加目标"));
+        assert!(
+            rows.iter()
+                .flatten()
+                .any(|button| button.text == "管理员 11")
+        );
+        assert!(rows.iter().flatten().any(|button| button.text == "目标 22"));
     }
 }

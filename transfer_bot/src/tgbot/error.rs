@@ -7,6 +7,7 @@ use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::{self as transfer_mod};
 use crate::tgbot::transfer::{
     build_balance_button_data, build_help_button_data, build_menu_home_button_data_for_outer,
+    build_menu_new_transfer_button_data_for_outer,
 };
 
 #[derive(Debug)]
@@ -265,13 +266,52 @@ pub(crate) async fn send_auto_transfer_hint_message(
     chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    let error_text = format!("{:#}", err);
+    if error_text.contains("无法定位原始消息") {
+        return ReplyPanel::card(
+            [
+                "无法识别转发来源".to_owned(),
+                format!("状态：{}", card::code("source-unavailable")),
+                card::DIVIDER.to_owned(),
+                card::section("说明"),
+                "这条转发消息没有可稳定还原的原始 message_id，不能安全地作为转存源。".to_owned(),
+                card::section("建议"),
+                "请改用原始消息链接，或重新开始转存后发送一条 bot 可见媒体。".to_owned(),
+                card::section("命令"),
+                card::command_line("开始转存", "/transfer"),
+                card::command_line("帮助", "/help transfer"),
+                card::command_line("菜单", "/menu"),
+            ]
+            .join("\n"),
+        )
+        .row(vec![
+            build_callback_button(
+                "开始转存",
+                &build_menu_new_transfer_button_data_for_outer(),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            build_callback_button(
+                "打开帮助",
+                &build_help_button_data(Some("transfer")),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ])
+        .row(vec![build_callback_button(
+            "打开菜单",
+            &build_menu_home_button_data_for_outer(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )])
+        .send(chat_id, client_id)
+        .await;
+    }
+
     ReplyPanel::card(
         [
             "自动转存未启动".to_owned(),
             format!("状态：{}", card::code("need-target")),
             card::DIVIDER.to_owned(),
             card::section("原因"),
-            card::pre_code(format!("{:#}", err)),
+            card::pre_code(error_text),
             card::section("下一步"),
             "请回复要转存的媒体消息，并发送下面命令。".to_owned(),
             card::command_line("指定目标", "/transfer <target_chat_id_or_alias>"),

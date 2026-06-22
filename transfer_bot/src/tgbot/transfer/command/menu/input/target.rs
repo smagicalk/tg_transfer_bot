@@ -164,7 +164,7 @@ pub(super) fn build_target_choice_buttons_on(
         && seen_targets.insert(default_target_chat_id)
     {
         rows.push(vec![send::build_callback_button(
-            default_target_button_label(kind),
+            default_target_button_label(kind, default_target_chat_id, request_chat_id),
             &callback::target_default_callback_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         )]);
@@ -190,18 +190,11 @@ pub(super) fn build_target_choice_buttons_on(
     alias_buttons.sort_by(|left, right| left.text.cmp(&right.text));
     rows.extend(alias_buttons.chunks(2).map(<[_]>::to_vec));
 
-    rows.push(vec![
-        send::build_callback_button(
-            "选择群组",
-            &callback::target_request_chat_callback_data(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        send::build_callback_button(
-            "手动输入",
-            &callback::target_manual_callback_data(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ]);
+    rows.push(vec![send::build_callback_button(
+        "手动输入",
+        &callback::target_manual_callback_data(),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )]);
     rows.push(vec![send::build_callback_button(
         "取消",
         &callback::cancel_input_callback_data(),
@@ -301,7 +294,7 @@ fn build_target_choice_text_lines(
     }
     lines.extend([
         crate::tgbot::transfer::card::section("目标方式"),
-        "可以点常用目标、使用 Telegram 原生选群，或手动输入 chat_id/alias。".to_owned(),
+        "可以直接使用当前私聊、点已有别名/上次目标，或手动输入 private chat_id/alias。".to_owned(),
         format!("取消：{}", crate::tgbot::transfer::card::code("/cancel")),
     ]);
     lines
@@ -335,8 +328,16 @@ fn build_confirm_text(kind: MenuInputKind, source_link: &str, target_chat_id: i6
 /// 默认目标按钮文案。
 ///
 /// 同一个默认目标在转存和查询里语义不同，所以按钮文案按场景分别显示。
-fn default_target_button_label(kind: MenuInputKind) -> &'static str {
-    kind.default_target_button_label()
+fn default_target_button_label(
+    kind: MenuInputKind,
+    default_target_chat_id: i64,
+    request_chat_id: i64,
+) -> &'static str {
+    if default_target_chat_id == request_chat_id {
+        "当前私聊"
+    } else {
+        kind.default_target_button_label()
+    }
 }
 
 #[cfg(test)]
@@ -436,7 +437,7 @@ mod tests {
         assert_eq!(resolve_default_target_for_test(&config, 1), None);
     }
 
-    // 目标选择页应优先提供快速目标、常用目标、Telegram 原生选群和手动输入。
+    // 目标选择页应优先提供当前私聊/默认目标、常用目标和手动输入。
     #[test]
     fn test_build_target_choice_buttons_layout() {
         let _guard = lock_target_runtime_tests();
@@ -462,7 +463,6 @@ mod tests {
 
         assert_eq!(rows[0][0].text, "快速转存");
         assert!(labels.contains(&"archive"));
-        assert!(labels.contains(&"选择群组"));
         assert!(labels.contains(&"手动输入"));
         assert_eq!(rows.last().expect("should have cancel row")[0].text, "取消");
     }
@@ -498,8 +498,17 @@ mod tests {
         );
         assert_eq!(MenuInputKind::LookupDefault.confirm_title(), "确认查询");
         assert_eq!(
-            default_target_button_label(MenuInputKind::LookupDefault),
+            default_target_button_label(MenuInputKind::LookupDefault, 1, 2),
             "快速查询"
+        );
+    }
+
+    // 当默认目标就是当前请求私聊时，按钮文案应明确显示为“当前私聊”。
+    #[test]
+    fn test_default_target_button_label_uses_private_chat_name() {
+        assert_eq!(
+            default_target_button_label(MenuInputKind::Transfer, 10001, 10001),
+            "当前私聊"
         );
     }
 

@@ -5,25 +5,33 @@ use super::super::common::{
     CommandStyle, balance_command, balance_history_command, build_copy_button_rows,
     build_copy_only_row, build_refresh_return_menu_row, build_return_menu_row,
     build_runtime_admin_help_copy_rows, cache_command, downloads_command, health_command,
-    help_command as help_command_text, job_command, points_change_command,
-    points_history_command, points_show_command,
+    help_command as help_command_text, job_command, points_change_command, points_history_command,
+    points_show_command,
 };
 use super::super::menu::{
-    build_menu_home_callback_data, build_menu_new_lookup_callback_data,
-    build_menu_new_transfer_callback_data, build_menu_quick_lookup_default_callback_data,
-    build_menu_quick_transfer_default_callback_data, build_menu_job_pause_input_button_data,
-    build_menu_job_resume_input_button_data, build_menu_job_status_input_button_data,
-    build_menu_job_stop_input_button_data, build_menu_point_ledger_input_button_data,
+    build_menu_acl_callback_data, build_menu_billing_callback_data,
+    build_menu_config_callback_data, build_menu_home_callback_data,
+    build_menu_job_pause_input_button_data, build_menu_job_resume_input_button_data,
+    build_menu_job_status_input_button_data, build_menu_job_stop_input_button_data,
+    build_menu_new_lookup_callback_data, build_menu_new_transfer_callback_data,
+    build_menu_point_ledger_input_button_data, build_menu_quick_lookup_default_callback_data,
+    build_menu_quick_transfer_default_callback_data, build_menu_targets_callback_data,
 };
 use super::super::{
-    acl::acl_help_descriptor, billing::billing_help_descriptor, config_cmd::config_help_descriptor,
+    acl::acl_help_descriptor,
+    billing::{
+        BillingNumericField, billing_help_descriptor,
+        build_billing_announcement_detail_button_data, build_billing_enabled_detail_button_data,
+        build_billing_numeric_detail_button_data,
+    },
+    config_cmd::{ConfigField, build_config_field_detail_button_data, config_help_descriptor},
     targets::targets_help_descriptor,
-};
-use crate::tgbot::transfer::command::{
-    build_cache_button_data, build_downloads_filter_button_data, build_health_button_data,
 };
 use super::topic::normalize_help_topic;
 use crate::tgbot::send;
+use crate::tgbot::transfer::command::{
+    build_cache_button_data, build_downloads_filter_button_data, build_health_button_data,
+};
 
 /// `/help` 按钮回调前缀。
 const HELP_CALLBACK_PREFIX: &str = "h:";
@@ -273,7 +281,10 @@ pub(super) fn build_help_detail_buttons(
                 ]);
             }
             rows.extend(build_copy_button_rows(buttons));
-            rows.push(build_return_menu_row(help_index_button(), menu_home_button()));
+            rows.push(build_return_menu_row(
+                help_index_button(),
+                menu_home_button(),
+            ));
             rows
         }
         "health" => vec![
@@ -328,38 +339,135 @@ pub(super) fn build_help_detail_buttons(
         ]
         .into_iter()
         .collect(),
-        "config" => [
-            build_runtime_admin_help_copy_rows(&config_help_descriptor()),
-            vec![build_return_menu_row(
+        "config" => {
+            let mut rows = vec![
+                vec![
+                    send::build_callback_button(
+                        "打开配置页",
+                        &build_menu_config_callback_data(),
+                        tdlib_rs::enums::ButtonStyle::Primary,
+                    ),
+                    send::build_callback_button(
+                        "并发详情",
+                        &build_config_field_detail_button_data(ConfigField::JobConcurrency),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                    send::build_callback_button(
+                        "删除详情",
+                        &build_config_field_detail_button_data(ConfigField::FileDeleteDelayMinutes),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                ],
+                vec![
+                    send::build_callback_button(
+                        "GC详情",
+                        &build_config_field_detail_button_data(ConfigField::FileGcIntervalSeconds),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                    send::build_callback_button(
+                        "进度详情",
+                        &build_config_field_detail_button_data(
+                            ConfigField::ProgressEditIntervalSeconds,
+                        ),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                    send::build_callback_button(
+                        "分页详情",
+                        &build_config_field_detail_button_data(
+                            ConfigField::DownloadsDefaultPageSize,
+                        ),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                ],
+                vec![send::build_callback_button(
+                    "超时详情",
+                    &build_config_field_detail_button_data(ConfigField::MenuInputTimeoutSeconds),
+                    tdlib_rs::enums::ButtonStyle::Default,
+                )],
+            ];
+            rows.extend(build_runtime_admin_help_copy_rows(&config_help_descriptor()));
+            rows.push(build_return_menu_row(
                 help_index_button(),
                 menu_home_button(),
-            )],
-        ]
-        .concat(),
-        "targets" => [
-            build_runtime_admin_help_copy_rows(&targets_help_descriptor()),
-            vec![build_return_menu_row(
+            ));
+            rows
+        }
+        "targets" => {
+            let mut rows = vec![vec![send::build_callback_button(
+                "打开目标页",
+                &build_menu_targets_callback_data(),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            )]];
+            rows.extend(build_runtime_admin_help_copy_rows(
+                &targets_help_descriptor(),
+            ));
+            rows.push(build_return_menu_row(
                 help_index_button(),
                 menu_home_button(),
-            )],
-        ]
-        .concat(),
-        "acl" => [
-            build_runtime_admin_help_copy_rows(&acl_help_descriptor()),
-            vec![build_return_menu_row(
+            ));
+            rows
+        }
+        "acl" => {
+            let mut rows = vec![vec![send::build_callback_button(
+                "打开权限页",
+                &build_menu_acl_callback_data(),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            )]];
+            rows.extend(build_runtime_admin_help_copy_rows(&acl_help_descriptor()));
+            rows.push(build_return_menu_row(
                 help_index_button(),
                 menu_home_button(),
-            )],
-        ]
-        .concat(),
-        "billing" => [
-            build_runtime_admin_help_copy_rows(&billing_help_descriptor()),
-            vec![build_return_menu_row(
+            ));
+            rows
+        }
+        "billing" => {
+            let mut rows = vec![
+                vec![
+                    send::build_callback_button(
+                        "打开计费页",
+                        &build_menu_billing_callback_data(),
+                        tdlib_rs::enums::ButtonStyle::Primary,
+                    ),
+                    send::build_callback_button(
+                        "开关详情",
+                        &build_billing_enabled_detail_button_data(),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                    send::build_callback_button(
+                        "公告详情",
+                        &build_billing_announcement_detail_button_data(),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                ],
+                vec![
+                    send::build_callback_button(
+                        "基础详情",
+                        &build_billing_numeric_detail_button_data(BillingNumericField::BaseCost),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                    send::build_callback_button(
+                        "单项详情",
+                        &build_billing_numeric_detail_button_data(BillingNumericField::ItemCost),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                    send::build_callback_button(
+                        "初始详情",
+                        &build_billing_numeric_detail_button_data(
+                            BillingNumericField::InitialPoints,
+                        ),
+                        tdlib_rs::enums::ButtonStyle::Default,
+                    ),
+                ],
+            ];
+            rows.extend(build_runtime_admin_help_copy_rows(
+                &billing_help_descriptor(),
+            ));
+            rows.push(build_return_menu_row(
                 help_index_button(),
                 menu_home_button(),
-            )],
-        ]
-        .concat(),
+            ));
+            rows
+        }
         "downloads" => vec![
             vec![
                 send::build_callback_button(
@@ -546,9 +654,33 @@ mod tests {
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
+        assert!(labels.contains(&"打开配置页"));
+        assert!(labels.contains(&"并发详情"));
+        assert!(labels.contains(&"删除详情"));
         assert!(labels.contains(&"复制 /config show"));
         assert!(labels.contains(&"复制 /config reset"));
         assert!(labels.contains(&"复制并发"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_runtime_admin_help_detail_buttons_link_to_real_pages() -> anyhow::Result<()> {
+        for (topic, expected) in [
+            ("targets", "打开目标页"),
+            ("acl", "打开权限页"),
+            ("billing", "打开计费页"),
+        ] {
+            let rows = build_help_detail_buttons(topic, true)?;
+            let labels = rows
+                .iter()
+                .flatten()
+                .map(|button| button.text.as_str())
+                .collect::<Vec<_>>();
+            assert!(
+                labels.contains(&expected),
+                "missing runtime admin page button: {expected}"
+            );
+        }
         Ok(())
     }
 }

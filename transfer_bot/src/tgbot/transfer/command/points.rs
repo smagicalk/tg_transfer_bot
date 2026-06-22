@@ -8,9 +8,9 @@ use crate::tgbot::transfer::store;
 mod callback;
 mod render;
 
+use super::build_menu_home_button_data;
 #[cfg(test)]
 use super::common::balance_history_command;
-use super::build_menu_home_button_data;
 pub(in crate::tgbot::transfer::command) use callback::points_callback_query;
 use render::{format_balance_text, format_ledger_page_text, ledger_button_rows};
 

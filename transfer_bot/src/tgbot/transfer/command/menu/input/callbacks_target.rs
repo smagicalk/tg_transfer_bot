@@ -259,7 +259,10 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_qu
     Ok(())
 }
 
-/// 处理“选择群组”按钮，发送 Telegram 原生选群键盘。
+/// 处理旧版“选择群组”按钮。
+///
+/// 当前项目主流程已经收成“当前私聊 / 别名 / 手动输入”，这里仅保留兼容提示，
+/// 避免历史按钮或旧消息上的 callback 直接报错。
 pub(in crate::tgbot::transfer::command::menu) async fn target_request_chat_callback_query(
     app: &crate::app_context::AppContext,
     callback_query_id: i64,
@@ -276,7 +279,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_request_chat_callb
         sender_user_id,
         client_id,
     );
-    let Some(_context) = advance_target_context_for_callback(
+    let Some(context) = advance_target_context_for_callback(
         ctx.draft_key(),
         TargetDraftAdvance::ChatPicker,
         callback_query_id,
@@ -289,30 +292,27 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_request_chat_callb
         return Ok(());
     };
 
-    ctx.answer("请选择群组").await?;
+    ctx.answer("当前版本请使用当前私聊或手动输入").await?;
     edit_input_waiting_card(
         ctx.chat_id,
         ctx.message_id,
         ctx.client_id,
         "2/3",
-        "等待选择群组",
-        "请使用输入框下方的 Telegram 原生选群按钮。",
+        "使用私聊目标",
+        "当前版本不再使用选群器，请点击“当前私聊”或“手动输入”。",
     )
     .await;
-    send::send_card_message_with_chat_request_keyboard_returning(
-        build_step_prompt_with_context(
-            "waiting-target",
-            "2/3",
-            "选择目标群组",
-            "点击输入框下方的“选择群组”，Telegram 会打开原生群组选择器；不想继续就点“取消”。",
-            None,
-            None,
-        ),
-        ctx.chat_id,
-        super::TARGET_CHAT_REQUEST_BUTTON_ID,
-        "选择群组",
-        "选择目标群组，或发送 /cancel",
-        ctx.client_id,
+    super::target::send_target_choice_prompt_with_detail(
+        &crate::config::BotConfig::default(),
+        super::target::TargetPromptContext {
+            app,
+            request_chat_id: chat_id,
+            sender_user_id,
+            client_id,
+        },
+        context.kind,
+        &context.source_link,
+        "当前版本不再使用选群器，请改用当前私聊、已有别名或手动输入 private chat_id。",
     )
     .await?;
     Ok(())

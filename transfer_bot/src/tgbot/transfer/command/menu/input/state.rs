@@ -392,7 +392,9 @@ impl AdminInputAction {
             | Self::BillingSetItemCost
             | Self::BillingSetInitialUserPoints
             | Self::BillingSetAnnouncement => unreachable!("billing input title uses spec"),
-            Self::PointsAddUser | Self::PointsSubUser => unreachable!("points input title uses spec"),
+            Self::PointsAddUser | Self::PointsSubUser => {
+                unreachable!("points input title uses spec")
+            }
         }
     }
 
@@ -444,7 +446,9 @@ impl AdminInputAction {
             | Self::BillingSetItemCost
             | Self::BillingSetInitialUserPoints
             | Self::BillingSetAnnouncement => unreachable!("billing input detail uses spec"),
-            Self::PointsAddUser | Self::PointsSubUser => unreachable!("points input detail uses spec"),
+            Self::PointsAddUser | Self::PointsSubUser => {
+                unreachable!("points input detail uses spec")
+            }
         }
     }
 
@@ -605,6 +609,8 @@ pub(super) enum MenuInputStep {
     },
     AdminInput {
         action: AdminInputAction,
+        context_text: Option<String>,
+        context_i64: Option<i64>,
     },
     AdminChatPicker {
         action: AdminInputAction,
@@ -638,7 +644,7 @@ impl MenuInputDraft {
             MenuInputStep::ChatPicker { .. } => "选择群组",
             MenuInputStep::Confirm { .. } => "确认执行",
             MenuInputStep::JobId { action } => action.input_title(),
-            MenuInputStep::AdminInput { action } => action.input_title(),
+            MenuInputStep::AdminInput { action, .. } => action.input_title(),
             MenuInputStep::AdminChatPicker { action, .. } => action.input_title(),
             MenuInputStep::PointLedgerUserId => "用户积分流水",
             MenuInputStep::PointsAdjust { action, .. } => action.input_title(),
@@ -675,8 +681,16 @@ impl MenuInputDraft {
     }
 
     /// 构造等待管理配置输入的草稿。
-    pub(super) fn admin_input(action: AdminInputAction) -> Self {
-        Self::new(MenuInputStep::AdminInput { action })
+    pub(super) fn admin_input(
+        action: AdminInputAction,
+        context_text: Option<String>,
+        context_i64: Option<i64>,
+    ) -> Self {
+        Self::new(MenuInputStep::AdminInput {
+            action,
+            context_text,
+            context_i64,
+        })
     }
 
     /// 构造等待管理配置选群结果的草稿。
@@ -754,6 +768,8 @@ impl MenuInputDraft {
             },
             "admin_input" => MenuInputStep::AdminInput {
                 action: AdminInputAction::parse(model.job_action.as_deref()?)?,
+                context_text: model.source_link.clone(),
+                context_i64: model.target_chat_id,
             },
             "admin_chat_picker" => MenuInputStep::AdminChatPicker {
                 action: AdminInputAction::parse(model.job_action.as_deref()?)?,
@@ -829,13 +845,17 @@ impl DraftFields {
                 source_link: None,
                 target_chat_id: None,
             },
-            MenuInputStep::AdminInput { action } => Self {
+            MenuInputStep::AdminInput {
+                action,
+                context_text,
+                context_i64,
+            } => Self {
                 step: "admin_input",
                 input_kind: None,
                 // 复用可空字符串列保存单步管理动作编码，避免为短草稿状态再单独加 schema。
                 job_action: Some(action.code()),
-                source_link: None,
-                target_chat_id: None,
+                source_link: context_text,
+                target_chat_id: context_i64,
             },
             MenuInputStep::AdminChatPicker {
                 action,

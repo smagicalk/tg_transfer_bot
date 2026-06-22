@@ -177,11 +177,6 @@ pub(super) fn target_manual_callback_data() -> String {
     menu_callback_data("tm")
 }
 
-/// 打开 Telegram 原生选群键盘的 callback payload。
-pub(super) fn target_request_chat_callback_data() -> String {
-    menu_callback_data("ts")
-}
-
 /// 使用某个目标 chat 的 callback payload。
 pub(super) fn target_alias_callback_data(chat_id: i64) -> String {
     menu_callback_data(&format!("ta:{chat_id}"))

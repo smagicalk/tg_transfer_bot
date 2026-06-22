@@ -104,7 +104,10 @@ pub(in crate::tgbot::transfer::command) async fn points_callback_query(
                         ),
                         send::build_callback_button(
                             "扣分",
-                            &super::build_points_adjust_home_callback_data(effective_user_id, false),
+                            &super::build_points_adjust_home_callback_data(
+                                effective_user_id,
+                                false,
+                            ),
                             tdlib_rs::enums::ButtonStyle::Default,
                         ),
                     ]);
@@ -124,7 +127,9 @@ pub(in crate::tgbot::transfer::command) async fn points_callback_query(
                     ])
                     .row(vec![send::build_callback_button(
                         "帮助",
-                        &crate::tgbot::transfer::command::help::build_help_callback_data(Some("points")),
+                        &crate::tgbot::transfer::command::help::build_help_callback_data(Some(
+                            "points",
+                        )),
                         tdlib_rs::enums::ButtonStyle::Default,
                     )]);
             }
