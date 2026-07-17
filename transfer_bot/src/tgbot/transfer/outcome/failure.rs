@@ -7,7 +7,7 @@ use super::super::command::common::{
     lookup_command as build_lookup_command, transfer_command as build_transfer_command,
 };
 use super::super::command::{
-    build_downloads_filter_button_data, build_job_status_button_data, build_menu_home_button_data,
+    build_job_status_button_data, build_lookup_retry_transfer_button_data,
 };
 
 /// 转存错误的稳定分类。
@@ -17,8 +17,6 @@ use super::super::command::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot) enum TransferErrorKind {
     TdlibRequest,
-    InsufficientPoints,
-    TargetDenied,
     MissingTarget,
     SourceDenied,
     PermissionDenied,
@@ -43,7 +41,7 @@ pub(in crate::tgbot) struct TransferErrorHint {
 
 /// 根据错误文本选择用户可执行的提示。
 ///
-/// 顺序很重要：先匹配 TDLib 请求解析、积分、目标等明确错误，再匹配较宽泛的权限和下载关键词。
+/// 顺序很重要：先匹配 TDLib 请求解析、目标等明确错误，再匹配较宽泛的权限和下载关键词。
 pub(in crate::tgbot) fn classify_transfer_error_text(error_text: &str) -> TransferErrorHint {
     let lower = error_text.to_ascii_lowercase();
 
@@ -63,33 +61,13 @@ pub(in crate::tgbot) fn classify_transfer_error_text(error_text: &str) -> Transf
         );
     }
 
-    if lower.contains("insufficient points") {
-        return transfer_error_hint(
-            TransferErrorKind::InsufficientPoints,
-            "积分不足",
-            "need-points",
-            "当前余额不足，无法创建这次转存任务。",
-            "先查看余额和流水；如果需要继续使用，请联系管理员加分后重试。",
-        );
-    }
-
-    if lower.contains("target chat is not allowed") {
-        return transfer_error_hint(
-            TransferErrorKind::TargetDenied,
-            "目标不可用",
-            "target-denied",
-            "目标 chat 不在允许转存的目标白名单内。",
-            "请改用已配置的目标别名或默认目标；如果这是新归档群，需要管理员先更新 allowed_target_chat_ids。",
-        );
-    }
-
     if lower.contains("not found transfer target") {
         return transfer_error_hint(
             TransferErrorKind::MissingTarget,
             "缺少目标",
             "need-target",
             "当前请求 chat 没有匹配到默认目标，也没有在命令里指定目标。",
-            "重新发送转存命令并带上目标 chat_id 或别名，或者让管理员配置默认目标。",
+            "重新发送转存命令并带上目标 chat_id 或别名，或者在目标配置中设置默认目标。",
         );
     }
 
@@ -115,7 +93,7 @@ pub(in crate::tgbot) fn classify_transfer_error_text(error_text: &str) -> Transf
             "源不可访问",
             "source-denied",
             "源消息不存在、已删除，或当前读取账号看不到这条消息。",
-            "普通用户请转发源消息给 bot，或让 bot 加入源聊天；管理员任务可用备用 user 兜底，但备用 user 也必须能访问源。",
+            "请转发源消息给 bot，或确保 bot/备用 user 至少有一个账号能访问源聊天。",
         );
     }
 
@@ -135,7 +113,7 @@ pub(in crate::tgbot) fn classify_transfer_error_text(error_text: &str) -> Transf
             "权限不足",
             "permission-denied",
             "读取源聊天或写入目标聊天的权限不足。",
-            "确认 bot 在目标聊天有发消息权限；链接源如果 bot 不可见，普通用户需让 bot 可访问，管理员 fallback 时备用 user 必须加入源群/频道。",
+            "确认 bot 在目标聊天有发消息权限；链接源如果 bot 不可见，备用 user 必须加入源群或频道。",
         );
     }
 
@@ -226,65 +204,73 @@ pub(in crate::tgbot::transfer) async fn send_failure_message(
 ) -> anyhow::Result<()> {
     let retry_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Long);
     let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Long);
-    crate::tgbot::send::ReplyPanel::card(format_failure_card_text(
-        title,
-        source_link,
-        target_chat_id,
-        job_id,
-        &retry_command,
-        &lookup_command,
-        &err,
-    ))
-    .row(build_failure_buttons(
-        job_id,
-        &retry_command,
-        &lookup_command,
-    ))
-    .send(notify_chat_id, client_id)
-    .await
+    let buttons = build_failure_buttons(job_id, &build_lookup_retry_transfer_button_data());
+    let sent = crate::tgbot::send::send_card_message_with_buttons_returning(
+        format_failure_card_text(
+            title,
+            source_link,
+            target_chat_id,
+            job_id,
+            &retry_command,
+            &lookup_command,
+            &err,
+        ),
+        notify_chat_id,
+        buttons,
+        client_id,
+    )
+    .await?;
+    // 失败页点击“重新转存”时，沿用 lookup 的轻量上下文机制复用源链接与目标 chat，
+    // 避免把长链接塞进 callback_data 里。
+    crate::app_context::app_context().lookup_retry.put_context(
+        notify_chat_id,
+        notify_chat_id,
+        sent.id,
+        crate::app_context::LookupRetryContext {
+            source_link: source_link.to_owned(),
+            target_chat_id,
+        },
+    );
+    Ok(())
 }
 
 /// 构造失败卡片按钮。
 ///
-/// 失败详情和重试命令保留在正文；按钮区优先放能直接跳转的 callback。
-/// 失败场景还没有安全的“重新创建任务” callback，因此只保留一个重试命令复制兜底。
+/// 失败详情和重试命令保留在正文；按钮区优先放能直接点击的 callback。
+/// 重新转存沿用 lookup 的短 callback + 进程内上下文，避免把长链接塞进 callback_data。
 fn build_failure_buttons(
     job_id: Option<i64>,
-    retry_command: &str,
-    _lookup_command: &str,
-) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
-    let mut row = Vec::new();
+    retry_callback_data: &str,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut action_row = Vec::new();
     if let Some(job_id) = job_id {
-        row.push(crate::tgbot::send::build_callback_button(
+        action_row.push(crate::tgbot::send::build_callback_button(
             "查看任务详情",
             &build_job_status_button_data(job_id),
             tdlib_rs::enums::ButtonStyle::Default,
         ));
     }
-    row.push(crate::tgbot::send::build_copy_button(
-        "复制重试命令",
-        retry_command,
-        tdlib_rs::enums::ButtonStyle::Default,
+    let retry_style = if job_id.is_some() {
+        tdlib_rs::enums::ButtonStyle::Primary
+    } else {
+        tdlib_rs::enums::ButtonStyle::Default
+    };
+    action_row.push(crate::tgbot::send::build_callback_button(
+        "重新转存",
+        retry_callback_data,
+        retry_style,
     ));
-    if let Some(callback_data) = build_downloads_filter_button_data("fail", 8) {
-        row.push(crate::tgbot::send::build_callback_button(
-            "查看失败列表",
-            &callback_data,
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ));
-    }
-    row.push(crate::tgbot::send::build_callback_button(
-        "菜单",
-        &build_menu_home_button_data(),
-        tdlib_rs::enums::ButtonStyle::Default,
-    ));
-    row
+
+    vec![
+        action_row,
+        crate::tgbot::transfer::outcome::build_list_menu_row("查看失败列表", "fail"),
+    ]
 }
 
 /// 构造失败卡片正文。
 ///
 /// 用户号模式下按钮会被发送层丢弃，因此重试、查询和失败列表命令必须出现在正文里。
-fn format_failure_card_text(
+pub(in crate::tgbot::transfer) fn format_failure_card_text(
     title: &str,
     source_link: &str,
     target_chat_id: i64,
@@ -344,19 +330,21 @@ mod tests {
     // 恢复失败已知 job_id 时，应能从失败卡片直接跳任务详情和失败列表。
     #[test]
     fn test_build_failure_buttons_with_job_id() {
-        let buttons = build_failure_buttons(
-            Some(42),
-            "/transfer https://t.me/c/1/2 -100",
-            "/lookup x -100",
-        );
+        let rows = build_failure_buttons(Some(42), "lk:rt");
+        let buttons = rows.iter().flatten().collect::<Vec<_>>();
 
+        assert_eq!(rows.len(), 2);
         assert!(buttons.iter().any(|button| button.text == "查看任务详情"));
-        assert!(buttons.iter().any(|button| button.text == "查看失败列表"));
-        assert!(buttons.iter().any(|button| button.text == "菜单"));
-        assert!(buttons.iter().any(|button| matches!(
-            button.r#type,
-            tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
-        )));
+        assert!(buttons.iter().any(|button| button.text == "重新转存"));
+        assert_eq!(rows[1][0].text, "查看失败列表");
+        assert_eq!(rows[1][1].text, "菜单");
+        assert!(!buttons.iter().any(|button| button.text == "复制重试命令"));
+        for button in buttons {
+            assert!(matches!(
+                button.r#type,
+                tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+            ));
+        }
     }
 
     // 失败正文应保留重试命令、查询命令和完整错误，用户号模式下也能继续操作。
@@ -390,11 +378,7 @@ mod tests {
             build_failure_advice_lines(&anyhow::anyhow!("code=400, message=Message not found"));
 
         assert!(advice.iter().any(|line| line.contains("源消息不存在")));
-        assert!(
-            advice
-                .iter()
-                .any(|line| line.contains("普通用户请转发源消息给 bot"))
-        );
+        assert!(advice.iter().any(|line| line.contains("备用 user")));
     }
 
     // album 规则失败时，应说明不是下载问题，而是 Telegram album 组合限制。
@@ -412,20 +396,6 @@ mod tests {
         );
     }
 
-    // 目标配置失败时，应指向配置项，而不是误导用户检查源链接。
-    #[test]
-    fn test_build_failure_advice_for_target_config() {
-        let advice =
-            build_failure_advice_lines(&anyhow::anyhow!("target chat is not allowed: -100"));
-
-        assert!(advice.iter().any(|line| line.contains("目标 chat")));
-        assert!(
-            advice
-                .iter()
-                .any(|line| line.contains("allowed_target_chat_ids"))
-        );
-    }
-
     // TDLib 请求解析失败通常是请求/按钮数据问题，不应被提示成源链接格式错误。
     #[test]
     fn test_build_failure_advice_for_tdlib_request_parse_error() {
@@ -437,17 +407,7 @@ mod tests {
         assert!(!advice.iter().any(|line| line.contains("源链接格式")));
     }
 
-    // 共享分类需要覆盖积分不足，供命令错误卡片和后台失败卡片共用。
-    #[test]
-    fn test_classify_transfer_error_for_insufficient_points() {
-        let hint = classify_transfer_error_text("insufficient points: user=1, balance=0");
-
-        assert_eq!(hint.kind, TransferErrorKind::InsufficientPoints);
-        assert_eq!(hint.title, "积分不足");
-        assert_eq!(hint.status, "need-points");
-    }
-
-    // 共享分类应区分缺少目标和目标白名单失败，便于命令入口给出不同下一步。
+    // 共享分类应识别缺少目标，便于命令入口给出明确下一步。
     #[test]
     fn test_classify_transfer_error_for_missing_target() {
         let hint = classify_transfer_error_text("not found transfer target for chat 1");

@@ -6,7 +6,7 @@ use crate::tgbot::send::{ReplyPanel, build_callback_button, build_copy_button};
 use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::{self as transfer_mod};
 use crate::tgbot::transfer::{
-    build_balance_button_data, build_help_button_data, build_menu_home_button_data_for_outer,
+    build_help_button_data, build_menu_home_button_data_for_outer,
     build_menu_new_transfer_button_data_for_outer,
 };
 
@@ -41,7 +41,6 @@ pub(crate) struct CommandErrorHint {
 /// 之前只存文案和命令字符串，容易出现“按钮写的是查看余额，实际却跳菜单”的错位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandErrorPrimaryAction {
-    OpenBalance,
     OpenHelp,
     OpenMenu,
     CopyPrimaryCommand,
@@ -162,12 +161,6 @@ pub(crate) fn command_error_hint(error_text: &str) -> CommandErrorHint {
 /// 命令错误分类到“下一步操作”的映射。
 fn command_error_action(kind: transfer_mod::TransferErrorKind) -> CommandErrorAction {
     match kind {
-        transfer_mod::TransferErrorKind::InsufficientPoints => CommandErrorAction {
-            primary_label: "查看余额",
-            primary_command: "/balance",
-            primary_action: CommandErrorPrimaryAction::OpenBalance,
-            help_command: "/help points",
-        },
         transfer_mod::TransferErrorKind::MissingTarget => CommandErrorAction {
             primary_label: "转存模板",
             primary_command: "/transfer <link> <target_chat_id>",
@@ -180,8 +173,7 @@ fn command_error_action(kind: transfer_mod::TransferErrorKind) -> CommandErrorAc
             primary_action: CommandErrorPrimaryAction::OpenHelp,
             help_command: "/help",
         },
-        transfer_mod::TransferErrorKind::TargetDenied
-        | transfer_mod::TransferErrorKind::SourceDenied
+        transfer_mod::TransferErrorKind::SourceDenied
         | transfer_mod::TransferErrorKind::PermissionDenied => CommandErrorAction {
             primary_label: "打开菜单",
             primary_command: "/menu",
@@ -200,11 +192,6 @@ fn command_error_action(kind: transfer_mod::TransferErrorKind) -> CommandErrorAc
 /// 根据错误提示定义构造真正的主按钮。
 fn build_primary_action_button(hint: &CommandErrorHint) -> tdlib_rs::types::InlineKeyboardButton {
     match hint.primary_action {
-        CommandErrorPrimaryAction::OpenBalance => build_callback_button(
-            hint.primary_label,
-            &build_balance_button_data(),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
         CommandErrorPrimaryAction::OpenHelp => build_callback_button(
             hint.primary_label,
             &build_help_button_data(None),
@@ -221,41 +208,6 @@ fn build_primary_action_button(hint: &CommandErrorHint) -> tdlib_rs::types::Inli
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
     }
-}
-
-/// 普通用户调用 admin-only 命令时的统一提示。
-pub(crate) async fn send_permission_denied_message(
-    chat_id: i64,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    ReplyPanel::card(
-        [
-            "没有权限".to_owned(),
-            format!("状态：{}", card::code("permission-denied")),
-            card::DIVIDER.to_owned(),
-            card::section("说明"),
-            "该命令只允许管理员使用。普通用户可使用 /balance、/downloads、/job 和 /transfer。"
-                .to_owned(),
-            card::section("命令"),
-            card::command_line("余额", "/balance"),
-            card::command_line("帮助", "/help"),
-        ]
-        .join("\n"),
-    )
-    .row(vec![
-        build_callback_button(
-            "查看余额",
-            &crate::tgbot::transfer::build_balance_button_data(),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        build_callback_button(
-            "打开帮助",
-            &crate::tgbot::transfer::build_help_button_data(None),
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ])
-    .send(chat_id, client_id)
-    .await
 }
 
 /// 自动转存媒体失败时给出可执行提示。

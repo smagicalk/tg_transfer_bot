@@ -81,24 +81,6 @@ where
                     .not_null()
                     .default(0),
             )
-            .col(
-                ColumnDef::new("cost_points")
-                    .big_integer()
-                    .not_null()
-                    .default(0),
-            )
-            .col(
-                ColumnDef::new("charged_points")
-                    .big_integer()
-                    .not_null()
-                    .default(0),
-            )
-            .col(
-                ColumnDef::new("billing_status")
-                    .string()
-                    .not_null()
-                    .default("free"),
-            )
             .col(ColumnDef::new("last_error").string())
             .col(
                 ColumnDef::new("created_at")

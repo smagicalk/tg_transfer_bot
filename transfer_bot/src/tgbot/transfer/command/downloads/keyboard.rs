@@ -1,9 +1,7 @@
 // `/downloads` 的 inline keyboard 和 callback 数据。
 // 回调数据保持短格式，避免 Telegram callback payload 过长。
 
-use super::super::common::{
-    CommandStyle, build_refresh_return_menu_row, downloads_command as build_command,
-};
+use super::super::common::{build_refresh_return_menu_row, downloads_command as build_command};
 use super::super::job::{
     build_job_pause_callback_data, build_job_resume_callback_data, build_job_status_callback_data,
     build_job_stop_callback_data,
@@ -21,14 +19,18 @@ pub(super) fn build_downloads_page_command(
     filter: DownloadsFilter,
     limit: u64,
     page: u64,
-    style: CommandStyle,
 ) -> String {
     let filter = if filter == DownloadsFilter::All {
         None
     } else {
         Some(filter.command_value())
     };
-    build_command(filter, Some(limit), Some(page), style)
+    build_command(
+        filter,
+        Some(limit),
+        Some(page),
+        super::super::common::CommandStyle::Long,
+    )
 }
 
 /// 下载列表按钮动作。
@@ -126,10 +128,8 @@ pub(super) fn build_downloads_keyboard(
     total_pages: u64,
     page_items: &[store::JobProgressSnapshot],
 ) -> tdlib_rs::types::ReplyMarkupInlineKeyboard {
-    let first_page = 1u64;
     let prev_page = args.page.saturating_sub(1).max(1);
     let next_page = (args.page + 1).min(total_pages);
-    let last_page = total_pages.max(1);
 
     let mut rows = Vec::new();
 
@@ -153,25 +153,29 @@ pub(super) fn build_downloads_keyboard(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ));
-    rows.push(vec![
-        build_navigation_button("首页", args, first_page),
-        build_navigation_button("上页", args, prev_page),
-        build_callback_button(
-            &format!("{}/{}", args.page, total_pages),
-            &build_downloads_refresh_callback_data(args),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        build_navigation_button("下页", args, next_page),
-        build_navigation_button("末页", args, last_page),
-    ]);
+    let mut navigation_row = Vec::new();
+    if args.page > 1 {
+        navigation_row.push(build_navigation_button("首页", args, 1));
+        navigation_row.push(build_navigation_button("上页", args, prev_page));
+    }
+    navigation_row.push(build_callback_button(
+        &format!("{}/{}", args.page, total_pages),
+        &build_downloads_refresh_callback_data(args),
+        tdlib_rs::enums::ButtonStyle::Primary,
+    ));
+    if args.page < total_pages {
+        navigation_row.push(build_navigation_button("下页", args, next_page));
+        navigation_row.push(build_navigation_button("末页", args, total_pages));
+    }
+    rows.push(navigation_row);
 
     tdlib_rs::types::ReplyMarkupInlineKeyboard { rows }
 }
 
 /// 构建当前页任务快捷操作按钮。
 ///
-/// 每个任务独占一行：左侧始终是详情，右侧根据状态给出暂停、恢复、停止等操作。
-/// 这样用户在列表页就能直接控制任务，不需要先点详情再点控制按钮。
+/// 每个任务独占一行：左侧始终是详情，右侧根据状态给出暂停、恢复、停止确认等操作。
+/// “停止”只打开确认页，真正停止必须在确认页再次点击，避免列表误触。
 fn build_job_detail_buttons(
     page_items: &[store::JobProgressSnapshot],
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
@@ -202,7 +206,7 @@ fn build_job_detail_buttons(
 
 /// 构建列表页中的任务控制按钮。
 ///
-/// 控制按钮仍复用 `/job` callback，因此这里不直接修改任务状态。
+/// 控制按钮仍复用 `/job` callback；停止按钮会先进入确认页，因此这里不直接修改任务状态。
 fn build_inline_job_control_buttons(
     job_id: i64,
     status: &str,

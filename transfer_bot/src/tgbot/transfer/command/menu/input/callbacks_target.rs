@@ -7,7 +7,7 @@ use crate::config::BotConfig;
 use crate::tgbot::send;
 
 use super::super::text::{
-    build_menu_recovery_text, build_step_prompt_text, build_step_prompt_with_context,
+    build_menu_recovery_text, build_step_prompt_with_context, build_target_input_prompt_text,
 };
 use super::flow::{ExistingCommandContext, run_existing_command};
 use super::state::{
@@ -16,7 +16,6 @@ use super::state::{
 };
 use super::target::{
     TargetPromptContext, edit_confirm_prompt, edit_target_choice_prompt, resolve_default_target_on,
-    resolve_target_by_id_on,
 };
 
 /// 目标选择 callback 的公共上下文。
@@ -24,7 +23,6 @@ use super::target::{
 /// 多个目标按钮都需要同一组 TDLib 消息坐标；收拢后目标推进逻辑更容易保持一致。
 #[derive(Clone)]
 struct TargetCallbackContext {
-    app: std::sync::Arc<crate::app_context::AppContext>,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
@@ -35,7 +33,6 @@ struct TargetCallbackContext {
 impl TargetCallbackContext {
     /// 构造 callback 共享上下文。
     fn new(
-        app: std::sync::Arc<crate::app_context::AppContext>,
         callback_query_id: i64,
         chat_id: i64,
         message_id: i64,
@@ -43,7 +40,6 @@ impl TargetCallbackContext {
         client_id: i32,
     ) -> Self {
         Self {
-            app,
             callback_query_id,
             chat_id,
             message_id,
@@ -73,54 +69,30 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_default_callback_q
     config: Arc<BotConfig>,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    target_default_callback_query_on(
-        app,
-        callback_query_id,
-        chat_id,
-        message_id,
-        sender_user_id,
-        config,
-        client_id,
-    )
-    .await
-}
-
-/// 在指定上下文上处理“使用默认目标”按钮。
-async fn target_default_callback_query_on(
-    app: &crate::app_context::AppContext,
-    callback_query_id: i64,
-    chat_id: i64,
-    message_id: i64,
-    sender_user_id: i64,
-    config: Arc<BotConfig>,
-    client_id: i32,
-) -> anyhow::Result<()> {
     let ctx = TargetCallbackContext::new(
-        std::sync::Arc::new(app.clone()),
         callback_query_id,
         chat_id,
         message_id,
         sender_user_id,
         client_id,
     );
-    let Some(target_chat_id) = resolve_default_target_on(app, &config, chat_id) else {
-        let Some(_context) = advance_target_context_for_callback(
-            ctx.draft_key(),
-            TargetDraftAdvance::TargetChoice,
-            callback_query_id,
-            chat_id,
-            "没有等待选择目标的输入",
-            client_id,
-        )
-        .await?
-        else {
-            return Ok(());
-        };
-        ctx.answer("当前没有默认目标").await?;
-        return Ok(());
-    };
+    let target_chat_id = resolve_default_target_on(app, &config, chat_id);
 
-    select_target_for_callback_on(ctx, target_chat_id, "已选择默认目标").await
+    select_target_for_callback_on(
+        ctx,
+        target_chat_id,
+        default_target_selected_tip(target_chat_id, chat_id),
+    )
+    .await
+}
+
+/// 默认目标 callback 的提示应描述最终解析到的位置。
+fn default_target_selected_tip(target_chat_id: i64, request_chat_id: i64) -> &'static str {
+    if target_chat_id == request_chat_id {
+        "已选择当前私聊"
+    } else {
+        "已选择默认目标"
+    }
 }
 
 /// 把当前目标选择草稿推进到确认页，并编辑原 inline 卡片。
@@ -155,56 +127,25 @@ async fn select_target_for_callback_on(
 
 /// 处理“常用目标”按钮。
 pub(in crate::tgbot::transfer::command::menu) async fn target_alias_callback_query(
-    app: &crate::app_context::AppContext,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
     sender_user_id: i64,
     target_chat_id: i64,
-    config: Arc<BotConfig>,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    target_alias_callback_query_on(
-        TargetCallbackContext::new(
-            std::sync::Arc::new(app.clone()),
-            callback_query_id,
-            chat_id,
-            message_id,
-            sender_user_id,
-            client_id,
-        ),
-        target_chat_id,
-        config,
-    )
-    .await
-}
-
-/// 在指定上下文上处理“常用目标”按钮。
-async fn target_alias_callback_query_on(
-    ctx: TargetCallbackContext,
-    target_chat_id: i64,
-    config: Arc<BotConfig>,
-) -> anyhow::Result<()> {
-    if let Err(err) =
-        resolve_target_by_id_on(ctx.app.as_ref(), target_chat_id, &config, ctx.chat_id)
-    {
-        ctx.answer("目标不在允许列表").await?;
-        tracing::warn!(
-            chat_id = ctx.chat_id,
-            sender_user_id = ctx.sender_user_id,
-            target_chat_id,
-            error = %err,
-            "target alias callback rejected"
-        );
-        return Ok(());
-    }
-
+    let ctx = TargetCallbackContext::new(
+        callback_query_id,
+        chat_id,
+        message_id,
+        sender_user_id,
+        client_id,
+    );
     select_target_for_callback_on(ctx, target_chat_id, "已选择目标").await
 }
 
 /// 处理“手动输入目标”按钮。
 pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_query(
-    app: &crate::app_context::AppContext,
     callback_query_id: i64,
     chat_id: i64,
     message_id: i64,
@@ -212,14 +153,13 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_qu
     client_id: i32,
 ) -> anyhow::Result<()> {
     let ctx = TargetCallbackContext::new(
-        std::sync::Arc::new(app.clone()),
         callback_query_id,
         chat_id,
         message_id,
         sender_user_id,
         client_id,
     );
-    let Some(_context) = advance_target_context_for_callback(
+    let Some(context) = advance_target_context_for_callback(
         ctx.draft_key(),
         TargetDraftAdvance::TargetChat,
         callback_query_id,
@@ -233,23 +173,21 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_qu
     };
 
     ctx.answer("请输入目标").await?;
-    edit_input_waiting_card(
+    edit_target_input_waiting_card(
         ctx.chat_id,
         ctx.message_id,
         ctx.client_id,
         "2/3",
         "等待手动输入",
         "请回复目标 chat_id、配置别名，或回复 default。",
+        &context.source_link,
     )
     .await;
     send::send_card_message_with_force_reply_returning(
-        build_step_prompt_with_context(
-            "waiting-input",
-            "2/3",
+        build_target_input_prompt_text(
+            &context.source_link,
             "输入目标",
             "请回复数字 chat_id、配置里的目标别名，或回复 default 使用配置默认目标。",
-            None,
-            None,
         ),
         ctx.chat_id,
         "输入目标 chat_id、别名或 default",
@@ -259,66 +197,8 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_qu
     Ok(())
 }
 
-/// 处理旧版“选择群组”按钮。
-///
-/// 当前项目主流程已经收成“当前私聊 / 别名 / 手动输入”，这里仅保留兼容提示，
-/// 避免历史按钮或旧消息上的 callback 直接报错。
-pub(in crate::tgbot::transfer::command::menu) async fn target_request_chat_callback_query(
-    app: &crate::app_context::AppContext,
-    callback_query_id: i64,
-    chat_id: i64,
-    message_id: i64,
-    sender_user_id: i64,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    let ctx = TargetCallbackContext::new(
-        std::sync::Arc::new(app.clone()),
-        callback_query_id,
-        chat_id,
-        message_id,
-        sender_user_id,
-        client_id,
-    );
-    let Some(context) = advance_target_context_for_callback(
-        ctx.draft_key(),
-        TargetDraftAdvance::ChatPicker,
-        callback_query_id,
-        chat_id,
-        "没有等待选择目标的输入",
-        client_id,
-    )
-    .await?
-    else {
-        return Ok(());
-    };
-
-    ctx.answer("当前版本请使用当前私聊或手动输入").await?;
-    edit_input_waiting_card(
-        ctx.chat_id,
-        ctx.message_id,
-        ctx.client_id,
-        "2/3",
-        "使用私聊目标",
-        "当前版本不再使用选群器，请点击“当前私聊”或“手动输入”。",
-    )
-    .await;
-    super::target::send_target_choice_prompt_with_detail(
-        &crate::config::BotConfig::default(),
-        super::target::TargetPromptContext {
-            app,
-            request_chat_id: chat_id,
-            sender_user_id,
-            client_id,
-        },
-        context.kind,
-        &context.source_link,
-        "当前版本不再使用选群器，请改用当前私聊、已有别名或手动输入 private chat_id。",
-    )
-    .await?;
-    Ok(())
-}
-
 /// 处理“确认页执行”按钮。
+#[allow(clippy::too_many_arguments)]
 pub(in crate::tgbot::transfer::command::menu) async fn target_confirm_callback_query(
     app: &crate::app_context::AppContext,
     callback_query_id: i64,
@@ -460,30 +340,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_back_callback_quer
     config: Arc<BotConfig>,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    target_back_callback_query_on(
-        app,
-        callback_query_id,
-        chat_id,
-        message_id,
-        sender_user_id,
-        config,
-        client_id,
-    )
-    .await
-}
-
-/// 在指定上下文上处理“返回选择目标”按钮。
-async fn target_back_callback_query_on(
-    app: &crate::app_context::AppContext,
-    callback_query_id: i64,
-    chat_id: i64,
-    message_id: i64,
-    sender_user_id: i64,
-    config: Arc<BotConfig>,
-    client_id: i32,
-) -> anyhow::Result<()> {
     let ctx = TargetCallbackContext::new(
-        std::sync::Arc::new(app.clone()),
         callback_query_id,
         chat_id,
         message_id,
@@ -506,7 +363,7 @@ async fn target_back_callback_query_on(
     edit_target_choice_prompt(
         &config,
         TargetPromptContext {
-            app: ctx.app.as_ref(),
+            app,
             request_chat_id: ctx.chat_id,
             sender_user_id: ctx.sender_user_id,
             client_id: ctx.client_id,
@@ -582,12 +439,51 @@ pub(super) async fn edit_input_waiting_card(
     title: &str,
     detail: &str,
 ) {
-    let Ok((text, keyboard)) = send::ReplyPanel::card(build_step_prompt_text(step, title, detail))
-        .row(vec![send::build_callback_button(
-            "取消",
-            &super::super::callback::cancel_input_callback_data(),
-            tdlib_rs::enums::ButtonStyle::Danger,
-        )])
+    edit_input_waiting_card_with_navigation(
+        chat_id, message_id, client_id, step, title, detail, None, false,
+    )
+    .await;
+}
+
+/// 把手动目标输入卡片改成等待状态，并保留返回目标选择的入口。
+async fn edit_target_input_waiting_card(
+    chat_id: i64,
+    message_id: i64,
+    client_id: i32,
+    step: &str,
+    title: &str,
+    detail: &str,
+    source_link: &str,
+) {
+    edit_input_waiting_card_with_navigation(
+        chat_id,
+        message_id,
+        client_id,
+        step,
+        title,
+        detail,
+        Some(source_link),
+        true,
+    )
+    .await;
+}
+
+/// 编辑等待输入卡片，并按当前流程提供必要的返回动作。
+#[allow(clippy::too_many_arguments)]
+async fn edit_input_waiting_card_with_navigation(
+    chat_id: i64,
+    message_id: i64,
+    client_id: i32,
+    step: &str,
+    title: &str,
+    detail: &str,
+    source_link: Option<&str>,
+    can_return_to_target_choice: bool,
+) {
+    let prompt_text =
+        build_step_prompt_with_context("waiting-input", step, title, detail, source_link, None);
+    let Ok((text, keyboard)) = send::ReplyPanel::card(prompt_text)
+        .rows(build_input_waiting_button_rows(can_return_to_target_choice))
         .into_card_parts()
     else {
         tracing::warn!(chat_id, message_id, "build waiting input card failed");
@@ -607,10 +503,30 @@ pub(super) async fn edit_input_waiting_card(
     }
 }
 
+/// 等待输入卡片的按钮布局。
+fn build_input_waiting_button_rows(
+    can_return_to_target_choice: bool,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut row = Vec::new();
+    if can_return_to_target_choice {
+        row.push(send::build_callback_button(
+            "返回目标选择",
+            &super::super::callback::target_back_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ));
+    }
+    row.push(send::build_callback_button(
+        "取消",
+        &super::super::callback::cancel_input_callback_data(),
+        tdlib_rs::enums::ButtonStyle::Danger,
+    ));
+    vec![row]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ActorRole, RequestActor};
+    use crate::config::RequestActor;
     use crate::tgbot::transfer::command::menu::input::MenuJobAction;
 
     async fn prepare_schema() -> anyhow::Result<tokio::sync::MutexGuard<'static, ()>> {
@@ -646,20 +562,16 @@ mod tests {
         let actor = RequestActor {
             request_chat_id: 100,
             user_id: 200,
-            role: ActorRole::Admin,
         };
 
         assert_eq!(actor.request_chat_id, 100);
         assert_eq!(actor.user_id, 200);
-        assert!(actor.is_admin());
     }
 
     // 目标 callback 上下文必须用 chat + user 隔离草稿，不能把 message_id 混进主键。
     #[test]
     fn test_target_callback_context_draft_key() {
-        let app_context = crate::app_context::app_context();
         let ctx = TargetCallbackContext {
-            app: app_context,
             callback_query_id: 1,
             chat_id: 10,
             message_id: 20,
@@ -668,6 +580,13 @@ mod tests {
         };
 
         assert_eq!(ctx.draft_key(), (10, 30));
+    }
+
+    // 默认目标回落当前私聊时，callback 提示应与按钮文案一致。
+    #[test]
+    fn test_default_target_selected_tip_describes_actual_target() {
+        assert_eq!(default_target_selected_tip(100, 100), "已选择当前私聊");
+        assert_eq!(default_target_selected_tip(-100, 100), "已选择默认目标");
     }
 
     // 确认按钮的状态结果应映射为稳定 UI 动作，入口函数只负责执行副作用。
@@ -755,5 +674,30 @@ mod tests {
                 callback_tip: "请先发送源链接"
             }
         );
+    }
+
+    // 手动目标输入等待态应允许返回目标选择，其他输入等待态仍只提供取消。
+    #[test]
+    fn test_input_waiting_button_rows_support_target_back() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let target_rows = build_input_waiting_button_rows(true);
+        assert_eq!(target_rows.len(), 1);
+        assert_eq!(target_rows[0][0].text, "返回目标选择");
+        assert_eq!(target_rows[0][1].text, "取消");
+
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) =
+            &target_rows[0][0].r#type
+        else {
+            panic!("target back must be callback");
+        };
+        let decoded = String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap())
+            .expect("callback should be utf8");
+        assert_eq!(decoded, "m:tb");
+
+        let default_rows = build_input_waiting_button_rows(false);
+        assert_eq!(default_rows.len(), 1);
+        assert_eq!(default_rows[0].len(), 1);
+        assert_eq!(default_rows[0][0].text, "取消");
     }
 }

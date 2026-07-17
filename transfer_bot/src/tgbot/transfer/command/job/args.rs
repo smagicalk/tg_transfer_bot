@@ -24,6 +24,7 @@ pub(super) struct JobArgs {
 pub(super) enum JobCallbackAction {
     Pause,
     Resume,
+    StopConfirm,
     Stop,
     Status,
 }
@@ -73,6 +74,7 @@ pub(super) fn build_job_callback_data(action: JobCallbackAction, job_id: i64) ->
     let action = match action {
         JobCallbackAction::Pause => "p",
         JobCallbackAction::Resume => "r",
+        JobCallbackAction::StopConfirm => "sc",
         JobCallbackAction::Stop => "s",
         JobCallbackAction::Status => "st",
     };
@@ -86,6 +88,7 @@ pub(super) fn parse_job_callback_data(data: &str) -> Option<JobCallbackArgs> {
     let action = match parts.next()? {
         "p" => JobCallbackAction::Pause,
         "r" => JobCallbackAction::Resume,
+        "sc" => JobCallbackAction::StopConfirm,
         "s" => JobCallbackAction::Stop,
         "st" => JobCallbackAction::Status,
         _ => return None,
@@ -154,6 +157,25 @@ mod tests {
             parse_job_callback_data(&data),
             Some(JobCallbackArgs {
                 action: JobCallbackAction::Status,
+                job_id: 42,
+            })
+        );
+
+        let confirm_stop = build_job_callback_data(JobCallbackAction::StopConfirm, 42);
+        assert_eq!(confirm_stop, "j:sc:42");
+        assert_eq!(
+            parse_job_callback_data(&confirm_stop),
+            Some(JobCallbackArgs {
+                action: JobCallbackAction::StopConfirm,
+                job_id: 42,
+            })
+        );
+
+        // 历史消息上的旧停止按钮仍然能解析成真正停止，避免旧 callback 失效。
+        assert_eq!(
+            parse_job_callback_data("j:s:42"),
+            Some(JobCallbackArgs {
+                action: JobCallbackAction::Stop,
                 job_id: 42,
             })
         );

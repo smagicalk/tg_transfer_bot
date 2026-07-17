@@ -1,5 +1,5 @@
 // 任务 hub 最近任务快捷按钮。
-// 这里只生成 `/job` callback，不直接改任务状态。
+// 这里只生成 `/job` callback，不直接改任务状态；停止按钮会先打开确认页。
 
 use crate::tgbot::send;
 
@@ -10,7 +10,7 @@ use super::super::super::job::{
 };
 /// 最近任务快捷按钮。
 ///
-/// 这些按钮只携带 job_id，并复用 `/job` 详情 callback；菜单不复制任务详情逻辑。
+/// 这些按钮只携带 job_id，并复用 `/job` callback；菜单不复制任务详情逻辑。
 pub(super) fn recent_job_buttons(
     recent_jobs: &[store::JobProgressSnapshot],
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {

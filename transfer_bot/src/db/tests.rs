@@ -72,12 +72,7 @@ async fn drop_postgres_test_schema(
 }
 
 /// 构造最小默认运行态，供真实启动数据库链测试复用。
-fn test_bootstrap_defaults() -> (
-    crate::config::TransferConfig,
-    crate::config::BillingConfig,
-    crate::config::TargetsConfig,
-    crate::config::AccessControlConfig,
-) {
+fn test_bootstrap_defaults() -> (crate::config::TransferConfig, crate::config::TargetsConfig) {
     (
         crate::config::TransferConfig {
             job_concurrency: 4,
@@ -87,26 +82,9 @@ fn test_bootstrap_defaults() -> (
             downloads_default_page_size: 9,
             menu_input_timeout_seconds: 800,
         },
-        crate::config::BillingConfig {
-            enabled: true,
-            base_cost_points: 2,
-            item_cost_points: 3,
-            initial_user_points: 5,
-            announcement_text: Some("hello".to_owned()),
-        },
         crate::config::TargetsConfig {
             default_chat_id: -1001234567890,
-            by_request_chat_id: std::collections::HashMap::from([(900004, -1002234567890)]),
             aliases: std::collections::HashMap::from([("archive".to_owned(), -1001234567890)]),
-        },
-        crate::config::AccessControlConfig {
-            bootstrap_admin_user_ids: vec![900001],
-            admin_user_ids: Vec::new(),
-            allowed_user_ids: vec![900002],
-            allow_all_private_users: false,
-            banned_user_ids: vec![900003],
-            allowed_request_chat_ids: vec![900004],
-            allowed_target_chat_ids: vec![-1001234567890],
         },
     )
 }
@@ -135,9 +113,6 @@ async fn get_transfer_job() -> transfer_job::ActiveModel {
         done_items: sea_orm::ActiveValue::set(0),
         failed_items: sea_orm::ActiveValue::set(0),
         retry_count: sea_orm::ActiveValue::set(0),
-        cost_points: sea_orm::ActiveValue::set(0),
-        charged_points: sea_orm::ActiveValue::set(0),
-        billing_status: sea_orm::ActiveValue::set("free".to_owned()),
         last_error: sea_orm::ActiveValue::set(None),
         created_at: sea_orm::ActiveValue::set(now),
         updated_at: sea_orm::ActiveValue::set(now),
@@ -201,20 +176,6 @@ async fn get_menu_input_draft() -> menu_input_draft::ActiveModel {
         created_at: sea_orm::ActiveValue::set(now),
         updated_at: sea_orm::ActiveValue::set(now),
         expires_at: sea_orm::ActiveValue::set(now + chrono::Duration::minutes(10)),
-    }
-}
-
-/// 构造 user_account 测试数据。
-async fn get_user_account(telegram_user_id: i64) -> user_account::ActiveModel {
-    let now = now_utc8();
-    user_account::ActiveModel {
-        telegram_user_id: sea_orm::ActiveValue::set(telegram_user_id),
-        role: sea_orm::ActiveValue::set("user".to_owned()),
-        points_balance: sea_orm::ActiveValue::set(10),
-        total_points_added: sea_orm::ActiveValue::set(10),
-        total_points_spent: sea_orm::ActiveValue::set(0),
-        created_at: sea_orm::ActiveValue::set(now),
-        updated_at: sea_orm::ActiveValue::set(now),
     }
 }
 
@@ -299,25 +260,6 @@ async fn test_insert() -> anyhow::Result<()> {
         .on_conflict_do_nothing()
         .exec(db)
         .await?;
-    let telegram_user_id = rand::rng().random_range(1..=100000);
-    user_account::Entity::insert(get_user_account(telegram_user_id).await)
-        .exec(db)
-        .await?;
-    point_ledger::ActiveModel {
-        telegram_user_id: sea_orm::ActiveValue::set(telegram_user_id),
-        delta: sea_orm::ActiveValue::set(10),
-        balance_after: sea_orm::ActiveValue::set(10),
-        reason: sea_orm::ActiveValue::set("test".to_owned()),
-        job_id: sea_orm::ActiveValue::set(None),
-        request_chat_id: sea_orm::ActiveValue::set(None),
-        request_message_id: sea_orm::ActiveValue::set(None),
-        idempotency_key: sea_orm::ActiveValue::set(None),
-        created_by: sea_orm::ActiveValue::set(None),
-        created_at: sea_orm::ActiveValue::set(now_utc8()),
-        ..Default::default()
-    }
-    .insert(db)
-    .await?;
     Ok(())
 }
 
@@ -357,9 +299,6 @@ async fn test_same_link_can_create_different_jobs() -> anyhow::Result<()> {
         done_items: sea_orm::ActiveValue::set(0),
         failed_items: sea_orm::ActiveValue::set(0),
         retry_count: sea_orm::ActiveValue::set(0),
-        cost_points: sea_orm::ActiveValue::set(0),
-        charged_points: sea_orm::ActiveValue::set(0),
-        billing_status: sea_orm::ActiveValue::set("free".to_owned()),
         last_error: sea_orm::ActiveValue::set(None),
         created_at: sea_orm::ActiveValue::set(now),
         updated_at: sea_orm::ActiveValue::set(now),
@@ -388,9 +327,6 @@ async fn test_same_link_can_create_different_jobs() -> anyhow::Result<()> {
         done_items: sea_orm::ActiveValue::set(0),
         failed_items: sea_orm::ActiveValue::set(0),
         retry_count: sea_orm::ActiveValue::set(0),
-        cost_points: sea_orm::ActiveValue::set(0),
-        charged_points: sea_orm::ActiveValue::set(0),
-        billing_status: sea_orm::ActiveValue::set("free".to_owned()),
         last_error: sea_orm::ActiveValue::set(None),
         created_at: sea_orm::ActiveValue::set(now),
         updated_at: sea_orm::ActiveValue::set(now),
@@ -437,7 +373,7 @@ async fn test_file_cache_dedup_insert() -> anyhow::Result<()> {
 
 /// SQLite 启动链验证：
 /// - 走和 `run()` 相同的数据库 bootstrap helper
-/// - 确认 migration 后四类运行态 seed 都会落库并可回读
+/// - 确认 migration 后两类运行态 seed 都会落库并可回读
 #[tokio::test]
 async fn test_runtime_bootstrap_helper_seeds_sqlite_runtime_state() -> anyhow::Result<()> {
     let _guard = super::TEST_DB_LOCK.lock().await;
@@ -445,30 +381,21 @@ async fn test_runtime_bootstrap_helper_seeds_sqlite_runtime_state() -> anyhow::R
     let db = get_db().await?;
     rebuild_test_schema(db).await?;
 
-    let (transfer_default, billing_default, targets_default, access_control_default) =
-        test_bootstrap_defaults();
+    let (transfer_default, targets_default) = test_bootstrap_defaults();
     let seeded = crate::bootstrap_runtime_database_state_on(
         db,
         super::connection::runtime_database_url(),
         &transfer_default,
-        &billing_default,
         &targets_default,
-        &access_control_default,
     )
     .await?;
 
     assert_eq!(seeded.transfer_config.job_concurrency, 4);
     assert_eq!(seeded.transfer_config.file_delete_delay_minutes, 6);
-    assert_eq!(seeded.billing_config.base_cost_points, 2);
-    assert_eq!(seeded.billing_config.item_cost_points, 3);
     assert_eq!(seeded.targets_config.default_chat_id, -1001234567890);
     assert_eq!(
-        seeded.targets_config.by_request_chat_id.get(&900004),
-        Some(&-1002234567890)
-    );
-    assert_eq!(
-        seeded.access_control_config.allowed_target_chat_ids,
-        vec![-1001234567890]
+        seeded.targets_config.aliases.get("archive"),
+        Some(&-1001234567890)
     );
 
     let runtime_row = crate::tgbot::transfer::load_transfer_runtime_config()
@@ -481,7 +408,7 @@ async fn test_runtime_bootstrap_helper_seeds_sqlite_runtime_state() -> anyhow::R
 
 /// PostgreSQL 路径验证：
 /// - 独立 schema 创建
-/// - 走真实启动数据库链（migration + 四类运行态 seed）
+/// - 走真实启动数据库链（migration + 两类运行态 seed）
 /// - 关键列探测
 /// - 基础插入
 ///
@@ -495,23 +422,18 @@ async fn test_postgres_migration_and_insert_when_env_is_present() -> anyhow::Res
     };
 
     let result = async {
-        let (transfer_default, billing_default, targets_default, access_control_default) =
-            test_bootstrap_defaults();
+        let (transfer_default, targets_default) = test_bootstrap_defaults();
         let seeded = crate::bootstrap_runtime_database_state_on(
             &db,
             &format!("postgresql://<hidden>?search_path={schema}"),
             &transfer_default,
-            &billing_default,
             &targets_default,
-            &access_control_default,
         )
         .await?;
 
         assert!(test_schema_has_required_columns(&db).await?);
         assert_eq!(seeded.transfer_config.job_concurrency, 4);
-        assert_eq!(seeded.billing_config.base_cost_points, 2);
         assert_eq!(seeded.targets_config.default_chat_id, -1001234567890);
-        assert_eq!(seeded.access_control_config.admin_user_ids.len(), 0);
 
         let job = get_transfer_job().await.insert(&db).await?;
         transfer_item::Entity::insert(get_transfer_item(job.id).await)

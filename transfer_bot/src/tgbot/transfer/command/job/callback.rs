@@ -6,8 +6,8 @@ use crate::tgbot::transfer::store;
 use crate::tgbot::transfer::workflow;
 
 use super::args::JobCallbackAction;
-use super::keyboard::build_job_status_buttons;
-use super::render::format_job_status_text;
+use super::keyboard::{build_job_status_buttons, build_job_stop_confirm_buttons};
+use super::render::{format_job_status_text, format_job_stop_confirm_text};
 
 /// 当前文件删除延迟（分钟）。
 fn file_delete_delay_minutes_on(app: &crate::app_context::AppContext) -> i64 {
@@ -25,6 +25,8 @@ pub(super) enum JobCallbackResult {
     Updated,
     /// 状态操作已完成，但详情卡片没有刷新成功。
     RefreshFailed(anyhow::Error),
+    /// 停止确认页没有生成成功，此时数据库状态没有变化。
+    ConfirmFailed(anyhow::Error),
 }
 
 /// 处理 `/job` 详情卡片上的 callback 按钮。
@@ -40,29 +42,34 @@ pub(super) async fn handle_job_callback(
     client_id: i32,
 ) -> anyhow::Result<JobCallbackResult> {
     match action {
-        JobCallbackAction::Pause => {
-            let job = store::pause_job_with_owner_scope(
+        JobCallbackAction::StopConfirm => {
+            tracing::debug!(
                 job_id,
-                actor.request_chat_id,
-                actor.owner_scope(),
-            )
-            .await?;
+                request_chat_id = actor.request_chat_id,
+                owner_user_id = actor.user_id,
+                owner_user_id = actor.user_id,
+                "transfer job stop confirmation requested by callback"
+            );
+            if let Err(err) =
+                edit_job_stop_confirm_message(app, job_id, actor, message_id, client_id).await
+            {
+                return Ok(JobCallbackResult::ConfirmFailed(err));
+            }
+            return Ok(JobCallbackResult::Updated);
+        }
+        JobCallbackAction::Pause => {
+            let job = store::pause_job(job_id).await?;
             tracing::info!(
                 job_id = job.id,
                 request_chat_id = actor.request_chat_id,
                 owner_user_id = actor.user_id,
-                actor_role = actor.role.as_str(),
+                owner_user_id = actor.user_id,
                 status = %job.status,
                 "transfer job paused by callback"
             );
         }
         JobCallbackAction::Resume => {
-            let job = store::wake_job_with_owner_scope(
-                job_id,
-                actor.request_chat_id,
-                actor.owner_scope(),
-            )
-            .await?;
+            let job = store::wake_job(job_id).await?;
             let is_running = workflow::is_job_running_in_process(app, job.id).await;
             if !is_running {
                 // callback 链沿用当前请求的 `&AppContext`，再克隆成 `Arc<AppContext>`
@@ -78,19 +85,14 @@ pub(super) async fn handle_job_callback(
                 job_id = job.id,
                 request_chat_id = actor.request_chat_id,
                 owner_user_id = actor.user_id,
-                actor_role = actor.role.as_str(),
+                owner_user_id = actor.user_id,
                 status = %job.status,
                 is_running,
                 "transfer job resumed by callback"
             );
         }
         JobCallbackAction::Stop => {
-            let requested = store::request_cancel_job_with_owner_scope(
-                job_id,
-                actor.request_chat_id,
-                actor.owner_scope(),
-            )
-            .await?;
+            let requested = store::request_cancel_job(job_id).await?;
             let is_running = workflow::is_job_running_in_process(app, job_id).await;
             let job = if is_running {
                 requested
@@ -106,7 +108,7 @@ pub(super) async fn handle_job_callback(
                 job_id = job.id,
                 request_chat_id = actor.request_chat_id,
                 owner_user_id = actor.user_id,
-                actor_role = actor.role.as_str(),
+                owner_user_id = actor.user_id,
                 status = %job.status,
                 is_running,
                 "transfer job stopped by callback"
@@ -117,7 +119,7 @@ pub(super) async fn handle_job_callback(
                 job_id,
                 request_chat_id = actor.request_chat_id,
                 owner_user_id = actor.user_id,
-                actor_role = actor.role.as_str(),
+                owner_user_id = actor.user_id,
                 "transfer job status refreshed by callback"
             );
         }
@@ -126,6 +128,32 @@ pub(super) async fn handle_job_callback(
         return Ok(JobCallbackResult::RefreshFailed(err));
     }
     Ok(JobCallbackResult::Updated)
+}
+
+/// 原地刷新为停止确认卡片。
+///
+/// 只读取当前请求聊天可见的任务，避免 callback payload 被复制到其他聊天后越权查看。
+async fn edit_job_stop_confirm_message(
+    app: &crate::app_context::AppContext,
+    job_id: i64,
+    actor: crate::config::RequestActor,
+    message_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let Some(snapshot) = store::get_job_progress_snapshot_with_context(app, job_id).await? else {
+        anyhow::bail!("job not found: {}", job_id);
+    };
+    let (text, keyboard) = send::ReplyPanel::card(format_job_stop_confirm_text(&snapshot))
+        .rows(build_job_stop_confirm_buttons(&snapshot))
+        .into_card_parts()?;
+    send::edit_card_message_with_inline_keyboard(
+        text,
+        actor.request_chat_id,
+        message_id,
+        keyboard,
+        client_id,
+    )
+    .await
 }
 
 /// 原地刷新一条任务详情卡片。
@@ -138,8 +166,7 @@ async fn edit_job_status_message(
     message_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let Some(snapshot) = store::get_job_progress_snapshot_for_actor(app, job_id, actor).await?
-    else {
+    let Some(snapshot) = store::get_job_progress_snapshot_with_context(app, job_id).await? else {
         anyhow::bail!("job not found: {}", job_id);
     };
     let (text, keyboard) = send::ReplyPanel::card(format_job_status_text(&snapshot))

@@ -7,7 +7,7 @@ use super::super::command::common::{
     CommandStyle, downloads_command as build_downloads_command,
     lookup_command as build_lookup_command, transfer_command as build_transfer_command,
 };
-use super::super::command::{build_downloads_filter_button_data, build_job_status_button_data};
+use super::super::command::{build_job_status_button_data, require_downloads_filter_button_data};
 use super::super::store::ResultMessageRecord;
 
 /// 发送“命中历史结果 / 已完成”的结果卡片。
@@ -32,7 +32,11 @@ pub(in crate::tgbot::transfer) async fn send_history_hit_message(
         });
     let result_messages = normalize_result_messages(result_messages, result_link, target_chat_id);
     let mut rows = build_result_message_rows(&result_messages);
-    rows.push(build_result_job_row(job_id));
+    rows.extend(build_result_navigation_rows(
+        Some(job_id),
+        "查看完成列表",
+        "done",
+    ));
 
     let mut panel = crate::tgbot::send::ReplyPanel::card(format_result_card_text(
         title,
@@ -44,21 +48,30 @@ pub(in crate::tgbot::transfer) async fn send_history_hit_message(
     for row in rows {
         panel = panel.row(row);
     }
-    panel
-        .row(build_result_list_row())
-        .send(notify_chat_id, client_id)
-        .await
+    panel.send(notify_chat_id, client_id).await
 }
 
 /// 构造结果卡片任务导航行。
 ///
-/// 正文已经保留查询/重转命令，按钮区只放能直接打开的 callback 动作。
+/// 结果页第一条导航行只保留任务详情入口，列表和菜单统一落到下一行，避免同页重复出现菜单按钮。
 fn build_result_job_row(job_id: i64) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    vec![crate::tgbot::send::build_callback_button(
+        "查看任务详情",
+        &build_job_status_button_data(job_id),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )]
+}
+
+/// 构造结果卡片第二行：进入列表、菜单。
+pub(in crate::tgbot::transfer) fn build_list_menu_row(
+    list_label: &str,
+    list_filter: &str,
+) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
     vec![
         crate::tgbot::send::build_callback_button(
-            "查看任务详情",
-            &build_job_status_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Default,
+            list_label,
+            &require_downloads_filter_button_data(list_filter, 8),
+            tdlib_rs::enums::ButtonStyle::Primary,
         ),
         crate::tgbot::send::build_callback_button(
             "菜单",
@@ -68,22 +81,21 @@ fn build_result_job_row(job_id: i64) -> Vec<tdlib_rs::types::InlineKeyboardButto
     ]
 }
 
-/// 构造结果卡片第二行：进入完成列表、菜单。
-fn build_result_list_row() -> Vec<tdlib_rs::types::InlineKeyboardButton> {
-    let mut row = Vec::new();
-    if let Some(callback_data) = build_downloads_filter_button_data("done", 8) {
-        row.push(crate::tgbot::send::build_callback_button(
-            "查看完成列表",
-            &callback_data,
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ));
+/// 构造结果页的统一导航行。
+///
+/// 结果入口在最上面，随后固定是“任务详情”一行，再是“列表 + 菜单”一行；
+/// 这样 `progress`、`success`、`lookup` 三类结果页能保持同一层级。
+pub(in crate::tgbot::transfer) fn build_result_navigation_rows(
+    job_id: Option<i64>,
+    list_label: &str,
+    list_filter: &str,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut rows = Vec::new();
+    if let Some(job_id) = job_id {
+        rows.push(build_result_job_row(job_id));
     }
-    row.push(crate::tgbot::send::build_callback_button(
-        "菜单",
-        &build_menu_home_button_data(),
-        tdlib_rs::enums::ButtonStyle::Default,
-    ));
-    row
+    rows.push(build_list_menu_row(list_label, list_filter));
+    rows
 }
 
 /// 构造结果卡片正文。
@@ -175,16 +187,16 @@ fn format_result_messages_block(result_messages: &[ResultMessageRecord]) -> Stri
 
 /// 构造结果入口按钮。
 ///
-/// Telegram 按钮数量过多会影响可读性；这里只展示前 6 个入口，完整列表仍在正文可复制。
-fn build_result_message_rows(
+/// 开放 URL 已经同时出现在正文里，按钮区只保留“打开”动作；
+/// 不可点击的定位字符串已经在正文里完整展示，这里不再重复给复制按钮。
+pub(in crate::tgbot::transfer) fn build_result_message_rows(
     result_messages: &[ResultMessageRecord],
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let mut rows = Vec::new();
     for result in result_messages.iter().take(6) {
         let idx = result.result_index + 1;
-        let mut row = Vec::new();
         if crate::tgbot::send::is_openable_url(&result.message_link) {
-            row.push(crate::tgbot::send::build_url_button(
+            rows.push(vec![crate::tgbot::send::build_url_button(
                 &format!("打开结果 {}", idx),
                 &result.message_link,
                 if idx == 1 {
@@ -192,18 +204,8 @@ fn build_result_message_rows(
                 } else {
                     tdlib_rs::enums::ButtonStyle::Default
                 },
-            ));
+            )]);
         }
-        row.push(crate::tgbot::send::build_copy_button(
-            &format!("复制结果 {}", idx),
-            &result.message_link,
-            if crate::tgbot::send::is_openable_url(&result.message_link) {
-                tdlib_rs::enums::ButtonStyle::Default
-            } else {
-                tdlib_rs::enums::ButtonStyle::Primary
-            },
-        ));
-        rows.push(row);
     }
     rows
 }
@@ -211,7 +213,8 @@ fn build_result_message_rows(
 #[cfg(test)]
 mod tests {
     use super::{
-        ResultMessageRecord, build_result_job_row, build_result_list_row, format_result_card_text,
+        ResultMessageRecord, build_list_menu_row, build_result_job_row, build_result_message_rows,
+        build_result_navigation_rows, format_result_card_text,
     };
 
     // HTTP(S) 结果应在正文中渲染为 Telegram 原生文本链接，按钮之外也能点击。
@@ -302,7 +305,7 @@ mod tests {
     // 结果卡片的列表行应提供完成列表和主菜单入口，便于继续操作。
     #[test]
     fn test_build_result_list_row_has_menu_button() {
-        let row = build_result_list_row();
+        let row = build_list_menu_row("查看完成列表", "done");
 
         assert!(row.iter().any(|button| button.text == "查看完成列表"));
         let menu = row
@@ -321,8 +324,57 @@ mod tests {
         let row = build_result_job_row(42);
 
         assert!(row.iter().any(|button| button.text == "查看任务详情"));
-        assert!(row.iter().any(|button| button.text == "菜单"));
+        assert!(!row.iter().any(|button| button.text == "菜单"));
         assert!(!row.iter().any(|button| button.text == "复制查询命令"));
         assert!(!row.iter().any(|button| button.text == "复制重新转存"));
+    }
+
+    // 成功结果页应固定为“详情”一行 + “列表/菜单”一行，避免按钮层级漂移。
+    #[test]
+    fn test_build_result_navigation_rows_follow_result_page_hierarchy() {
+        let rows = build_result_navigation_rows(Some(42), "查看完成列表", "done");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].len(), 1);
+        assert_eq!(rows[0][0].text, "查看任务详情");
+        assert_eq!(rows[1].len(), 2);
+        assert_eq!(rows[1][0].text, "查看完成列表");
+        assert_eq!(rows[1][1].text, "菜单");
+    }
+
+    // 可点击的结果链接已经在正文可见，按钮区只保留直接打开动作，避免重复堆叠复制按钮。
+    #[test]
+    fn test_build_result_message_rows_for_openable_link_uses_open_only() {
+        let rows = build_result_message_rows(&[ResultMessageRecord {
+            result_index: 0,
+            target_chat_id: -5106953357,
+            message_id: 734,
+            message_link: "https://t.me/c/5106953357/734".to_owned(),
+            is_album: true,
+            item_count: 10,
+        }]);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].len(), 1);
+        assert_eq!(rows[0][0].text, "打开结果 1");
+        assert!(matches!(
+            rows[0][0].r#type,
+            tdlib_rs::enums::InlineKeyboardButtonType::Url(_)
+        ));
+    }
+
+    // 不可点击的定位字符串已经在正文里完整展示，按钮区不再重复给复制入口。
+    #[test]
+    fn test_build_result_message_rows_for_locator_has_no_extra_button() {
+        let rows = build_result_message_rows(&[ResultMessageRecord {
+            result_index: 0,
+            target_chat_id: -5106953357,
+            message_id: 769654784,
+            message_link: "chat_id=-5106953357 message_id=769654784".to_owned(),
+            is_album: false,
+            item_count: 1,
+        }]);
+
+        assert!(rows.is_empty());
     }
 }

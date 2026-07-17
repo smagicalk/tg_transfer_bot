@@ -2,8 +2,6 @@
 // - 按命令职责拆分子模块
 // - 对外保持统一导出，避免上层调用方感知文件结构变化
 
-mod acl;
-mod billing;
 mod cache;
 pub(super) mod common;
 mod config_cmd;
@@ -13,12 +11,9 @@ mod help;
 mod job;
 mod lookup;
 mod menu;
-mod points;
 mod targets;
 mod transfer_cmd;
 
-pub(in crate::tgbot) use acl::acl_command_on;
-pub(in crate::tgbot) use billing::billing_command_on;
 pub(in crate::tgbot) use cache::cache_command_on;
 pub(in crate::tgbot) use config_cmd::config_command_on;
 pub(in crate::tgbot) use downloads::downloads_command_on;
@@ -27,12 +22,11 @@ pub use help::help_command;
 pub use job::job_command;
 pub(in crate::tgbot) use job::job_command_on;
 pub(in crate::tgbot) use lookup::lookup_command_on;
+pub(in crate::tgbot) use menu::handle_menu_text_input_on;
 pub(in crate::tgbot) use menu::menu_command_on;
 pub(in crate::tgbot) use menu::start_transfer_target_choice_from_bot_message;
 pub(in crate::tgbot) use menu::start_transfer_target_choice_from_link_message;
 pub use menu::{cancel_menu_input, discard_menu_input, discard_menu_input_for_command};
-pub(in crate::tgbot) use menu::{handle_menu_shared_chat_input_on, handle_menu_text_input_on};
-pub use points::{balance_command, points_command};
 pub(in crate::tgbot) use targets::targets_command_on;
 pub(in crate::tgbot) use transfer_cmd::transfer_command_on;
 pub(in crate::tgbot) use transfer_cmd::transferable_message_source_location;
@@ -89,6 +83,25 @@ pub(in crate::tgbot::transfer) fn build_downloads_filter_button_data(
     downloads::build_downloads_filter_value_callback_data(filter_value, limit)
 }
 
+/// 给固定筛选值页面生成下载列表按钮数据。
+///
+/// 这里只给写死的合法筛选值使用；如果这里失败，说明代码和 `/downloads`
+/// 的筛选协议已经漂移，应在开发阶段直接暴露出来。
+pub(in crate::tgbot::transfer) fn require_downloads_filter_button_data(
+    filter_value: &str,
+    limit: u64,
+) -> String {
+    build_downloads_filter_button_data(filter_value, limit)
+        .unwrap_or_else(|| panic!("downloads filter must exist: {filter_value}"))
+}
+
+/// 给结果/失败卡片生成“重新转存”按钮数据。
+///
+/// 具体上下文仍由消息发送方挂载到 `lookup_retry` 状态中，这里只暴露稳定 callback data。
+pub(in crate::tgbot::transfer) fn build_lookup_retry_transfer_button_data() -> String {
+    lookup::build_lookup_retry_transfer_callback_data()
+}
+
 /// 给外层错误卡片生成“打开帮助”按钮数据。
 pub(in crate::tgbot) fn build_help_button_data(topic: Option<&str>) -> String {
     help::build_help_callback_data(topic)
@@ -104,39 +117,9 @@ pub(in crate::tgbot) fn build_menu_new_transfer_button_data_for_outer() -> Strin
     menu::build_menu_new_transfer_callback_data()
 }
 
-/// 给外层错误卡片生成“查看余额”按钮数据。
-pub(in crate::tgbot) fn build_balance_button_data() -> String {
-    points::build_balance_home_callback_data()
-}
-
 /// 给各类状态卡片生成“返回菜单”按钮数据。
 pub(in crate::tgbot::transfer) fn build_menu_home_button_data() -> String {
     menu::build_menu_home_callback_data()
-}
-
-/// 给启动引导或其他管理卡片生成“打开管理页”按钮数据。
-pub(in crate::tgbot::transfer) fn build_menu_admin_hub_button_data() -> String {
-    menu::build_menu_admin_hub_callback_data()
-}
-
-/// 给启动引导或其他管理卡片生成“打开运行配置页”按钮数据。
-pub(in crate::tgbot::transfer) fn build_menu_config_button_data() -> String {
-    menu::build_menu_config_callback_data()
-}
-
-/// 给启动引导或其他管理卡片生成“打开目标配置页”按钮数据。
-pub(in crate::tgbot::transfer) fn build_menu_targets_button_data() -> String {
-    menu::build_menu_targets_callback_data()
-}
-
-/// 给启动引导或其他管理卡片生成“打开访问控制页”按钮数据。
-pub(in crate::tgbot::transfer) fn build_menu_acl_button_data() -> String {
-    menu::build_menu_acl_callback_data()
-}
-
-/// 给启动引导或其他管理卡片生成“打开计费配置页”按钮数据。
-pub(in crate::tgbot::transfer) fn build_menu_billing_button_data() -> String {
-    menu::build_menu_billing_callback_data()
 }
 
 /// 给菜单页生成“运行健康”按钮数据。
@@ -158,11 +141,8 @@ enum CallbackRoute {
     Job,
     Config,
     Targets,
-    Acl,
-    Billing,
     Health,
     Cache,
-    Points,
     Menu,
     Unknown,
     Unsupported,
@@ -207,31 +187,10 @@ pub(in crate::tgbot) async fn transfer_callback_query_on(
             downloads::downloads_callback_query_on(app, update, actor, client_id).await
         }
         CallbackRoute::Job => job::job_callback_query_on(app, update, actor, client_id).await,
-        CallbackRoute::Config if actor.is_admin() => {
-            config_cmd::config_callback_query_on(app, update, client_id).await
-        }
-        CallbackRoute::Config => send_permission_denied_callback(update, client_id).await,
-        CallbackRoute::Targets if actor.is_admin() => {
-            targets::targets_callback_query_on(app, update, client_id).await
-        }
-        CallbackRoute::Targets => send_permission_denied_callback(update, client_id).await,
-        CallbackRoute::Acl if actor.is_admin() => {
-            acl::acl_callback_query_on(app, update, client_id).await
-        }
-        CallbackRoute::Acl => send_permission_denied_callback(update, client_id).await,
-        CallbackRoute::Billing if actor.is_admin() => {
-            billing::billing_callback_query_on(app, update, client_id).await
-        }
-        CallbackRoute::Billing => send_permission_denied_callback(update, client_id).await,
-        CallbackRoute::Health if actor.is_admin() => {
-            health::health_callback_query_on(app, update, client_id).await
-        }
-        CallbackRoute::Health => send_permission_denied_callback(update, client_id).await,
-        CallbackRoute::Cache if actor.is_admin() => {
-            cache::cache_callback_query_on(app, update, client_id).await
-        }
-        CallbackRoute::Cache => send_permission_denied_callback(update, client_id).await,
-        CallbackRoute::Points => points::points_callback_query(update, actor, client_id).await,
+        CallbackRoute::Config => config_cmd::config_callback_query_on(app, update, client_id).await,
+        CallbackRoute::Targets => targets::targets_callback_query_on(app, update, client_id).await,
+        CallbackRoute::Health => health::health_callback_query_on(app, update, client_id).await,
+        CallbackRoute::Cache => cache::cache_callback_query_on(app, update, client_id).await,
         CallbackRoute::Menu => {
             menu::menu_callback_query_on(app, update, config, actor, client_id).await
         }
@@ -260,15 +219,6 @@ pub(in crate::tgbot) async fn transfer_callback_query_on(
             .await
         }
     }
-}
-
-/// 普通用户点击 admin-only 按钮时的统一提示。
-async fn send_permission_denied_callback(
-    update: tdlib_rs::types::UpdateNewCallbackQuery,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    crate::tgbot::send::answer_callback_query(update.id, Some("没有权限执行此操作"), client_id)
-        .await
 }
 
 /// 根据 callback payload 前缀分类路由。
@@ -305,16 +255,6 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
             CallbackRoute::Targets
         }
         tdlib_rs::enums::CallbackQueryPayload::Data(data)
-            if acl::is_acl_callback_data(&data.data) =>
-        {
-            CallbackRoute::Acl
-        }
-        tdlib_rs::enums::CallbackQueryPayload::Data(data)
-            if billing::is_billing_callback_data(&data.data) =>
-        {
-            CallbackRoute::Billing
-        }
-        tdlib_rs::enums::CallbackQueryPayload::Data(data)
             if health::is_health_callback_data(&data.data) =>
         {
             CallbackRoute::Health
@@ -323,11 +263,6 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
             if cache::is_cache_callback_data(&data.data) =>
         {
             CallbackRoute::Cache
-        }
-        tdlib_rs::enums::CallbackQueryPayload::Data(data)
-            if points::is_points_callback_data(&data.data) =>
-        {
-            CallbackRoute::Points
         }
         tdlib_rs::enums::CallbackQueryPayload::Data(data)
             if menu::is_menu_callback_data(&data.data) =>
@@ -376,24 +311,12 @@ mod tests {
             CallbackRoute::Targets
         );
         assert_eq!(
-            classify_callback_route(&payload("acfg:r")),
-            CallbackRoute::Acl
-        );
-        assert_eq!(
-            classify_callback_route(&payload("bcfg:r")),
-            CallbackRoute::Billing
-        );
-        assert_eq!(
             classify_callback_route(&payload("hl:show")),
             CallbackRoute::Health
         );
         assert_eq!(
             classify_callback_route(&payload("c:v:summary:10:1")),
             CallbackRoute::Cache
-        );
-        assert_eq!(
-            classify_callback_route(&payload("pt:p:b:1:10:1")),
-            CallbackRoute::Points
         );
         assert_eq!(
             classify_callback_route(&payload("m:home")),
@@ -441,6 +364,7 @@ mod tests {
             classify_callback_route(&payload(&stop_data)),
             CallbackRoute::Job
         );
+        assert_eq!(stop_data, "j:sc:42");
         assert_eq!(
             classify_callback_route(&payload(&running_data)),
             CallbackRoute::Downloads
@@ -472,13 +396,11 @@ mod tests {
             ("lk:rt", CallbackRoute::Lookup),
             ("d:f:run:8:1", CallbackRoute::Downloads),
             ("j:p:42", CallbackRoute::Job),
+            ("j:sc:42", CallbackRoute::Job),
             ("cfg:a:gc:10", CallbackRoute::Config),
             ("tcfg:r", CallbackRoute::Targets),
-            ("acfg:r", CallbackRoute::Acl),
-            ("bcfg:r", CallbackRoute::Billing),
             ("hl:show", CallbackRoute::Health),
             ("c:v:summary:10:1", CallbackRoute::Cache),
-            ("pt:p:b:1:10:1", CallbackRoute::Points),
             ("m:t", CallbackRoute::Menu),
         ];
 

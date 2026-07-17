@@ -25,10 +25,9 @@ use super::{
 pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
     source_link: &str,
     target_chat_id: i64,
-    owner_user_id: Option<i64>,
 ) -> anyhow::Result<Option<SuccessfulJobResult>> {
     let db_conn = db::get_db().await?;
-    let mut query = db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .column(db::transfer_job::Column::TargetChatId)
@@ -38,9 +37,6 @@ pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
         .filter(db::transfer_job::Column::TargetChatId.eq(target_chat_id))
         .filter(db::transfer_job::Column::Status.eq(JOB_STATUS_SUCCESS))
         .filter(db::transfer_job::Column::ResultMessageLink.is_not_null());
-    if let Some(owner_user_id) = owner_user_id {
-        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
-    }
     let row = query
         .order_by_desc(db::transfer_job::Column::FinishedAt)
         .into_tuple::<(i64, i64, Option<i64>, Option<String>)>()
@@ -65,10 +61,9 @@ pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
 pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
     source_link: &str,
     target_chat_id: i64,
-    owner_user_id: Option<i64>,
 ) -> anyhow::Result<Option<db::transfer_job::Model>> {
     let db_conn = db::get_db().await?;
-    let mut query = db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
         .filter(db::transfer_job::Column::TargetChatId.eq(target_chat_id))
         .filter(
@@ -79,9 +74,6 @@ pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCELLING))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCEL_FINALIZING)),
         );
-    if let Some(owner_user_id) = owner_user_id {
-        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
-    }
     query
         .order_by_desc(db::transfer_job::Column::CreatedAt)
         .one(db_conn)
@@ -95,10 +87,9 @@ pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
 pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
     source_link: &str,
     target_chat_id: i64,
-    owner_user_id: Option<i64>,
 ) -> anyhow::Result<Option<i64>> {
     let db_conn = db::get_db().await?;
-    let mut query = db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
@@ -111,9 +102,6 @@ pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCELLING))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCEL_FINALIZING)),
         );
-    if let Some(owner_user_id) = owner_user_id {
-        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
-    }
     query
         .order_by_desc(db::transfer_job::Column::CreatedAt)
         .into_tuple::<i64>()
@@ -122,24 +110,13 @@ pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
         .map_err(Into::into)
 }
 
-/// 按 actor 权限范围查询最近任务。
-///
-/// admin 的 owner_scope 为 None，因此可查看全局任务；普通用户只查看自己的任务。
-pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots_for_actor(
+/// 查询最近任务。
+pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
     app_context: &crate::app_context::AppContext,
-    actor: crate::config::RequestActor,
-    limit: u64,
-) -> anyhow::Result<Vec<JobProgressSnapshot>> {
-    list_recent_job_snapshots_with_scope(app_context, actor.owner_scope(), limit).await
-}
-
-async fn list_recent_job_snapshots_with_scope(
-    app_context: &crate::app_context::AppContext,
-    owner_scope: Option<i64>,
     limit: u64,
 ) -> anyhow::Result<Vec<JobProgressSnapshot>> {
     let db_conn = db::get_db().await?;
-    let mut query = db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .column(db::transfer_job::Column::Status)
@@ -148,9 +125,6 @@ async fn list_recent_job_snapshots_with_scope(
         .column(db::transfer_job::Column::LastError)
         .column(db::transfer_job::Column::CreatedAt)
         .column(db::transfer_job::Column::UpdatedAt);
-    if let Some(owner_user_id) = owner_scope {
-        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
-    }
     let jobs = query
         .order_by_desc(db::transfer_job::Column::CreatedAt)
         .limit(limit)
@@ -195,30 +169,8 @@ pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_context(
     app_context: &crate::app_context::AppContext,
     job_id: i64,
 ) -> anyhow::Result<Option<JobProgressSnapshot>> {
-    get_job_progress_snapshot_with_request_chat(app_context, job_id, None, None).await
-}
-
-/// 查询当前 actor 可见的单个任务进度快照。
-pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_for_actor(
-    app_context: &crate::app_context::AppContext,
-    job_id: i64,
-    actor: crate::config::RequestActor,
-) -> anyhow::Result<Option<JobProgressSnapshot>> {
-    get_job_progress_snapshot_with_request_chat(app_context, job_id, None, actor.owner_scope())
-        .await
-}
-
-/// 查询单个任务进度快照的内部实现。
-///
-/// `request_chat_id` 为空时用于进度面板内部轮询；非空时用于命令权限边界。
-pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_request_chat(
-    app_context: &crate::app_context::AppContext,
-    job_id: i64,
-    request_chat_id: Option<i64>,
-    owner_scope: Option<i64>,
-) -> anyhow::Result<Option<JobProgressSnapshot>> {
     let db_conn = db::get_db().await?;
-    let mut query = db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .column(db::transfer_job::Column::Status)
@@ -228,13 +180,6 @@ pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_request_c
         .column(db::transfer_job::Column::CreatedAt)
         .column(db::transfer_job::Column::UpdatedAt)
         .filter(db::transfer_job::Column::Id.eq(job_id));
-
-    if let Some(request_chat_id) = request_chat_id {
-        query = query.filter(db::transfer_job::Column::RequestChatId.eq(request_chat_id));
-    }
-    if let Some(owner_user_id) = owner_scope {
-        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
-    }
 
     let Some((id, status, total_items, target_chat_id, last_error, created_at, updated_at)) = query
         .into_tuple::<(

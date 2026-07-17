@@ -2,7 +2,6 @@
 // 本文件只保留普通输入事件处理；按钮、草稿状态和目标选择视图分别放到子模块。
 
 mod admin;
-mod callbacks;
 mod callbacks_simple;
 mod callbacks_target;
 mod flow;
@@ -15,45 +14,31 @@ use crate::config::BotConfig;
 use crate::tgbot::send;
 
 use self::admin::{
-    AdminCommandKind, admin_command_kind, parse_admin_input_payload, run_existing_acl_command,
-    run_existing_billing_command, run_existing_config_command, run_existing_points_command,
+    AdminCommandKind, admin_command_kind, parse_admin_input_payload, run_existing_config_command,
     run_existing_targets_command,
 };
-pub(in crate::tgbot::transfer::command::menu) use self::flow_callbacks::handle_shared_chat_input_on;
 use self::flow_callbacks::{FlowRequestContext, continue_flow_input_on, handle_flow_input};
 use self::simple::{
-    expired_input_detail_on, is_cancel_text, parse_job_id_input, parse_user_id_input,
-    run_existing_job_command, run_existing_points_history_command, send_cancelled_notice,
+    expired_input_detail_on, is_cancel_text, parse_job_id_input, run_existing_job_command,
+    send_cancelled_notice,
 };
 use super::text::{build_menu_recovery_text, build_step_prompt_text};
-pub(super) use callbacks::{
+pub(super) use callbacks_simple::{
     admin_input_callback_query, admin_input_callback_query_with_context,
     cancel_input_callback_query, job_id_input_callback_query,
-    point_ledger_user_input_callback_query, points_adjust_input_callback_query,
+};
+pub(super) use callbacks_target::{
     target_alias_callback_query, target_back_callback_query, target_confirm_callback_query,
     target_default_callback_query, target_manual_callback_query,
-    target_request_chat_callback_query,
 };
 pub(in crate::tgbot::transfer::command) use state::AdminInputAction;
 use state::{
-    DraftTakeResult, MenuInputDraft, MenuInputStep, peek_current_draft, put_draft,
-    step_uses_reply_keyboard, take_current_draft,
+    DraftTakeResult, MenuInputDraft, MenuInputStep, admin_input_prompt_meta, peek_current_draft,
+    put_draft, take_current_draft,
 };
-pub(super) use state::{
-    MenuInputKind, MenuJobAction, cancel_menu_input, cancel_menu_input_with_state, start_menu_input,
-};
+pub(super) use state::{MenuInputKind, MenuJobAction, cancel_menu_input, start_menu_input};
 
-use self::callbacks_simple::send_targets_chat_picker_prompt;
 use self::target::{TargetPromptContext, send_target_choice_prompt};
-
-/// Telegram 原生选群按钮 ID。
-///
-/// 同一私聊里同时只保留一个草稿，因此固定 ID 足够；收到 `MessageChatShared` 时仍会校验这个 ID。
-const TARGET_CHAT_REQUEST_BUTTON_ID: i32 = 7001;
-/// `/targets` 配置页“选择默认目标”按钮 ID。
-pub(super) const TARGETS_DEFAULT_REQUEST_BUTTON_ID: i32 = 7101;
-/// `/targets` 配置页“选择请求路由目标”按钮 ID。
-pub(super) const TARGETS_ROUTE_REQUEST_BUTTON_ID: i32 = 7102;
 
 /// 当前输入草稿的首页摘要。
 #[derive(Debug, Clone)]
@@ -84,6 +69,38 @@ fn continue_input_decision(result: DraftTakeResult) -> ContinueInputDecision {
 /// 构造“继续输入时已过期”的恢复文案。
 fn build_continue_input_expired_text_on(app: &crate::app_context::AppContext) -> String {
     build_menu_recovery_text("输入已过期", "expired", &expired_input_detail_on(app))
+}
+
+/// 构造输入失败后的重试说明。
+///
+/// 失败原因和下一步格式分开展示，避免用户只看到“失败”但不知道应该继续回复什么。
+fn build_input_retry_detail(reason: &str, next_detail: &str) -> String {
+    format!("{reason}\n\n{next_detail}")
+}
+
+/// 解析单个别名输入。
+///
+/// 这里明确不接受空白分隔的多词别名，保持和 `/targets set-alias <alias> <target>` 的命令格式一致。
+fn parse_single_alias_input(input: &str) -> Option<String> {
+    let mut parts = input.split_whitespace();
+    let alias = parts.next()?.trim();
+    if alias.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(alias.to_owned())
+}
+
+/// 管理输入当前阶段标签。
+fn admin_input_step_label(
+    action: AdminInputAction,
+    context_text: Option<&str>,
+    _context_i64: Option<i64>,
+) -> &'static str {
+    match action {
+        AdminInputAction::TargetsAliasName => "1/2",
+        AdminInputAction::TargetsSetAlias if context_text.is_some() => "2/2",
+        _ => "1/1",
+    }
 }
 
 #[cfg(test)]
@@ -191,45 +208,18 @@ pub(super) async fn continue_current_input_on(
         }
         MenuInputStep::AdminInput {
             action,
-            context_text: _,
-            context_i64: _,
+            context_text,
+            context_i64,
         } => {
-            send::send_card_message_with_force_reply_returning(
-                build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
-                chat_id,
-                action.input_placeholder(),
-                client_id,
-            )
-            .await?;
-        }
-        MenuInputStep::AdminChatPicker {
-            action,
-            request_chat_id_input,
-        } => {
-            send_targets_chat_picker_prompt(chat_id, client_id, action, request_chat_id_input)
-                .await?;
-        }
-        MenuInputStep::PointLedgerUserId => {
+            let meta = admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
             send::send_card_message_with_force_reply_returning(
                 build_step_prompt_text(
-                    "1/1",
-                    "用户积分流水",
-                    "请回复 Telegram 用户 ID，例如 123456789；或发送 /cancel 取消。",
+                    admin_input_step_label(action, context_text.as_deref(), context_i64),
+                    &meta.title,
+                    &meta.detail,
                 ),
                 chat_id,
-                "输入 Telegram user_id，或发送 /cancel",
-                client_id,
-            )
-            .await?;
-        }
-        MenuInputStep::PointsAdjust {
-            action,
-            target_user_id: _,
-        } => {
-            send::send_card_message_with_force_reply_returning(
-                build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
-                chat_id,
-                action.input_placeholder(),
+                &meta.placeholder,
                 client_id,
             )
             .await?;
@@ -237,7 +227,6 @@ pub(super) async fn continue_current_input_on(
         MenuInputStep::SourceLink { .. }
         | MenuInputStep::TargetChoice { .. }
         | MenuInputStep::TargetChat { .. }
-        | MenuInputStep::ChatPicker { .. }
         | MenuInputStep::Confirm { .. } => {
             tracing::warn!(
                 chat_id,
@@ -312,15 +301,9 @@ pub(super) async fn handle_menu_input_on(
             request_chat_id,
             sender_user_id,
             request_message_id,
-            needs_reply_keyboard_cleanup = step_uses_reply_keyboard(&draft.step),
             "menu input cancelled by text"
         );
-        send_cancelled_notice(
-            request_chat_id,
-            client_id,
-            step_uses_reply_keyboard(&draft.step),
-        )
-        .await?;
+        send_cancelled_notice(request_chat_id, client_id).await?;
         return Ok(true);
     }
 
@@ -382,7 +365,30 @@ pub(super) async fn handle_menu_input_on(
                 job_action = action.log_name(),
                 "menu input dispatching job command"
             );
-            run_existing_job_command(app, action, job_id, actor, client_id).await?;
+            if let Err(err) = run_existing_job_command(app, action, job_id, actor, client_id).await
+            {
+                put_draft(key, MenuInputDraft::job_id(action)).await?;
+                tracing::warn!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    job_id,
+                    job_action = action.log_name(),
+                    error = %err,
+                    "menu input job command failed, waiting for retry"
+                );
+                let detail = build_input_retry_detail(
+                    &format!("执行失败：{}。", err),
+                    action.input_detail(),
+                );
+                send::send_card_message_with_force_reply_returning(
+                    build_step_prompt_text("1/1", "任务操作未生效", &detail),
+                    request_chat_id,
+                    "重新输入 job_id，或发送 /cancel",
+                    client_id,
+                )
+                .await?;
+            }
             Ok(true)
         }
         MenuInputStep::AdminInput {
@@ -397,6 +403,91 @@ pub(super) async fn handle_menu_input_on(
                 admin_action = action.log_name(),
                 "menu input admin action received"
             );
+            match action {
+                AdminInputAction::TargetsAliasName => {
+                    let Some(alias) = parse_single_alias_input(input) else {
+                        put_draft(
+                            key,
+                            MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
+                        )
+                        .await?;
+                        let meta =
+                            admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+                        let detail = build_input_retry_detail("alias 格式不正确。", &meta.detail);
+                        send::send_card_message_with_force_reply_returning(
+                            build_step_prompt_text("1/2", "输入格式不正确", &detail),
+                            request_chat_id,
+                            &meta.placeholder,
+                            client_id,
+                        )
+                        .await?;
+                        return Ok(true);
+                    };
+
+                    let next_action = AdminInputAction::TargetsSetAlias;
+                    put_draft(
+                        key,
+                        MenuInputDraft::admin_input(next_action, Some(alias.clone()), None),
+                    )
+                    .await?;
+                    let meta = admin_input_prompt_meta(next_action, Some(&alias), None);
+                    tracing::debug!(
+                        request_chat_id,
+                        sender_user_id,
+                        request_message_id,
+                        selected_alias = %alias,
+                        "menu input target alias first step accepted"
+                    );
+                    send::send_card_message_with_force_reply_returning(
+                        build_step_prompt_text("2/2", &meta.title, &meta.detail),
+                        request_chat_id,
+                        &meta.placeholder,
+                        client_id,
+                    )
+                    .await?;
+                    return Ok(true);
+                }
+                AdminInputAction::TargetsAliasSearch => {
+                    let Some(query) = parse_single_alias_input(input) else {
+                        put_draft(
+                            key,
+                            MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
+                        )
+                        .await?;
+                        let meta =
+                            admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+                        let detail =
+                            build_input_retry_detail("搜索关键字格式不正确。", &meta.detail);
+                        send::send_card_message_with_force_reply_returning(
+                            build_step_prompt_text("1/1", "输入格式不正确", &detail),
+                            request_chat_id,
+                            &meta.placeholder,
+                            client_id,
+                        )
+                        .await?;
+                        return Ok(true);
+                    };
+
+                    tracing::debug!(
+                        request_chat_id,
+                        sender_user_id,
+                        request_message_id,
+                        query = %query,
+                        "menu input target alias search accepted"
+                    );
+                    super::super::targets::send_alias_search_result_page_on(
+                        app,
+                        &query,
+                        1,
+                        request_chat_id,
+                        client_id,
+                    )
+                    .await?;
+                    return Ok(true);
+                }
+                _ => {}
+            }
+
             let Some(command_owned) = parse_admin_input_payload(
                 action,
                 input,
@@ -416,10 +507,16 @@ pub(super) async fn handle_menu_input_on(
                     admin_action = action.log_name(),
                     "menu input admin action rejected"
                 );
+                let meta = admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+                let detail = build_input_retry_detail("输入格式不正确。", &meta.detail);
                 send::send_card_message_with_force_reply_returning(
-                    build_step_prompt_text("1/1", "输入格式不正确", action.input_detail()),
+                    build_step_prompt_text(
+                        admin_input_step_label(action, context_text.as_deref(), context_i64),
+                        "输入格式不正确",
+                        &detail,
+                    ),
                     request_chat_id,
-                    action.input_placeholder(),
+                    &meta.placeholder,
                     client_id,
                 )
                 .await?;
@@ -433,144 +530,54 @@ pub(super) async fn handle_menu_input_on(
                 admin_action = action.log_name(),
                 "menu input dispatching admin config command"
             );
-            match admin_command_kind(action) {
+            let result = match admin_command_kind(action) {
                 Some(AdminCommandKind::Targets) => {
                     run_existing_targets_command(app, command_owned, request_chat_id, client_id)
-                        .await?;
-                }
-                Some(AdminCommandKind::Acl) => {
-                    run_existing_acl_command(app, command_owned, request_chat_id, client_id)
-                        .await?;
+                        .await
                 }
                 Some(AdminCommandKind::Config) => {
                     run_existing_config_command(app, command_owned, request_chat_id, client_id)
-                        .await?;
+                        .await
                 }
-                Some(AdminCommandKind::Billing) => {
-                    run_existing_billing_command(app, command_owned, request_chat_id, client_id)
-                        .await?;
-                }
-                Some(AdminCommandKind::Points) => {
-                    run_existing_points_command(command_owned, actor, client_id).await?;
-                }
-                None => anyhow::bail!("unsupported admin input action: {}", action.log_name()),
-            }
-            Ok(true)
-        }
-        MenuInputStep::AdminChatPicker {
-            action,
-            request_chat_id_input,
-        } => {
-            if action != AdminInputAction::TargetsPickRoute {
-                put_draft(
-                    key,
-                    MenuInputDraft::admin_chat_picker(action, request_chat_id_input),
-                )
-                .await?;
-                anyhow::bail!(
-                    "unsupported admin chat picker text step: {}",
+                None => Err(anyhow::anyhow!(
+                    "unsupported admin input action: {}",
                     action.log_name()
-                );
-            }
-
-            let Some(route_request_chat_id) = parse_job_id_input(input) else {
+                )),
+            };
+            if let Err(err) = result {
                 put_draft(
                     key,
-                    MenuInputDraft::admin_chat_picker(action, request_chat_id_input),
+                    MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
                 )
                 .await?;
-                send::send_card_message_with_force_reply_returning(
-                    build_step_prompt_text(
-                        "1/1",
-                        "request_chat_id 格式不正确",
-                        "请回复纯数字 request_chat_id，随后会弹出目标群组选择器；或发送 /cancel 取消。",
-                    ),
-                    request_chat_id,
-                    "输入 request_chat_id，或发送 /cancel",
-                    client_id,
-                )
-                .await?;
-                return Ok(true);
-            };
-
-            put_draft(
-                key,
-                MenuInputDraft::admin_chat_picker(action, Some(route_request_chat_id)),
-            )
-            .await?;
-            send_targets_chat_picker_prompt(
-                request_chat_id,
-                client_id,
-                action,
-                Some(route_request_chat_id),
-            )
-            .await?;
-            Ok(true)
-        }
-        MenuInputStep::PointLedgerUserId => {
-            tracing::debug!(
-                request_chat_id,
-                sender_user_id,
-                request_message_id,
-                "menu input point ledger user id received"
-            );
-            let Some(user_id) = parse_user_id_input(input) else {
-                put_draft(key, MenuInputDraft::point_ledger_user_id()).await?;
-                tracing::debug!(
+                tracing::warn!(
                     request_chat_id,
                     sender_user_id,
                     request_message_id,
-                    "menu input point ledger user id rejected"
+                    admin_action = action.log_name(),
+                    error = %err,
+                    "menu input admin command failed, waiting for retry"
                 );
+                let meta = admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+                let detail =
+                    build_input_retry_detail(&format!("执行失败：{}。", err), &meta.detail);
                 send::send_card_message_with_force_reply_returning(
                     build_step_prompt_text(
-                        "1/1",
-                        "用户 ID 格式不正确",
-                        "请回复纯数字 Telegram 用户 ID，例如 123456789；或发送 /cancel 取消。",
+                        admin_input_step_label(action, context_text.as_deref(), context_i64),
+                        "输入未生效",
+                        &detail,
                     ),
                     request_chat_id,
-                    "输入数字 user_id，或发送 /cancel",
+                    &meta.placeholder,
                     client_id,
                 )
                 .await?;
-                return Ok(true);
-            };
-
-            tracing::info!(
-                request_chat_id,
-                sender_user_id,
-                request_message_id,
-                target_user_id = user_id,
-                "menu input dispatching points history command"
-            );
-            run_existing_points_history_command(user_id, actor, client_id).await?;
-            Ok(true)
-        }
-        MenuInputStep::PointsAdjust {
-            action,
-            target_user_id,
-        } => {
-            let Some(command_owned) =
-                parse_admin_input_payload(action, input, Some(target_user_id), None, None)
-            else {
-                put_draft(key, MenuInputDraft::points_adjust(action, target_user_id)).await?;
-                send::send_card_message_with_force_reply_returning(
-                    build_step_prompt_text("1/1", "输入格式不正确", action.input_detail()),
-                    request_chat_id,
-                    action.input_placeholder(),
-                    client_id,
-                )
-                .await?;
-                return Ok(true);
-            };
-
-            run_existing_points_command(command_owned, actor, client_id).await?;
+            }
             Ok(true)
         }
         MenuInputStep::SourceLink { .. }
         | MenuInputStep::TargetChoice { .. }
         | MenuInputStep::TargetChat { .. }
-        | MenuInputStep::ChatPicker { .. }
         | MenuInputStep::Confirm { .. } => {
             tracing::warn!(
                 request_chat_id,
@@ -636,5 +643,41 @@ mod tests {
         let draft = MenuInputDraft::source_link(MenuInputKind::Transfer);
 
         assert!(matches!(draft.step, MenuInputStep::SourceLink { .. }));
+    }
+
+    // 别名第一步只接受单个 token，和 `/targets set-alias <alias> <target>` 保持一致。
+    #[test]
+    fn test_parse_single_alias_input() {
+        assert_eq!(
+            parse_single_alias_input("archive"),
+            Some("archive".to_owned())
+        );
+        assert_eq!(
+            parse_single_alias_input(" archive "),
+            Some("archive".to_owned())
+        );
+        assert_eq!(parse_single_alias_input("my archive"), None);
+        assert_eq!(parse_single_alias_input(""), None);
+    }
+
+    // 输入失败提示必须同时包含失败原因和下一步格式，用户才能继续修正。
+    #[test]
+    fn test_build_input_retry_detail_contains_reason_and_next_step() {
+        let detail = build_input_retry_detail("输入格式不正确。", "请回复纯数字 job_id。");
+
+        assert!(detail.contains("输入格式不正确"));
+        assert!(detail.contains("请回复纯数字 job_id"));
+    }
+
+    #[test]
+    fn test_admin_input_step_label_for_targets_two_step_flow() {
+        assert_eq!(
+            admin_input_step_label(AdminInputAction::TargetsAliasName, None, None),
+            "1/2"
+        );
+        assert_eq!(
+            admin_input_step_label(AdminInputAction::TargetsSetDefault, None, None),
+            "1/1"
+        );
     }
 }

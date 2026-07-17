@@ -8,19 +8,18 @@ use super::{MenuDraftSummary, MenuPage, callback, menu_nav_button};
 /// 首页按钮。
 pub(super) fn home_buttons(
     _recent_jobs: &[crate::tgbot::transfer::store::JobProgressSnapshot],
-    is_admin: bool,
     draft_summary: Option<&MenuDraftSummary>,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let mut rows = vec![
         vec![
             send::build_callback_button(
-                "开始转存",
-                &callback::new_transfer_callback_data(),
+                "快速转存",
+                &callback::quick_transfer_default_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             send::build_callback_button(
-                "快速转存",
-                &callback::quick_transfer_default_callback_data(),
+                "指定目标",
+                &callback::new_transfer_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
@@ -31,8 +30,8 @@ pub(super) fn home_buttons(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             menu_nav_button(
-                "账户",
-                MenuPage::AccountHub,
+                "管理",
+                MenuPage::AdminHub,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             menu_nav_button(
@@ -57,16 +56,6 @@ pub(super) fn home_buttons(
                     tdlib_rs::enums::ButtonStyle::Danger,
                 ),
             ],
-        );
-    }
-    if is_admin {
-        rows.insert(
-            2,
-            vec![menu_nav_button(
-                "管理",
-                MenuPage::AdminHub,
-                tdlib_rs::enums::ButtonStyle::Default,
-            )],
         );
     }
     rows.push(vec![menu_nav_button(

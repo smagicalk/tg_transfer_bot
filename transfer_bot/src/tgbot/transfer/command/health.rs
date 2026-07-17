@@ -8,8 +8,64 @@ use crate::tgbot::transfer::store;
 
 use super::common::{
     CommandStyle, build_page_command_section, build_ready_page_header,
-    build_refresh_return_menu_row, downloads_command as downloads_command_text,
+    build_refresh_return_menu_row, health_command as build_health_command,
 };
+
+/// `health` 帮助页和目录页共用的用途描述。
+pub(in crate::tgbot::transfer::command) fn health_help_purpose() -> &'static str {
+    "只读查看运行健康状态。"
+}
+
+/// `health` 帮助页和目录页共用的一句话摘要。
+pub(in crate::tgbot::transfer::command) fn health_help_summary() -> &'static str {
+    "查看运行配置、并发、恢复队列、任务和缓存总体状态。"
+}
+
+/// `health` 菜单页和帮助详情页共用的开场说明。
+pub(in crate::tgbot::transfer::command) fn health_intro_lines() -> Vec<String> {
+    vec!["展示任务规模、恢复队列、缓存队列、并发和运行时配置，不修改任何状态。".to_owned()]
+}
+
+/// `/help health` 共用的详细说明正文。
+///
+/// 健康页的指标口径和只读约束由 health 模块维护，help 模块只负责路由展示。
+pub(in crate::tgbot::transfer::command) fn build_health_help_detail_text() -> String {
+    let mut lines = vec![
+        "health".to_owned(),
+        format!("用途：{}", health_help_purpose()),
+    ];
+    lines.extend(
+        health_intro_lines()
+            .into_iter()
+            .map(|line| format!("说明：{}", line)),
+    );
+    lines.extend([
+        card::DIVIDER.to_owned(),
+        card::section("命令"),
+        build_health_command(CommandStyle::Long),
+        String::new(),
+        card::section("示例"),
+        build_health_command(CommandStyle::Long),
+    ]);
+    lines.join("\n")
+}
+
+/// `health` 帮助页入口按钮行。
+pub(in crate::tgbot::transfer::command) fn build_health_help_entry_rows()
+-> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![vec![
+        send::build_callback_button(
+            "打开健康页",
+            &build_health_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        send::build_callback_button(
+            "文件缓存",
+            &super::build_cache_button_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]]
+}
 
 /// `/health` callback 前缀。
 const HEALTH_CALLBACK_PREFIX: &str = "hl:";
@@ -128,21 +184,11 @@ fn build_health_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
 
 /// 健康页进入运行列表按钮。
 ///
-/// 正常情况下使用 callback 原地跳转；如果下载筛选协议未来变更，降级为复制短命令，
-/// 避免健康页因为一个辅助按钮构造失败而整体不可用。
+/// 这里使用固定合法筛选值，协议漂移应在开发阶段暴露，而不是运行时退化成复制按钮。
 fn downloads_run_button() -> tdlib_rs::types::InlineKeyboardButton {
-    if let Some(data) = super::build_downloads_filter_button_data("run", 8) {
-        return send::build_callback_button(
-            "下载列表",
-            &data,
-            tdlib_rs::enums::ButtonStyle::Default,
-        );
-    }
-
-    tracing::warn!("downloads run callback data is unavailable, fallback to copy command");
-    send::build_copy_button(
+    send::build_callback_button(
         "下载列表",
-        &downloads_command_text(Some("run"), None, None, CommandStyle::Long),
+        &super::require_downloads_filter_button_data("run", 8),
         tdlib_rs::enums::ButtonStyle::Default,
     )
 }

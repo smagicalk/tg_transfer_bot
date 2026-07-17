@@ -35,30 +35,6 @@ async fn test_cancel_job_now_releases_file_refs() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 取消任务时应退回已扣积分，并把计费状态标记为 refunded。
-#[tokio::test]
-async fn test_cancel_job_now_refunds_charged_points() -> anyhow::Result<()> {
-    let _guard = db::TEST_DB_LOCK.lock().await;
-    let db_conn = prepare_test_schema().await?;
-    let job = insert_charged_job(JOB_STATUS_PENDING, 5).await?;
-
-    let cancelled = cancel_job_now(job.id, "cancelled by test", 2).await?;
-    assert_eq!(cancelled.status, JOB_STATUS_CANCELLED);
-
-    let job = db::transfer_job::Entity::find_by_id(job.id)
-        .one(db_conn)
-        .await?
-        .expect("job must exist");
-    assert_eq!(job.billing_status, "refunded");
-
-    let account = get_user_account(job.owner_user_id)
-        .await?
-        .expect("account should exist");
-    assert_eq!(account.points_balance, 5);
-    assert_eq!(account.total_points_spent, 0);
-    Ok(())
-}
-
 /// 同一个 Telegram 文件在 bot/user 两个 TDLib client 下必须分开缓存。
 #[tokio::test]
 async fn test_file_cache_isolated_by_owner_client_role() -> anyhow::Result<()> {
@@ -140,46 +116,12 @@ async fn test_cancel_job_now_releases_file_refs_once_under_concurrency() -> anyh
     left?;
     right?;
 
-    let job = db::transfer_job::Entity::find_by_id(job1.id)
-        .one(db_conn)
-        .await?
-        .expect("job must exist");
-    assert_eq!(job.billing_status, "free");
-
     let cache = db::file_cache::Entity::find_by_id(user_cache_id(file_key))
         .one(db_conn)
         .await?
         .expect("file cache must exist");
     assert_eq!(cache.active_refs, 1);
     assert!(cache.delete_after.is_none());
-    Ok(())
-}
-
-/// 重复取消同一个已扣费任务时，退款只能发生一次。
-#[tokio::test]
-async fn test_cancel_job_now_refunds_charged_points_once_under_concurrency() -> anyhow::Result<()> {
-    let _guard = db::TEST_DB_LOCK.lock().await;
-    let db_conn = prepare_test_schema().await?;
-    let job = insert_charged_job(JOB_STATUS_CANCELLING, 5).await?;
-
-    let (left, right) = tokio::join!(
-        cancel_job_now(job.id, "cancelled by test", 2),
-        cancel_job_now(job.id, "cancelled by test", 2)
-    );
-    left?;
-    right?;
-
-    let job = db::transfer_job::Entity::find_by_id(job.id)
-        .one(db_conn)
-        .await?
-        .expect("job must exist");
-    assert_eq!(job.billing_status, "refunded");
-
-    let account = get_user_account(job.owner_user_id)
-        .await?
-        .expect("account should exist");
-    assert_eq!(account.points_balance, 5);
-    assert_eq!(account.total_points_spent, 0);
     Ok(())
 }
 

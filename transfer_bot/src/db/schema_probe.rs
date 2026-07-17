@@ -73,13 +73,10 @@ pub(crate) async fn test_schema_has_required_columns(
         test_table_has_column(db, "transfer_job", "source_kind").await?
             && test_table_has_column(db, "transfer_job", "owner_user_id").await?
             && test_table_has_column(db, "transfer_job", "allow_user_fallback").await?
-            && test_table_has_column(db, "transfer_job", "billing_status").await?
             && test_table_has_column(db, "transfer_item", "file_owner_client_role").await?
             && test_table_has_column(db, "transfer_result_message", "message_link").await?
             && test_table_has_column(db, "file_cache", "owner_client_role").await?
             && test_table_has_column(db, "menu_input_draft", "expires_at").await?
-            && test_table_has_column(db, "user_account", "points_balance").await?
-            && test_table_has_column(db, "point_ledger", "idempotency_key").await?
             && test_table_has_column(db, "transfer_runtime_config", "menu_input_timeout_seconds")
                 .await?,
     )

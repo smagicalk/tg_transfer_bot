@@ -56,65 +56,10 @@ where
     exec_schema_statement(
         db,
         Table::create()
-            .table("billing_runtime_config")
-            .if_not_exists()
-            .col(ColumnDef::new("id").integer().not_null().primary_key())
-            .col(ColumnDef::new("enabled").boolean().not_null())
-            .col(ColumnDef::new("base_cost_points").big_integer().not_null())
-            .col(ColumnDef::new("item_cost_points").big_integer().not_null())
-            .col(
-                ColumnDef::new("initial_user_points")
-                    .big_integer()
-                    .not_null(),
-            )
-            .col(ColumnDef::new("announcement_text").string())
-            .col(
-                ColumnDef::new("created_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new("updated_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .to_owned(),
-    )
-    .await?;
-
-    exec_schema_statement(
-        db,
-        Table::create()
             .table("transfer_target_config")
             .if_not_exists()
             .col(ColumnDef::new("id").integer().not_null().primary_key())
             .col(ColumnDef::new("default_chat_id").big_integer().not_null())
-            .col(
-                ColumnDef::new("created_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new("updated_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .to_owned(),
-    )
-    .await?;
-
-    exec_schema_statement(
-        db,
-        Table::create()
-            .table("transfer_target_route")
-            .if_not_exists()
-            .col(
-                ColumnDef::new("request_chat_id")
-                    .big_integer()
-                    .not_null()
-                    .primary_key(),
-            )
-            .col(ColumnDef::new("target_chat_id").big_integer().not_null())
             .col(
                 ColumnDef::new("created_at")
                     .timestamp_with_time_zone()
@@ -150,156 +95,6 @@ where
     )
     .await?;
 
-    exec_schema_statement(
-        db,
-        Table::create()
-            .table("access_control_runtime_config")
-            .if_not_exists()
-            .col(ColumnDef::new("id").integer().not_null().primary_key())
-            .col(
-                ColumnDef::new("allow_all_private_users")
-                    .boolean()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new("created_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new("updated_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .to_owned(),
-    )
-    .await?;
-
-    exec_schema_statement(
-        db,
-        Table::create()
-            .table("access_control_admin_user")
-            .if_not_exists()
-            .col(
-                ColumnDef::new("telegram_user_id")
-                    .big_integer()
-                    .not_null()
-                    .primary_key(),
-            )
-            .col(
-                ColumnDef::new("created_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new("updated_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .to_owned(),
-    )
-    .await?;
-
-    exec_schema_statement(
-        db,
-        Table::create()
-            .table("access_control_allowed_user")
-            .if_not_exists()
-            .col(
-                ColumnDef::new("telegram_user_id")
-                    .big_integer()
-                    .not_null()
-                    .primary_key(),
-            )
-            .col(
-                ColumnDef::new("created_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new("updated_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .to_owned(),
-    )
-    .await?;
-
-    exec_schema_statement(
-        db,
-        Table::create()
-            .table("access_control_banned_user")
-            .if_not_exists()
-            .col(
-                ColumnDef::new("telegram_user_id")
-                    .big_integer()
-                    .not_null()
-                    .primary_key(),
-            )
-            .col(
-                ColumnDef::new("created_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new("updated_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .to_owned(),
-    )
-    .await?;
-
-    exec_schema_statement(
-        db,
-        Table::create()
-            .table("access_control_allowed_request_chat")
-            .if_not_exists()
-            .col(
-                ColumnDef::new("chat_id")
-                    .big_integer()
-                    .not_null()
-                    .primary_key(),
-            )
-            .col(
-                ColumnDef::new("created_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new("updated_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .to_owned(),
-    )
-    .await?;
-
-    exec_schema_statement(
-        db,
-        Table::create()
-            .table("access_control_allowed_target_chat")
-            .if_not_exists()
-            .col(
-                ColumnDef::new("chat_id")
-                    .big_integer()
-                    .not_null()
-                    .primary_key(),
-            )
-            .col(
-                ColumnDef::new("created_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new("updated_at")
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .to_owned(),
-    )
-    .await?;
-
     Ok(())
 }
 
@@ -307,54 +102,6 @@ pub(super) async fn drop<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
 {
-    exec_schema_statement(
-        db,
-        Table::drop()
-            .table("access_control_allowed_target_chat")
-            .if_exists()
-            .to_owned(),
-    )
-    .await?;
-    exec_schema_statement(
-        db,
-        Table::drop()
-            .table("access_control_allowed_request_chat")
-            .if_exists()
-            .to_owned(),
-    )
-    .await?;
-    exec_schema_statement(
-        db,
-        Table::drop()
-            .table("access_control_banned_user")
-            .if_exists()
-            .to_owned(),
-    )
-    .await?;
-    exec_schema_statement(
-        db,
-        Table::drop()
-            .table("access_control_allowed_user")
-            .if_exists()
-            .to_owned(),
-    )
-    .await?;
-    exec_schema_statement(
-        db,
-        Table::drop()
-            .table("access_control_admin_user")
-            .if_exists()
-            .to_owned(),
-    )
-    .await?;
-    exec_schema_statement(
-        db,
-        Table::drop()
-            .table("access_control_runtime_config")
-            .if_exists()
-            .to_owned(),
-    )
-    .await?;
     exec_schema_statement(
         db,
         Table::drop()
@@ -366,23 +113,7 @@ where
     exec_schema_statement(
         db,
         Table::drop()
-            .table("transfer_target_route")
-            .if_exists()
-            .to_owned(),
-    )
-    .await?;
-    exec_schema_statement(
-        db,
-        Table::drop()
             .table("transfer_target_config")
-            .if_exists()
-            .to_owned(),
-    )
-    .await?;
-    exec_schema_statement(
-        db,
-        Table::drop()
-            .table("billing_runtime_config")
             .if_exists()
             .to_owned(),
     )

@@ -2,8 +2,7 @@
 // 该模块只把已经查询好的任务快照渲染为 card 标记文本。
 
 use super::super::common::{
-    CommandStyle, build_page_command_section, build_page_empty_note, build_ready_page_header,
-    format_bytes, short_and_long,
+    build_page_command_section, build_page_empty_note, build_ready_page_header, format_bytes,
 };
 use super::keyboard::build_downloads_page_command;
 use super::types::DownloadsArgs;
@@ -15,20 +14,16 @@ pub(super) fn format_downloads_text(
     snapshots: &[store::JobProgressSnapshot],
     args: &DownloadsArgs,
     total: usize,
-    is_admin: bool,
 ) -> String {
     let total_pages = compute_total_pages(total, args.limit);
-    let scope_label = if is_admin {
-        "范围：管理员 / 全局"
-    } else {
-        "范围：当前用户 / 自己"
-    };
+    let scope_label = "范围：所有任务";
     if snapshots.is_empty() {
         let page_label = format!("{}/{}", args.page, total_pages);
-        let current_page_command = short_and_long(
-            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
-            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Long),
-        );
+        let current_page_command = card::code(build_downloads_page_command(
+            args.filter,
+            args.limit,
+            args.page,
+        ));
         let current_page_line = format!("当前页：{}", current_page_command);
         let mut lines = build_ready_page_header("下载列表为空");
         lines.push(format!(
@@ -55,10 +50,11 @@ pub(super) fn format_downloads_text(
     lines.push(card::DIVIDER.to_owned());
     lines.push(format!(
         "命令：{}",
-        short_and_long(
-            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
-            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Long),
-        ),
+        card::code(build_downloads_page_command(
+            args.filter,
+            args.limit,
+            args.page,
+        )),
     ));
     lines.push(scope_label.to_owned());
 
@@ -103,7 +99,11 @@ pub(super) fn format_downloads_text(
         ));
         lines.push(card::command_line(
             "命令",
-            super::super::common::job_command("status", snapshot.job.id, CommandStyle::Long),
+            super::super::common::job_command(
+                "status",
+                snapshot.job.id,
+                super::super::common::CommandStyle::Long,
+            ),
         ));
     }
 

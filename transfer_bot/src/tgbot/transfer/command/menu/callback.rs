@@ -11,16 +11,12 @@ const MENU_CALLBACK_PREFIX: &str = "m:";
 pub(super) enum MenuPage {
     Home,
     TasksHub,
-    AccountHub,
     AdminHub,
-    Transfer,
     Downloads,
     Jobs,
     Lookup,
     Config,
     Targets,
-    Acl,
-    Billing,
     Help,
 }
 
@@ -30,16 +26,12 @@ impl MenuPage {
         match self {
             Self::Home => "菜单",
             Self::TasksHub => "任务",
-            Self::AccountHub => "账户",
             Self::AdminHub => "管理",
-            Self::Transfer => "转存",
             Self::Downloads => "下载",
             Self::Jobs => "任务",
             Self::Lookup => "查询",
             Self::Config => "配置",
             Self::Targets => "目标",
-            Self::Acl => "权限",
-            Self::Billing => "计费",
             Self::Help => "帮助",
         }
     }
@@ -49,16 +41,12 @@ impl MenuPage {
         match self {
             Self::Home => "home",
             Self::TasksHub => "th",
-            Self::AccountHub => "ah",
             Self::AdminHub => "mh",
-            Self::Transfer => "t",
             Self::Downloads => "d",
             Self::Jobs => "j",
             Self::Lookup => "lk",
             Self::Config => "cfg",
             Self::Targets => "tg",
-            Self::Acl => "acl",
-            Self::Billing => "bil",
             Self::Help => "h",
         }
     }
@@ -68,16 +56,12 @@ impl MenuPage {
         match code {
             "home" => Some(Self::Home),
             "th" => Some(Self::TasksHub),
-            "ah" => Some(Self::AccountHub),
             "mh" => Some(Self::AdminHub),
-            "t" => Some(Self::Transfer),
             "d" => Some(Self::Downloads),
             "j" => Some(Self::Jobs),
             "lk" => Some(Self::Lookup),
             "cfg" => Some(Self::Config),
             "tg" => Some(Self::Targets),
-            "acl" => Some(Self::Acl),
-            "bil" => Some(Self::Billing),
             "h" => Some(Self::Help),
             _ => None,
         }
@@ -94,13 +78,11 @@ pub(super) enum MenuRequestAction {
     QuickLookupDefault,
     TargetDefault,
     TargetManual,
-    TargetRequestChat,
     TargetAlias(i64),
     TargetConfirm,
     TargetBack,
     JobIdInput(MenuJobAction),
     AdminInput(AdminInputAction),
-    PointLedgerUserInput,
     ContinueInput,
     CancelInput,
 }
@@ -114,13 +96,12 @@ pub(super) fn is_menu_callback_data(data: &str) -> bool {
 pub(super) fn parse_menu_callback_data(data: &str) -> Option<MenuRequestAction> {
     let payload = data.strip_prefix(MENU_CALLBACK_PREFIX)?;
     match payload {
-        "new" => Some(MenuRequestAction::NewTransfer),
+        "new" | "t" => Some(MenuRequestAction::NewTransfer),
         "qtd" => Some(MenuRequestAction::QuickTransferDefault),
         "qlk" => Some(MenuRequestAction::NewLookup),
         "qld" => Some(MenuRequestAction::QuickLookupDefault),
         "td" => Some(MenuRequestAction::TargetDefault),
         "tm" => Some(MenuRequestAction::TargetManual),
-        "ts" => Some(MenuRequestAction::TargetRequestChat),
         "tr" => Some(MenuRequestAction::TargetConfirm),
         "tb" => Some(MenuRequestAction::TargetBack),
         "jst" => Some(MenuRequestAction::JobIdInput(MenuJobAction::Status)),
@@ -131,7 +112,6 @@ pub(super) fn parse_menu_callback_data(data: &str) -> Option<MenuRequestAction> 
             .strip_prefix("ai:")
             .and_then(AdminInputAction::parse)
             .map(MenuRequestAction::AdminInput),
-        "pl" => Some(MenuRequestAction::PointLedgerUserInput),
         "ci" => Some(MenuRequestAction::ContinueInput),
         "cx" => Some(MenuRequestAction::CancelInput),
         alias if alias.starts_with("ta:") => alias
@@ -203,17 +183,6 @@ pub(super) fn job_id_input_callback_data(action: MenuJobAction) -> String {
     menu_callback_data(code)
 }
 
-/// 启动管理单步输入的 callback payload。
-#[cfg(test)]
-pub(super) fn admin_input_callback_data(action: AdminInputAction) -> String {
-    menu_callback_data(&format!("ai:{}", action.log_name()))
-}
-
-/// 输入用户 ID 查询积分流水的 callback payload。
-pub(super) fn point_ledger_user_input_callback_data() -> String {
-    menu_callback_data("pl")
-}
-
 /// 继续当前输入草稿的 callback payload。
 pub(super) fn continue_input_callback_data() -> String {
     menu_callback_data("ci")
@@ -245,24 +214,16 @@ mod tests {
             Some(MenuRequestAction::Page(MenuPage::TasksHub))
         );
         assert_eq!(
-            parse_menu_callback_data("m:ah"),
-            Some(MenuRequestAction::Page(MenuPage::AccountHub))
-        );
-        assert_eq!(
             parse_menu_callback_data("m:mh"),
             Some(MenuRequestAction::Page(MenuPage::AdminHub))
         );
         assert_eq!(
+            parse_menu_callback_data("m:t"),
+            Some(MenuRequestAction::NewTransfer)
+        );
+        assert_eq!(
             parse_menu_callback_data("m:tg"),
             Some(MenuRequestAction::Page(MenuPage::Targets))
-        );
-        assert_eq!(
-            parse_menu_callback_data("m:acl"),
-            Some(MenuRequestAction::Page(MenuPage::Acl))
-        );
-        assert_eq!(
-            parse_menu_callback_data("m:bil"),
-            Some(MenuRequestAction::Page(MenuPage::Billing))
         );
         assert_eq!(
             parse_menu_callback_data("m:new"),
@@ -287,10 +248,6 @@ mod tests {
         assert_eq!(
             parse_menu_callback_data("m:tm"),
             Some(MenuRequestAction::TargetManual)
-        );
-        assert_eq!(
-            parse_menu_callback_data("m:ts"),
-            Some(MenuRequestAction::TargetRequestChat)
         );
         assert_eq!(
             parse_menu_callback_data("m:ta:-100"),
@@ -321,16 +278,6 @@ mod tests {
             Some(MenuRequestAction::JobIdInput(MenuJobAction::Stop))
         );
         assert_eq!(
-            parse_menu_callback_data("m:ai:billing_set_base_cost"),
-            Some(MenuRequestAction::AdminInput(
-                AdminInputAction::BillingSetBaseCost
-            ))
-        );
-        assert_eq!(
-            parse_menu_callback_data("m:pl"),
-            Some(MenuRequestAction::PointLedgerUserInput)
-        );
-        assert_eq!(
             parse_menu_callback_data("m:ci"),
             Some(MenuRequestAction::ContinueInput)
         );
@@ -348,10 +295,5 @@ mod tests {
         assert_eq!(job_id_input_callback_data(MenuJobAction::Pause), "m:jp");
         assert_eq!(job_id_input_callback_data(MenuJobAction::Resume), "m:jr");
         assert_eq!(job_id_input_callback_data(MenuJobAction::Stop), "m:js");
-        assert_eq!(
-            admin_input_callback_data(AdminInputAction::BillingSetAnnouncement),
-            "m:ai:billing_set_announcement"
-        );
-        assert_eq!(point_ledger_user_input_callback_data(), "m:pl");
     }
 }

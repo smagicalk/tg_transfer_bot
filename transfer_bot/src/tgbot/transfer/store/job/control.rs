@@ -12,7 +12,7 @@ use super::super::{
     JOB_STATUS_CANCEL_FINALIZING, JOB_STATUS_CANCELLED, JOB_STATUS_CANCELLING, JOB_STATUS_PAUSED,
     JOB_STATUS_PENDING, JOB_STATUS_RUNNING, is_finished_job_status, now_utc8,
 };
-use super::query::find_job_for_owner_scope;
+use super::query::find_job;
 
 /// 将任务状态标记为 running（恢复前触发）。
 ///
@@ -36,14 +36,12 @@ pub(in crate::tgbot::transfer) async fn mark_job_running(job_id: i64) -> anyhow:
     Ok(rs.rows_affected > 0)
 }
 
-/// 将任务标记为暂停，并按 owner_scope 做权限过滤。
-pub(in crate::tgbot::transfer) async fn pause_job_with_owner_scope(
+/// 将任务标记为暂停。
+pub(in crate::tgbot::transfer) async fn pause_job(
     job_id: i64,
-    _request_chat_id: i64,
-    owner_scope: Option<i64>,
 ) -> anyhow::Result<db::transfer_job::Model> {
     let db_conn = db::get_db().await?;
-    let job = find_job_for_owner_scope(job_id, owner_scope)
+    let job = find_job(job_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("job not found: {}", job_id))?;
 
@@ -58,7 +56,7 @@ pub(in crate::tgbot::transfer) async fn pause_job_with_owner_scope(
         status => anyhow::bail!("job status doesn't support pause: {}", status),
     }
 
-    let mut update = db::transfer_job::Entity::update_many()
+    let update = db::transfer_job::Entity::update_many()
         .col_expr(
             db::transfer_job::Column::Status,
             Expr::value(JOB_STATUS_PAUSED),
@@ -70,33 +68,28 @@ pub(in crate::tgbot::transfer) async fn pause_job_with_owner_scope(
             JOB_STATUS_RUNNING.to_owned(),
             JOB_STATUS_PAUSED.to_owned(),
         ]));
-    if let Some(owner_user_id) = owner_scope {
-        update = update.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
-    }
     let rs = update.exec(db_conn).await?;
 
     if rs.rows_affected == 0 {
         anyhow::bail!("job status changed before pause: {}", job_id);
     }
 
-    find_job_for_owner_scope(job_id, owner_scope)
+    find_job(job_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("job not found after pause: {}", job_id))
 }
 
-/// 唤醒未完成任务，并按 owner_scope 做权限过滤。
+/// 唤醒未完成任务。
 ///
 /// 语义：
 /// - paused：改回 pending，等待后台继续处理。
 /// - pending/running：任务本身可继续执行，直接返回，用于处理后台 task 丢失后的手动补派发。
 /// - finished/cancelling：拒绝恢复，避免重复释放引用或重复上传。
-pub(in crate::tgbot::transfer) async fn wake_job_with_owner_scope(
+pub(in crate::tgbot::transfer) async fn wake_job(
     job_id: i64,
-    _request_chat_id: i64,
-    owner_scope: Option<i64>,
 ) -> anyhow::Result<db::transfer_job::Model> {
     let db_conn = db::get_db().await?;
-    let job = find_job_for_owner_scope(job_id, owner_scope)
+    let job = find_job(job_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("job not found: {}", job_id))?;
 
@@ -112,7 +105,7 @@ pub(in crate::tgbot::transfer) async fn wake_job_with_owner_scope(
         status => anyhow::bail!("job status doesn't support wake: {}", status),
     }
 
-    let mut update = db::transfer_job::Entity::update_many()
+    let update = db::transfer_job::Entity::update_many()
         .col_expr(
             db::transfer_job::Column::Status,
             Expr::value(JOB_STATUS_PENDING),
@@ -120,30 +113,25 @@ pub(in crate::tgbot::transfer) async fn wake_job_with_owner_scope(
         .col_expr(db::transfer_job::Column::UpdatedAt, Expr::value(now_utc8()))
         .filter(db::transfer_job::Column::Id.eq(job_id))
         .filter(db::transfer_job::Column::Status.eq(JOB_STATUS_PAUSED));
-    if let Some(owner_user_id) = owner_scope {
-        update = update.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
-    }
     let rs = update.exec(db_conn).await?;
 
     if rs.rows_affected == 0 {
         anyhow::bail!("job status changed before wake: {}", job_id);
     }
 
-    find_job_for_owner_scope(job_id, owner_scope)
+    find_job(job_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("job not found after wake: {}", job_id))
 }
 
-/// 请求停止任务，并按 owner_scope 做权限过滤。
+/// 请求停止任务。
 ///
 /// 后台工作流会在下一个安全点调用 `cancel_job_now` 完成收尾。
-pub(in crate::tgbot::transfer) async fn request_cancel_job_with_owner_scope(
+pub(in crate::tgbot::transfer) async fn request_cancel_job(
     job_id: i64,
-    _request_chat_id: i64,
-    owner_scope: Option<i64>,
 ) -> anyhow::Result<db::transfer_job::Model> {
     let db_conn = db::get_db().await?;
-    let job = find_job_for_owner_scope(job_id, owner_scope)
+    let job = find_job(job_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("job not found: {}", job_id))?;
 
@@ -159,7 +147,7 @@ pub(in crate::tgbot::transfer) async fn request_cancel_job_with_owner_scope(
         status => anyhow::bail!("job status doesn't support stop: {}", status),
     }
 
-    let mut update = db::transfer_job::Entity::update_many()
+    let update = db::transfer_job::Entity::update_many()
         .col_expr(
             db::transfer_job::Column::Status,
             Expr::value(JOB_STATUS_CANCELLING),
@@ -172,13 +160,10 @@ pub(in crate::tgbot::transfer) async fn request_cancel_job_with_owner_scope(
             JOB_STATUS_PAUSED.to_owned(),
             JOB_STATUS_CANCELLING.to_owned(),
         ]));
-    if let Some(owner_user_id) = owner_scope {
-        update = update.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
-    }
     let rs = update.exec(db_conn).await?;
 
     if rs.rows_affected == 0 {
-        let current = find_job_for_owner_scope(job_id, owner_scope)
+        let current = find_job(job_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("job not found after stop conflict: {}", job_id))?;
         if matches!(
@@ -190,7 +175,7 @@ pub(in crate::tgbot::transfer) async fn request_cancel_job_with_owner_scope(
         anyhow::bail!("job status changed before stop: {}", job_id);
     }
 
-    find_job_for_owner_scope(job_id, owner_scope)
+    find_job(job_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("job not found after stop: {}", job_id))
 }

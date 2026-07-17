@@ -461,7 +461,7 @@ fn should_fallback_prepare_to_user(job: &db::transfer_job::Model, err: &anyhow::
     if job.source_kind != SourceKind::Link.as_str() || job.source_client_role != "bot" {
         return false;
     }
-    // 普通用户任务不能借用 user 账号读取私有源链接；是否允许 fallback 由任务创建时的安全策略持久化决定。
+    // 是否允许 user 账号读取私有源链接，由任务创建时的读取策略持久化决定。
     if !job.allow_user_fallback {
         return false;
     }
@@ -589,9 +589,6 @@ mod tests {
             done_items: 0,
             failed_items: 0,
             retry_count: 0,
-            cost_points: 0,
-            charged_points: 0,
-            billing_status: "free".to_owned(),
             last_error: None,
             created_at: store::now_utc8(),
             updated_at: store::now_utc8(),

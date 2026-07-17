@@ -38,34 +38,9 @@ pub(super) async fn send_target_choice_prompt(
             config,
             ctx.request_chat_id,
             ctx.sender_user_id,
-            kind,
         ))
         .send(ctx.request_chat_id, ctx.client_id)
         .await
-}
-
-/// 发送带提示说明的目标选择卡片。
-pub(super) async fn send_target_choice_prompt_with_detail(
-    config: &BotConfig,
-    ctx: TargetPromptContext<'_>,
-    kind: MenuInputKind,
-    source_link: &str,
-    detail: &str,
-) -> anyhow::Result<()> {
-    send::ReplyPanel::card(build_target_choice_text_with_detail(
-        kind,
-        source_link,
-        detail,
-    ))
-    .rows(build_target_choice_buttons_on(
-        ctx.app,
-        config,
-        ctx.request_chat_id,
-        ctx.sender_user_id,
-        kind,
-    ))
-    .send(ctx.request_chat_id, ctx.client_id)
-    .await
 }
 
 /// 编辑当前消息为目标选择卡片。
@@ -82,7 +57,6 @@ pub(super) async fn edit_target_choice_prompt(
             config,
             ctx.request_chat_id,
             ctx.sender_user_id,
-            kind,
         ))
         .into_card_parts()?;
     send::edit_interaction_card_or_error(
@@ -142,7 +116,6 @@ pub(super) fn build_target_choice_buttons_on(
     config: &BotConfig,
     request_chat_id: i64,
     sender_user_id: i64,
-    kind: MenuInputKind,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let _ = config;
     let targets_runtime = crate::tgbot::transfer::targets_runtime_config_on(app);
@@ -160,24 +133,31 @@ pub(super) fn build_target_choice_buttons_on(
         )]);
     }
 
-    if let Some(default_target_chat_id) = resolve_default_target_on(app, config, request_chat_id)
-        && seen_targets.insert(default_target_chat_id)
-    {
+    let default_target_chat_id = resolve_default_target_on(app, config, request_chat_id);
+    if seen_targets.insert(default_target_chat_id) {
         rows.push(vec![send::build_callback_button(
-            default_target_button_label(kind, default_target_chat_id, request_chat_id),
+            default_target_button_label(default_target_chat_id, request_chat_id),
             &callback::target_default_callback_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         )]);
     }
 
-    let mut alias_buttons = targets_runtime
-        .aliases
-        .iter()
+    if seen_targets.insert(request_chat_id) {
+        rows.push(vec![send::build_callback_button(
+            "当前私聊",
+            &callback::target_alias_callback_data(request_chat_id),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )]);
+    }
+
+    let mut aliases = targets_runtime.aliases.iter().collect::<Vec<_>>();
+    aliases.sort_by_key(|(alias, _)| *alias);
+    let alias_buttons = aliases
+        .into_iter()
         .filter_map(|(alias, chat_id)| {
-            if resolve_target_by_id_on(app, *chat_id, config, request_chat_id).is_err() {
-                return None;
-            }
-            if !seen_targets.insert(*chat_id) {
+            if !seen_targets.insert(*chat_id)
+                || resolve_target_by_id_on(app, *chat_id, config, request_chat_id).is_err()
+            {
                 return None;
             }
             Some(send::build_callback_button(
@@ -187,7 +167,6 @@ pub(super) fn build_target_choice_buttons_on(
             ))
         })
         .collect::<Vec<_>>();
-    alias_buttons.sort_by(|left, right| left.text.cmp(&right.text));
     rows.extend(alias_buttons.chunks(2).map(<[_]>::to_vec));
 
     rows.push(vec![send::build_callback_button(
@@ -234,12 +213,12 @@ pub(super) fn resolve_target_input_on(
     request_chat_id: i64,
 ) -> Option<i64> {
     if input.eq_ignore_ascii_case("default") {
-        return resolve_default_target_on(app, config, request_chat_id);
+        return Some(resolve_default_target_on(app, config, request_chat_id));
     }
     resolve_target_chat_id_on(app, &["/menu-input", "placeholder", input], request_chat_id).ok()
 }
 
-/// 在指定上下文上用数字 chat_id 走同一套目标白名单校验。
+/// 在指定上下文上解析数字 chat_id。
 pub(super) fn resolve_target_by_id_on(
     app: &crate::app_context::AppContext,
     target_chat_id: i64,
@@ -259,39 +238,24 @@ pub(super) fn resolve_default_target_on(
     app: &crate::app_context::AppContext,
     _config: &BotConfig,
     request_chat_id: i64,
-) -> Option<i64> {
-    resolve_target_chat_id_on(app, &["/menu-input", "placeholder"], request_chat_id).ok()
+) -> i64 {
+    resolve_target_chat_id_on(app, &["/menu-input", "placeholder"], request_chat_id)
+        .expect("default target resolution without an explicit argument cannot fail")
 }
 
 /// 目标选择卡片正文。
 fn build_target_choice_text(kind: MenuInputKind, source_link: &str) -> String {
-    build_target_choice_text_lines(kind, source_link, None).join("\n")
-}
-
-/// 目标选择卡片正文，附带一条额外说明。
-fn build_target_choice_text_with_detail(
-    kind: MenuInputKind,
-    source_link: &str,
-    detail: &str,
-) -> String {
-    build_target_choice_text_lines(kind, source_link, Some(detail)).join("\n")
+    build_target_choice_text_lines(kind, source_link).join("\n")
 }
 
 /// 构造目标选择卡片的正文行。
-fn build_target_choice_text_lines(
-    kind: MenuInputKind,
-    source_link: &str,
-    detail: Option<&str>,
-) -> Vec<String> {
+fn build_target_choice_text_lines(kind: MenuInputKind, source_link: &str) -> Vec<String> {
     let mut lines = vec![
         kind.target_choice_title().to_owned(),
         build_menu_step_state_line("waiting-target", "2/3"),
         crate::tgbot::transfer::card::DIVIDER.to_owned(),
     ];
     lines.extend(build_menu_context_lines(Some(source_link), None));
-    if let Some(detail) = detail {
-        lines.push(crate::tgbot::transfer::card::note(detail));
-    }
     lines.extend([
         crate::tgbot::transfer::card::section("目标方式"),
         "可以直接使用当前私聊、点已有别名/上次目标，或手动输入 private chat_id/alias。".to_owned(),
@@ -327,16 +291,12 @@ fn build_confirm_text(kind: MenuInputKind, source_link: &str, target_chat_id: i6
 
 /// 默认目标按钮文案。
 ///
-/// 同一个默认目标在转存和查询里语义不同，所以按钮文案按场景分别显示。
-fn default_target_button_label(
-    kind: MenuInputKind,
-    default_target_chat_id: i64,
-    request_chat_id: i64,
-) -> &'static str {
+/// 默认目标等于请求私聊时直接说明位置，否则使用统一目标名称。
+fn default_target_button_label(default_target_chat_id: i64, request_chat_id: i64) -> &'static str {
     if default_target_chat_id == request_chat_id {
         "当前私聊"
     } else {
-        kind.default_target_button_label()
+        "默认目标"
     }
 }
 
@@ -359,18 +319,13 @@ mod tests {
         app_context()
     }
 
-    fn install_target_runtime(
-        targets: crate::config::TargetsConfig,
-        access_control: crate::config::AccessControlConfig,
-    ) {
+    fn install_target_runtime(targets: crate::config::TargetsConfig) {
         super::super::state::clear_last_targets();
         let app = test_app_context();
         app.targets_runtime.update_runtime_config(targets);
-        app.access_control_runtime
-            .update_runtime_config(access_control);
     }
 
-    fn resolve_default_target_for_test(config: &BotConfig, request_chat_id: i64) -> Option<i64> {
+    fn resolve_default_target_for_test(config: &BotConfig, request_chat_id: i64) -> i64 {
         let app = test_app_context();
         resolve_default_target_on(app.as_ref(), config, request_chat_id)
     }
@@ -379,117 +334,66 @@ mod tests {
         config: &BotConfig,
         request_chat_id: i64,
         sender_user_id: i64,
-        kind: MenuInputKind,
     ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
         let app = test_app_context();
-        build_target_choice_buttons_on(app.as_ref(), config, request_chat_id, sender_user_id, kind)
+        build_target_choice_buttons_on(app.as_ref(), config, request_chat_id, sender_user_id)
     }
 
-    // 快速转存应优先使用当前请求 chat 的默认目标，再使用全局兜底目标。
+    // 快速转存应优先使用显式默认目标，未配置时回落到当前私聊。
     #[test]
     fn test_resolve_default_target() {
         let _guard = lock_target_runtime_tests();
         let config = BotConfig::default();
-        install_target_runtime(
-            crate::config::TargetsConfig::default(),
-            crate::config::AccessControlConfig::default(),
-        );
-        assert_eq!(resolve_default_target_for_test(&config, 1), Some(1));
+        install_target_runtime(crate::config::TargetsConfig::default());
+        assert_eq!(resolve_default_target_for_test(&config, 1), 1);
 
-        install_target_runtime(
-            crate::config::TargetsConfig {
-                default_chat_id: -100,
-                by_request_chat_id: Default::default(),
-                aliases: Default::default(),
-            },
-            crate::config::AccessControlConfig::default(),
-        );
-        assert_eq!(resolve_default_target_for_test(&config, 1), Some(-100));
-
-        install_target_runtime(
-            crate::config::TargetsConfig {
-                default_chat_id: -100,
-                by_request_chat_id: std::collections::HashMap::from([(1, -200)]),
-                aliases: Default::default(),
-            },
-            crate::config::AccessControlConfig::default(),
-        );
-        assert_eq!(resolve_default_target_for_test(&config, 1), Some(-200));
-    }
-
-    // 快速转存的默认目标也必须遵守 allowed_target_chat_ids。
-    #[test]
-    fn test_resolve_default_target_respects_allowed_targets() {
-        let _guard = lock_target_runtime_tests();
-        let config = BotConfig::default();
-        install_target_runtime(
-            crate::config::TargetsConfig {
-                default_chat_id: -200,
-                by_request_chat_id: Default::default(),
-                aliases: Default::default(),
-            },
-            crate::config::AccessControlConfig {
-                allowed_target_chat_ids: vec![-100],
-                ..Default::default()
-            },
-        );
-
-        assert_eq!(resolve_default_target_for_test(&config, 1), None);
+        install_target_runtime(crate::config::TargetsConfig {
+            default_chat_id: -100,
+            aliases: Default::default(),
+        });
+        assert_eq!(resolve_default_target_for_test(&config, 1), -100);
     }
 
     // 目标选择页应优先提供当前私聊/默认目标、常用目标和手动输入。
     #[test]
     fn test_build_target_choice_buttons_layout() {
+        use base64::{Engine as _, engine::general_purpose};
+
         let _guard = lock_target_runtime_tests();
         let config = BotConfig::default();
-        install_target_runtime(
-            crate::config::TargetsConfig {
-                default_chat_id: -100,
-                by_request_chat_id: Default::default(),
-                aliases: std::collections::HashMap::from([("archive".to_owned(), -200)]),
-            },
-            crate::config::AccessControlConfig {
-                allowed_target_chat_ids: vec![-100, -200],
-                ..Default::default()
-            },
-        );
+        install_target_runtime(crate::config::TargetsConfig {
+            default_chat_id: -100,
+            aliases: std::collections::HashMap::from([("archive".to_owned(), -200)]),
+        });
 
-        let rows = test_build_target_choice_buttons(&config, 61001, 62001, MenuInputKind::Transfer);
+        let rows = test_build_target_choice_buttons(&config, 61001, 62001);
         let labels = rows
             .iter()
             .flatten()
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(rows[0][0].text, "快速转存");
+        assert_eq!(rows[0][0].text, "默认目标");
+        assert!(labels.contains(&"当前私聊"));
         assert!(labels.contains(&"archive"));
         assert!(labels.contains(&"手动输入"));
         assert_eq!(rows.last().expect("should have cancel row")[0].text, "取消");
+
+        let private_chat = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "当前私聊")
+            .expect("private chat target should exist");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &private_chat.r#type
+        else {
+            panic!("private chat target must be callback");
+        };
+        let decoded = String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap())
+            .expect("callback should be utf8");
+        assert_eq!(decoded, "m:ta:61001");
     }
 
-    // 查询流程里的默认目标按钮应显示“快速查询”，避免和转存动作混淆。
-    #[test]
-    fn test_build_target_choice_buttons_lookup_label() {
-        let _guard = lock_target_runtime_tests();
-        let config = BotConfig::default();
-        install_target_runtime(
-            crate::config::TargetsConfig {
-                default_chat_id: -100,
-                by_request_chat_id: Default::default(),
-                aliases: Default::default(),
-            },
-            crate::config::AccessControlConfig {
-                allowed_target_chat_ids: vec![-100],
-                ..Default::default()
-            },
-        );
-
-        let rows = test_build_target_choice_buttons(&config, 61002, 62002, MenuInputKind::Lookup);
-
-        assert_eq!(rows[0][0].text, "快速查询");
-    }
-
-    // 快速入口仍应使用和实际命令一致的目标标题、确认标题和默认按钮文案。
+    // 快速入口仍应使用和实际命令一致的目标标题和确认标题。
     #[test]
     fn test_menu_input_kind_labels_do_not_panic_for_quick_entries() {
         assert_eq!(
@@ -497,44 +401,28 @@ mod tests {
             "选择转存目标"
         );
         assert_eq!(MenuInputKind::LookupDefault.confirm_title(), "确认查询");
-        assert_eq!(
-            default_target_button_label(MenuInputKind::LookupDefault, 1, 2),
-            "快速查询"
-        );
+        assert_eq!(default_target_button_label(1, 2), "默认目标");
     }
 
     // 当默认目标就是当前请求私聊时，按钮文案应明确显示为“当前私聊”。
     #[test]
     fn test_default_target_button_label_uses_private_chat_name() {
-        assert_eq!(
-            default_target_button_label(MenuInputKind::Transfer, 10001, 10001),
-            "当前私聊"
-        );
+        assert_eq!(default_target_button_label(10001, 10001), "当前私聊");
     }
 
     // 已确认过的目标应作为上次目标优先展示，并避免和默认目标重复出现。
     #[test]
     fn test_build_target_choice_buttons_prefers_last_target() {
         let _guard = lock_target_runtime_tests();
-        install_target_runtime(
-            crate::config::TargetsConfig::default(),
-            crate::config::AccessControlConfig::default(),
-        );
+        install_target_runtime(crate::config::TargetsConfig::default());
         let config = BotConfig::default();
-        install_target_runtime(
-            crate::config::TargetsConfig {
-                default_chat_id: -100,
-                by_request_chat_id: Default::default(),
-                aliases: Default::default(),
-            },
-            crate::config::AccessControlConfig {
-                allowed_target_chat_ids: vec![-100],
-                ..Default::default()
-            },
-        );
+        install_target_runtime(crate::config::TargetsConfig {
+            default_chat_id: -100,
+            aliases: Default::default(),
+        });
         super::super::state::remember_last_target(101, 202, -100);
 
-        let rows = test_build_target_choice_buttons(&config, 101, 202, MenuInputKind::Transfer);
+        let rows = test_build_target_choice_buttons(&config, 101, 202);
         let labels = rows
             .iter()
             .flatten()
@@ -542,10 +430,83 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(labels.contains(&"上次目标"));
+        assert!(!labels.contains(&"默认目标"));
+    }
+
+    // 默认目标和当前私聊相同时只保留一个入口。
+    #[test]
+    fn test_build_target_choice_buttons_deduplicates_private_default() {
+        let _guard = lock_target_runtime_tests();
+        let config = BotConfig::default();
+        install_target_runtime(crate::config::TargetsConfig {
+            default_chat_id: 61001,
+            aliases: std::collections::HashMap::from([
+                ("same-private".to_owned(), 61001),
+                ("archive".to_owned(), -200),
+            ]),
+        });
+
+        let rows = test_build_target_choice_buttons(&config, 61001, 62001);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
         assert_eq!(
-            labels.iter().filter(|label| **label == "快速转存").count(),
-            0
+            labels.iter().filter(|label| **label == "当前私聊").count(),
+            1
         );
+        assert!(!labels.contains(&"same-private"));
+    }
+
+    // 上次目标就是当前私聊时不再追加同一目标的独立按钮。
+    #[test]
+    fn test_build_target_choice_buttons_deduplicates_private_last_target() {
+        let _guard = lock_target_runtime_tests();
+        let config = BotConfig::default();
+        install_target_runtime(crate::config::TargetsConfig {
+            default_chat_id: -100,
+            aliases: Default::default(),
+        });
+        super::super::state::remember_last_target(61001, 62001, 61001);
+
+        let rows = test_build_target_choice_buttons(&config, 61001, 62001);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels.iter().filter(|label| **label == "上次目标").count(),
+            1
+        );
+        assert!(!labels.contains(&"当前私聊"));
+    }
+
+    // 多个别名指向同一目标时，应稳定保留字典序靠前的别名。
+    #[test]
+    fn test_build_target_choice_buttons_deduplicates_aliases_after_sorting() {
+        let _guard = lock_target_runtime_tests();
+        let config = BotConfig::default();
+        install_target_runtime(crate::config::TargetsConfig {
+            default_chat_id: -100,
+            aliases: std::collections::HashMap::from([
+                ("z-backup".to_owned(), -200),
+                ("a-archive".to_owned(), -200),
+            ]),
+        });
+
+        let rows = test_build_target_choice_buttons(&config, 61001, 62001);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"a-archive"));
+        assert!(!labels.contains(&"z-backup"));
     }
 
     // 确认页第一行只放“执行”，降低误触取消或重选的概率。
@@ -558,33 +519,5 @@ mod tests {
         assert_eq!(rows[0][0].text, "执行");
         assert_eq!(rows[1][0].text, "重选目标");
         assert_eq!(rows[1][1].text, "取消");
-    }
-
-    // 目标选择卡片在回退或提示时应保留来源上下文，并额外显示说明。
-    #[test]
-    fn test_build_target_choice_text_with_detail_keeps_context() {
-        let text = build_target_choice_text_with_detail(
-            MenuInputKind::Transfer,
-            "https://t.me/c/1/2",
-            "当前没有默认目标，请选择其他目标。",
-        );
-
-        assert!(text.contains("选择转存目标"));
-        assert!(text.contains("来源：‹https://t.me/c/1/2›"));
-        assert!(text.contains("当前没有默认目标，请选择其他目标。"));
-    }
-
-    // 带提示的目标选择卡片也应保留“目标方式”与取消提示，避免回退时信息缩水。
-    #[test]
-    fn test_build_target_choice_text_with_detail_keeps_action_hints() {
-        let text = build_target_choice_text_with_detail(
-            MenuInputKind::Lookup,
-            "https://t.me/c/1/2",
-            "目标不可用，请重新选择。",
-        );
-
-        assert!(text.contains("■ 目标方式"));
-        assert!(text.contains("手动输入"));
-        assert!(text.contains("‹/cancel›"));
     }
 }

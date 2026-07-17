@@ -2,7 +2,6 @@
 // - 按业务域拆成多个子模块，便于后续 migration 继续增量扩展
 // - migration 文件只负责声明版本和调用这些 helper，避免把大量 DDL 塞进单个 migration 文件
 
-mod accounting;
 mod cache;
 mod menu;
 mod runtime_config;
@@ -16,7 +15,6 @@ pub(crate) async fn create_runtime_schema<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
 {
-    accounting::create(db).await?;
     transfer::create(db).await?;
     cache::create(db).await?;
     menu::create(db).await?;
@@ -33,7 +31,6 @@ where
     menu::drop(db).await?;
     cache::drop(db).await?;
     transfer::drop(db).await?;
-    accounting::drop(db).await?;
     Ok(())
 }
 

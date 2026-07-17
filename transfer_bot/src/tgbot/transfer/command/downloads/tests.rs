@@ -1,6 +1,5 @@
 // `/downloads` 的单元测试集中放在这里，避免入口文件继续膨胀。
 
-use super::super::common::CommandStyle;
 use super::super::common::format_bytes;
 use super::keyboard::{
     DownloadsCallbackAction, build_downloads_filter_callback_data, build_downloads_keyboard,
@@ -10,6 +9,7 @@ use super::keyboard::{
 use super::render::format_downloads_text;
 use super::types::{DownloadsArgs, DownloadsFilter, parse_downloads_args};
 use crate::tgbot::transfer::store;
+use base64::{Engine as _, engine::general_purpose};
 
 // `/downloads` 支持“纯 limit”和“filter + limit”两种模式。
 #[test]
@@ -117,14 +117,13 @@ fn test_format_downloads_text_for_empty() {
             page: 1,
         },
         0,
-        false,
     );
     assert!(text.contains("下载列表为空"));
 }
 
-// 管理员和普通用户应显示不同的范围说明，避免把全局语义误展示给普通用户。
+// 单所有者模式展示全部任务。
 #[test]
-fn test_format_downloads_text_scope_label_changes_by_role() {
+fn test_format_downloads_text_uses_global_scope() {
     let args = DownloadsArgs {
         filter: DownloadsFilter::All,
         limit: 8,
@@ -132,11 +131,8 @@ fn test_format_downloads_text_scope_label_changes_by_role() {
     };
     let page_items = [snapshot_with_status("running")];
 
-    let admin_text = format_downloads_text(&page_items, &args, 1, true);
-    let user_text = format_downloads_text(&page_items, &args, 1, false);
-
-    assert!(admin_text.contains("范围：管理员 / 全局"));
-    assert!(user_text.contains("范围：当前用户 / 自己"));
+    let text = format_downloads_text(&page_items, &args, 1);
+    assert!(text.contains("范围：所有任务"));
 }
 
 // 当前页存在任务时，应为每个任务生成详情按钮。
@@ -156,7 +152,7 @@ fn test_build_downloads_keyboard_has_job_detail_buttons() {
     ));
 }
 
-// 运行中任务在列表页应能直接暂停/停止，减少进入详情后二次点击。
+// 运行中任务在列表页应能暂停，并把停止导向确认页，减少误触。
 #[test]
 fn test_build_downloads_keyboard_has_running_job_controls() {
     let args = DownloadsArgs {
@@ -169,6 +165,8 @@ fn test_build_downloads_keyboard_has_running_job_controls() {
     assert_eq!(keyboard.rows[0][0].text, "详情 #1");
     assert_eq!(keyboard.rows[0][1].text, "暂停");
     assert_eq!(keyboard.rows[0][2].text, "停止");
+    assert_eq!(decoded_callback_data(&keyboard.rows[0][1]), "j:p:1");
+    assert_eq!(decoded_callback_data(&keyboard.rows[0][2]), "j:sc:1");
     assert!(matches!(
         keyboard.rows[0][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
@@ -179,7 +177,7 @@ fn test_build_downloads_keyboard_has_running_job_controls() {
     ));
 }
 
-// 暂停任务在列表页应能直接恢复或停止。
+// 暂停任务在列表页应能恢复，并把停止导向确认页。
 #[test]
 fn test_build_downloads_keyboard_has_paused_job_controls() {
     let args = DownloadsArgs {
@@ -192,6 +190,8 @@ fn test_build_downloads_keyboard_has_paused_job_controls() {
     assert_eq!(keyboard.rows[0][0].text, "详情 #1");
     assert_eq!(keyboard.rows[0][1].text, "恢复");
     assert_eq!(keyboard.rows[0][2].text, "停止");
+    assert_eq!(decoded_callback_data(&keyboard.rows[0][1]), "j:r:1");
+    assert_eq!(decoded_callback_data(&keyboard.rows[0][2]), "j:sc:1");
     assert!(matches!(
         keyboard.rows[0][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
@@ -259,11 +259,11 @@ fn test_format_bytes() {
 #[test]
 fn test_build_downloads_page_command() {
     assert_eq!(
-        build_downloads_page_command(DownloadsFilter::All, 8, 2, CommandStyle::Long),
+        build_downloads_page_command(DownloadsFilter::All, 8, 2),
         "/downloads 8 2"
     );
     assert_eq!(
-        build_downloads_page_command(DownloadsFilter::Downloading, 5, 3, CommandStyle::Long,),
+        build_downloads_page_command(DownloadsFilter::Downloading, 5, 3),
         "/downloads dl 5 3"
     );
 }
@@ -342,7 +342,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
         page: 1,
     };
     let keyboard = build_downloads_keyboard(&args, 3, &[]);
-    let next = &keyboard.rows[5][3];
+    let next = &keyboard.rows[5][1];
 
     let data = match &next.r#type {
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
@@ -374,8 +374,9 @@ fn test_build_downloads_keyboard_has_refresh_row() {
         keyboard.rows[4][2].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[5][0].text, "首页");
-    assert_eq!(keyboard.rows[5][4].text, "末页");
+    assert_eq!(keyboard.rows[5][0].text, "1/2");
+    assert_eq!(keyboard.rows[5][1].text, "下页");
+    assert_eq!(keyboard.rows[5][2].text, "末页");
 }
 
 // 主操作区中的筛选按钮仍保留多行，分页单独放在最后一行。
@@ -411,6 +412,45 @@ fn test_build_downloads_keyboard_has_filter_row() {
     assert_eq!(keyboard.rows[5][4].text, "末页");
 }
 
+// 边界页不展示只会刷新当前页的无效导航操作。
+#[test]
+fn test_build_downloads_keyboard_hides_unavailable_navigation() {
+    let first_page = DownloadsArgs {
+        filter: DownloadsFilter::All,
+        limit: 8,
+        page: 1,
+    };
+    let first_keyboard = build_downloads_keyboard(&first_page, 4, &[]);
+    assert_eq!(
+        first_keyboard.rows[5]
+            .iter()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1/4", "下页", "末页"]
+    );
+
+    let last_page = DownloadsArgs {
+        page: 4,
+        ..first_page
+    };
+    let last_keyboard = build_downloads_keyboard(&last_page, 4, &[]);
+    assert_eq!(
+        last_keyboard.rows[5]
+            .iter()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["首页", "上页", "4/4"]
+    );
+
+    let single_page = DownloadsArgs {
+        page: 1,
+        ..first_page
+    };
+    let single_keyboard = build_downloads_keyboard(&single_page, 1, &[]);
+    assert_eq!(single_keyboard.rows[5].len(), 1);
+    assert_eq!(single_keyboard.rows[5][0].text, "1/1");
+}
+
 // 构造最小任务快照，专门用于筛选器测试。
 fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
     let now = store::now_utc8();
@@ -436,4 +476,11 @@ fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
         active_download_total_bytes: 0,
         has_unknown_download_total: false,
     }
+}
+
+fn decoded_callback_data(button: &tdlib_rs::types::InlineKeyboardButton) -> String {
+    let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type else {
+        panic!("button must be callback");
+    };
+    String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap()
 }

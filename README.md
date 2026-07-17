@@ -6,10 +6,10 @@
 
 - 支持后台任务恢复，进程重启后继续未完成转存。
 - 支持文件下载去重和引用计数，避免重复下载同一媒体。
-- 支持进度卡片、任务列表、暂停/恢复/停止和历史查询。
+- 支持进度卡片、任务列表、暂停/恢复/停止和历史查询；按钮停止会先进入确认页。
 - 支持 bot 优先读取源，失败时回退到 user client。
 - 支持菜单输入草稿持久化，未完成交互可在重启后继续。
-- 支持管理员和普通用户权限隔离，普通用户按积分使用。
+- 采用单所有者私聊模式，仅处理 `owner_user_id` 本人的消息和按钮。
 
 ## 适用场景
 
@@ -23,9 +23,8 @@
 - `/menu` 卡片式入口，覆盖转存、查询、任务控制、配置、健康和缓存。
 - `/downloads` 查看任务列表、状态筛选、分页和真实下载进度。
 - `/lookup` 按源链接查询已成功转存结果。
-- `/job` 手动暂停、恢复、停止任务。
-- `/balance` 查看当前用户积分余额和积分流水。
-- `/points` 由管理员查看、查询流水、增加或扣减普通用户积分。
+- `/job` 手动暂停、恢复、停止任务；按钮入口的停止动作会二次确认。
+- `/targets` 管理默认目标和目标别名。
 - `/config` 动态调整已开放的转存运行时参数并写入数据库。
 - `/health` 查看运行健康、并发和缓存摘要。
 - `/cache` 查看文件缓存概览和分页明细。
@@ -73,7 +72,7 @@ $env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
 - `clients.user.tdlib.database_encryption_key`
 - `clients.bot.token`
 - `clients.bot.tdlib.database_encryption_key`
-- `access_control.bootstrap_admin_user_ids`
+- `owner_user_id`
 
 ### 3. 启动
 
@@ -88,14 +87,13 @@ cargo run -p transfer_bot -- -c config.json
 - `bot` client 会使用 `token` 登录。
 - 程序会自动执行数据库 migration；SQLite 文件库会自动创建运行目录。
 
-首次启动后，建议立刻用 bootstrap admin 私聊 bot 并打开 `/menu`，按下面顺序完成运行态初始化：
+首次启动后，用 `owner_user_id` 对应账号私聊 bot 并打开 `/menu`，按下面顺序完成运行态检查：
 
-1. `目标配置`：先配置默认目标、请求路由或目标别名。
-2. `访问控制`：决定谁能使用，以及允许写入哪些目标 chat。
-3. `计费配置`：决定是否扣分、初始积分和首页公告。
-4. `运行配置`：按需要调整并发、删除延迟、分页和菜单超时。
+1. `目标配置`：按需配置默认目标或目标别名；不配置时默认目标就是当前私聊。
+2. `运行配置`：按需要调整并发、删除延迟、分页和菜单超时。
+3. `运行健康`、`文件缓存`：确认后台任务和文件状态正常。
 
-在 `targets` 和 `acl` 还未初始化前，不建议对普通用户开放 `/transfer`、`/menu` 等入口。
+`targets` 是可选运行态配置；不设置默认目标时，快速转存会回落到当前私聊。
 
 ## GitHub Actions
 
@@ -154,27 +152,25 @@ cargo run -p transfer_bot -- -c config.json
 - `storage`：业务数据库位置，保存任务、缓存、恢复和菜单草稿。
 - `clients.user` / `clients.bot`：两个 Telegram client 的本地目录和登录方式。
 - `workflow`：上传使用哪个 client。
-- `access_control.bootstrap_admin_user_ids`：文件兜底管理员。其余访问控制名单放在数据库，通过 `/acl` 或菜单管理。
-- 运行参数、目标配置、计费配置都以数据库为准，通过 `/config`、`/targets`、`/billing` 或菜单管理。
+- `owner_user_id`：唯一允许与 bot 交互的 Telegram 用户 ID。
+- 运行参数和目标配置以数据库为准，通过 `/config`、`/targets` 或菜单管理。
 
 ### 关键字段
 
 | 字段 | 说明 |
 | --- | --- |
 | `config_version` | 当前配置版本，现为 `2` |
+| `owner_user_id` | 唯一所有者用户 ID；必须大于 `0` |
 | `storage.database_url` | 业务数据库连接串，支持 `sqlite://...`、`postgres://...`、`postgresql://...` |
 | `clients.user.login_info` | user 登录方式，支持 `OCR`、`PHONE` |
 | `clients.bot.token` | BotFather 生成的 bot token |
 | `workflow.upload_client` | 上传使用 `bot` 或 `user` |
-| `access_control.bootstrap_admin_user_ids` | 文件兜底管理员用户 ID；数据库 ACL 异常或为空时仍可进入管理命令 |
 
 以下字段不再建议写入 `config.json`，运行时以数据库为准：
 
 | 数据库配置 | 管理方式 |
 | --- | --- |
-| 管理员、普通用户、黑名单、目标白名单 | `/acl show`、`/acl ...` 或菜单“管理 -> 访问控制” |
-| 默认目标、请求路由、目标别名 | `/targets show`、`/targets ...` 或菜单“管理 -> 目标配置” |
-| 积分计费与首页公告 | `/billing show`、`/billing ...` 或菜单“管理 -> 计费配置” |
+| 默认目标、目标别名 | `/targets show`、`/targets ...` 或菜单“管理 -> 目标配置” |
 | 并发、文件清理、分页、菜单输入超时 | `/config show`、`/config ...` 或菜单“管理 -> 运行配置” |
 
 ### 推荐 workflow
@@ -197,41 +193,28 @@ cargo run -p transfer_bot -- -c config.json
 
 重复转存的业务语义固定是 `source_link + target_chat_id`，不区分上传端。
 
-### 访问控制与目标解析
+### 所有者边界与目标解析
 
-命令是否会被处理，取决于发送者身份：
+只有同时满足以下条件的交互才会被处理：
 
-- admin：`sender_user_id` 必须在 `access_control.admin_user_ids` 中；也只能私聊 bot 操作，群聊命令会被拒绝。
-- 普通用户：只能私聊 bot；必须在 `access_control.allowed_user_ids` 中，或开启 `allow_all_private_users`。
-- banned：只要命中 `access_control.banned_user_ids` 就直接拒绝。
+- `chat_id == sender_user_id`
+- `sender_user_id == owner_user_id`
+
+也就是说，项目只接受所有者本人的 bot 私聊；群聊、频道和其他用户消息均忽略。
 
 交互边界：
 
 - 本项目不支持在群聊里发命令或点击交互按钮。
 - 目标群只作为转存目的地出现，需要在私聊菜单里选择或通过命令参数指定。
-- `KeyboardButtonRequestChat` 只在私聊 bot 的选择目标流程中使用。
+- 目标选择只使用 inline 按钮、已有别名或手动输入 private chat ID。
 
-权限边界：
-
-- admin 通过私聊 bot 查看和控制全局任务，不扣积分，可使用 `user` fallback。
-- 普通用户只能查看和控制自己的任务，重复转存和 lookup 也只复用自己的结果。
-- 普通用户通过链接转存时不允许借 `user` 账号 fallback 读取私有源，避免越权读取。
-- 普通用户在 spider 成功后、创建 job 前扣积分；无效链接不会扣费。
-- 任务全部失败或用户停止时会全额退回本次扣费；部分成功会按失败条目占比退回本次扣费。
-
-普通用户常见失败会显示可执行提示：
-
-- 余额不足：提示查看 `/balance` 和 `/balance history`，并联系管理员加分。
-- 目标不可用：提示目标不在 `allowed_target_chat_ids`，需要换目标或让管理员更新白名单。
-- 源不可访问：提示 bot 无法读取源消息；普通用户不能借 `user` fallback，应转发源消息给 bot 或让 bot 加入源聊天。
+所有者可查看和控制数据库中的全部任务。链接源优先由 bot 读取；bot 无法读取或准备文件时，会尝试 TDLib `user` client fallback。
 
 `/transfer` 未显式传目标时，目标 chat 的解析顺序是：
 
 1. 命令参数里显式给出的数字 chat ID 或 `targets.aliases` 别名。
-2. `targets.by_request_chat_id[request_chat_id]`。
-3. `targets.default_chat_id`。
-
-如果配置了 `access_control.allowed_target_chat_ids`，那么无论目标来自显式参数、别名还是默认映射，最终都必须命中白名单。
+2. `targets.default_chat_id`。
+3. 未配置默认目标时回落到当前所有者私聊。
 
 ### 本地状态文件
 
@@ -245,28 +228,18 @@ cargo run -p transfer_bot -- -c config.json
 
 ## 常用命令
 
-普通用户建议只开放下面这组命令：
+所有命令仅对 `owner_user_id` 开放：
 
 | 命令 | 作用 |
 | --- | --- |
 | `/help [command]` | 查看命令目录或单个命令帮助 |
 | `/menu` | 打开交互菜单 |
-| `/transfer [link] [target]` | 创建转存任务或进入向导；不填 `target` 时使用管理员预配置目标 |
+| `/transfer [link] [target]` | 创建转存任务或进入向导；不填 `target` 时使用预配置目标 |
 | `/lookup <link> [target]` | 查询历史成功转存结果 |
-| `/downloads [filter] [limit] [page]` | 查看自己的任务列表和下载进度 |
-| `/job <pause|resume|stop|status> <job_id>` | 控制自己的任务 |
-| `/balance` | 查看当前用户积分余额 |
-| `/balance history [limit] [page]` | 查看当前用户积分流水 |
-
-管理员额外可用：
-
-| 命令 | 作用 |
-| --- | --- |
-| `/points <show|history|add|sub> <user_id> [amount|limit] [reason|page]` | 管理员查看、查询流水或调整用户积分 |
+| `/downloads [filter] [limit] [page]` | 查看全部任务列表和下载进度 |
+| `/job <pause|resume|stop|status> <job_id>` | 控制任务 |
 | `/config [show|reset|set <key> <value>]` | 查看、重置或调整已开放的运行时参数 |
-| `/targets [show|reset|set-default|set-route|del-route|set-alias|del-alias]` | 管理默认目标、请求路由和目标别名 |
-| `/acl [show|...]` | 管理管理员、普通用户、黑名单和白名单 |
-| `/billing [show|set|clear announcement_text]` | 管理积分计费与首页公告 |
+| `/targets [show|reset|set-default|set-alias|del-alias]` | 管理默认目标和目标别名 |
 | `/health` | 查看健康状态、并发和缓存摘要 |
 | `/cache [summary|page] [limit] [page]` | 查看文件缓存 |
 
@@ -320,13 +293,10 @@ cargo run -p transfer_bot -- -c config.json
 /menu
 -> 首页显示运行摘要
 -> 如果存在未完成输入，首页顶部显示“继续输入 / 取消输入”
--> 普通用户：首页 -> 任务 / 账户 / 帮助
--> 普通用户：转存、查询、下载列表、任务控制都只作用于自己的任务
--> 管理员额外看到：管理
--> 管理员：运行配置 / 目标配置 / 访问控制 / 计费配置 / 运行健康 / 文件缓存 / 用户流水
+-> 首页：开始转存 / 快速转存
+-> 导航：任务 / 管理 / 帮助
+-> 管理：运行配置 / 目标配置 / 运行健康 / 文件缓存
 ```
-
-admin 首页的“用户流水”会先让你回复 Telegram user_id，再打开该用户的积分流水卡片。
 
 当前转存向导是 3 步：
 
@@ -336,38 +306,26 @@ admin 首页的“用户流水”会先让你回复 Telegram user_id，再打开
 3/3 确认执行
 ```
 
-`快速转存` 和 `快速查询` 会优先使用默认目标；如果当前请求 chat 或全局没有默认目标，会自动退回普通“选择目标 -> 确认”流程。
-
-这里的“当前请求 chat 默认目标”在 bot 私聊模式下，基本就等价于“当前用户自己的默认目标”。如果你想给不同用户不同默认目标，优先配置 `targets.by_request_chat_id`，不需要额外引入新的按用户字段。
+`快速转存` 和 `快速查询` 会优先使用默认目标；如果没有显式默认目标，会直接回落到当前私聊。
 
 运行态管理页也支持按钮进入输入流：
 
 ```text
 /menu
 -> 管理
--> 目标配置 / 访问控制 / 计费配置 / 运行配置
+-> 目标配置 / 运行配置 / 运行健康 / 文件缓存
 ```
 
-其中四页的输入式流程如下：
+其中两个配置页支持输入式流程：
 
 ```text
 目标配置
 - 刷新 / 重置默认 / 恢复私聊默认：直接 callback 执行
 - 设默认：回复目标 private chat_id
-- 设路由：回复 request_chat_id target_chat_id
-- 设别名：回复 alias target_chat_id
-- 现有路由 / 现有别名：先点进详情，再改目标 / 设默认 / 删除
-
-访问控制
-- 开放/关闭任意私聊、刷新、重置默认：直接 callback 执行
-- 加管理员 / 删管理员 / 加用户 / 删用户 / 封禁 / 解封：回复 user_id
-- 加目标 / 删目标 / 加请求 / 删请求：回复 chat_id
-- 现有管理员 / 用户 / 黑名单 / 请求白名单 / 目标白名单：先点进详情，再删除
-
-计费配置
-- 可先点字段详情：计费开关 / 基础扣分 / 单项扣分 / 初始积分 / 公告
-- 详情页里可切换开关、微调数值、进入输入流或清空公告
-- 主页仍保留快捷微调和输入入口
+- 设路由：先回复 request_chat_id，再回复 target_chat_id
+- 设别名：先回复 alias，再回复 target_chat_id
+- 现有路由 / 现有别名：先点编号进入详情，再改目标 / 设默认 / 删除
+- 别名搜索：先输入关键字，再在搜索结果里点编号进入详情
 
 运行配置
 - 可先点字段详情：并发 / 删除 / GC / 进度 / 分页 / 超时
@@ -384,22 +342,20 @@ admin 首页的“用户流水”会先让你回复 Telegram user_id，再打开
 - 中途发送其他命令时，命令优先
 ```
 
-四个运行态管理页当前统一按钮层级为：
+两个运行态配置页统一按钮层级为：
 
 ```text
 1. 主操作
-2. 输入/调整
+2. 详情 / 输入
 3. 帮助 / 菜单
-4. 命令模板
+4. 命令模板 / 兜底复制
 ```
 
-这四页当前内部也已经统一成“规格表驱动”：
+两个配置页内部使用规格表驱动：
 
 ```text
 /config  -> ConfigFieldSpec
 /targets -> TargetsInputSpec
-/acl     -> AclInputSpec
-/billing -> BillingNumericSpec + BillingAnnouncementSpec
 ```
 
 也就是说，以下信息不再散落在多处手写维护：
@@ -408,30 +364,25 @@ admin 首页的“用户流水”会先让你回复 Telegram user_id，再打开
 - 按钮文案
 - ForceReply 标题、说明、placeholder
 - 示例命令
-- help 复制按钮
+- help 交互入口
 - 管理输入最终要复用的原始命令
 
-菜单输入分发现在也不再在主流程里硬编码四套 action 列表，而是先按规格反查所属命令模块，再统一分发到原命令入口。
+菜单输入分发按规格反查所属命令模块，再统一分发到原命令入口。
+
+`/help` 体系只负责导航和说明。详情页优先使用真实 callback / 输入流；命令示例仍在正文中展示。
 
 首启初始化与清库后重配建议按这个顺序执行：
 
 ```text
 1. 启动程序，等待 bot 和 user 都登录完成。
-2. 如果数据库里还没有目标配置，bootstrap admin 会收到“初始化引导”卡片。
-3. 先进入 目标配置：
-   - 至少设置一个 default_chat_id，或配置常用 alias。
-4. 再进入 访问控制：
-   - 决定是否开放任意私聊
-   - 或添加允许用户 / 允许目标 / 允许请求 chat
-5. 再进入 计费配置：
-   - 决定是否启用计费
-   - 视需要调整基础扣分、单项扣分、新用户积分、首页公告
-6. 最后进入 运行配置：
+2. 使用 `owner_user_id` 对应账号私聊 bot。
+3. 进入 目标配置：
+   - 默认目标和别名都是可选项
+   - 不配置默认目标时，转存目标默认回落到当前私聊
+4. 进入 运行配置：
    - 检查并发、文件删除延迟、GC 间隔、进度刷新、分页大小、菜单超时
-7. 配完后可发送：
+5. 配完后可发送：
    - /targets show
-   - /acl show
-   - /billing show
    - /config show
    逐项确认数据库运行态是否符合预期。
 ```
@@ -439,10 +390,10 @@ admin 首页的“用户流水”会先让你回复 Telegram user_id，再打开
 如果你删除了业务数据库但保留了 `tg/user`、`tg/bot` 的 TDLib 数据目录，重新启动后的恢复方式也是同一套：
 
 ```text
-1. 保留 config.json 中的 access_control.bootstrap_admin_user_ids。
+1. 保留 config.json 中的 `owner_user_id`。
 2. 重新启动程序。
-3. 根据初始化引导重新配置 targets / acl / billing / config。
-4. 旧任务、积分、缓存和运行态配置会丢失；TDLib 登录态和本地媒体目录仍保留。
+3. 按需重新配置 targets / config。
+4. 旧任务、缓存和运行态配置会丢失；TDLib 登录态和本地媒体目录仍保留。
 5. 完成重配后再开始新的转存任务。
 ```
 
@@ -469,33 +420,20 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
 /job stop 123
 ```
 
-积分：
-
-```text
-/balance
-/balance history
-/balance history 10 2
-/points show 123456789
-/points history 123456789 10 1
-/points add 123456789 10 admin_adjust
-/points sub 123456789 10 admin_adjust
-```
-
-积分流水卡片支持 `首页 / 上页 / 下页 / 末页 / 刷新 / 返回 / 菜单`；当前页按钮保留命令复制入口，方便手动排查。
-
 ## 运行机制
 
 ### 用户视角
 
-1. 用户发送 `/transfer`、菜单指令，或回复一条 bot 可见媒体。
+1. 所有者发送 `/transfer`、菜单指令，或回复一条 bot 可见媒体。
 2. 机器人立即回复一张进度卡片。
 3. 后台解析源消息，识别单条或相册。
-4. 普通用户按 `billing` 配置扣积分；admin 不扣积分。
-5. 任务和子项先写入数据库，再开始下载和上传。
-6. 进度卡片通过编辑同一条消息持续更新。
-7. 完成、失败或停止后，结果和状态会持久化；全部失败或停止会幂等全额退款，部分成功会按失败条目占比退款。
-8. 文件引用归零后进入延迟删除队列。
-9. 程序重启后自动恢复未完成任务。
+4. 任务和子项先写入数据库，再开始下载和上传。
+5. 进度卡片通过编辑同一条消息持续更新。
+6. 完成、失败或停止后，结果和状态会持久化。
+7. 文件引用归零后进入延迟删除队列。
+8. 程序重启后自动恢复未完成任务。
+
+任务详情、下载列表、最近任务和 lookup 命中运行任务时，`停止` 按钮只会打开确认卡片；确认卡片里的 `确认停止` 才会执行真实停止。旧消息里已经存在的停止 callback 仍然兼容，不会因为协议更新失效。
 
 ### 内部设计要点
 
@@ -503,8 +441,6 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
 - `transfer_job` 表示一次转存请求，`transfer_item` 表示任务中的单个源消息。
 - `file_cache` 负责文件去重、引用计数和延迟删除。
 - `transfer_result_message` 保存一个任务可能对应的多个结果入口。
-- `user_account` 保存用户角色和积分余额。
-- `point_ledger` 保存积分增加、扣减和退款流水。
 - 创建阶段按 `source_link + target_chat_id` 做业务去重。
 - 同一条命令按 `request_chat_id + request_message_id` 做幂等保护。
 
@@ -523,7 +459,7 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
    看菜单输入主流程：
    - 草稿读取
    - ForceReply 继续输入
-   - admin 输入分发
+   - 管理输入分发
 
 4. transfer_bot/src/tgbot/transfer/command/menu/input/state.rs
    看菜单草稿状态、AdminInputAction、持久化编码和恢复逻辑。
@@ -535,15 +471,13 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
 
 6. transfer_bot/src/tgbot/transfer/command/config_cmd.rs
    transfer_bot/src/tgbot/transfer/command/targets.rs
-   transfer_bot/src/tgbot/transfer/command/acl.rs
-   transfer_bot/src/tgbot/transfer/command/billing.rs
-   看四个运行态管理页各自的业务读写和按钮布局。
+   看两个运行态配置页各自的业务读写和按钮布局。
 
 7. transfer_bot/src/tgbot/transfer/command/common.rs
-   看四页共用的标题、错误卡片、导航行、help descriptor 和复制按钮 helper。
+   看配置页共用的标题、错误卡片、导航行和 help descriptor。
 ```
 
-当前四个运行态管理页的共通设计是：
+当前运行态配置页的共通设计是：
 
 ```text
 命令入口 -> callback/按钮 -> 规格表 -> 菜单输入草稿 -> 原命令复用
@@ -579,12 +513,10 @@ cargo run -p transfer_bot -- -c config.json
 | `starting transfer background services` | 恢复和 GC 后台服务已启动 |
 | `ensuring runtime database schema` | 启动期正在按当前数据库方言执行业务 migration |
 | `runtime database schema ready` | 业务库 migration 已完成 |
-| `runtime database state loaded` | 四类运行态配置已从数据库加载或 seed 完成 |
+| `runtime database state loaded` | 转存与目标运行态配置已从数据库加载或 seed 完成 |
 | `ignored historical message` | 启动前历史消息被过滤 |
-| `ignored non-admin message` | 不在访问控制范围内的消息被忽略 |
+| `ignored non-owner message` | 非所有者消息被忽略 |
 | `bot command received` | bot 收到并准备处理命令 |
-| `transfer points charged` | 普通用户转存已扣积分 |
-| `transfer points refunded` | 失败或停止任务已退回积分 |
 | `transfer background task queued` | 新转存任务已入队 |
 | `transfer job execution started` | 开始执行下载/上传 |
 | `tdlib receive loop exited with error` | 主接收循环异常退出 |
@@ -613,8 +545,7 @@ postgresql://user:pass@127.0.0.1:5432/transfer
 
 程序启动时会执行 SeaORM migration，后续表结构升级走版本化迁移。当前已包含初始 schema migration 和一个针对成功结果复用查询的增量索引 migration。
 运行时调参使用数据库中的 `transfer_runtime_config` 单行配置表；`config.json` 不再保存这些可变运行参数。
-`billing` 使用 `billing_runtime_config` 单行配置表；`targets` 使用 `transfer_target_config`、`transfer_target_route` 和 `transfer_target_alias` 三张表；`access_control` 使用 `access_control_runtime_config` 和多张名单表。
-根管理员兜底通过文件中的 `access_control.bootstrap_admin_user_ids` 保留，运行时会与数据库里的管理员列表合并。
+`targets` 使用 `transfer_target_config` 和 `transfer_target_alias` 两张表。旧数据库中的 `transfer_target_route` 历史表不会自动删除，但运行时不再读写，新数据库也不再创建。
 
 真实启动链会按这个顺序处理业务数据库：
 
@@ -622,12 +553,10 @@ postgresql://user:pass@127.0.0.1:5432/transfer
 1. init_database_url
 2. ensure_runtime_schema
 3. ensure_transfer_runtime_config
-4. ensure_billing_runtime_config
-5. ensure_targets_runtime_config
-6. ensure_access_control_runtime_config
+4. ensure_targets_runtime_config
 ```
 
-也就是说，PostgreSQL 路径现在验证的不只是“表能建出来”，还包括四类运行态配置是否真的能完成首次 seed 与回读。
+PostgreSQL 路径同时验证表结构以及转存、目标运行态配置的首次 seed 与回读。
 
 PostgreSQL 注意点：
 
@@ -647,8 +576,6 @@ PostgreSQL 注意点：
 - `transfer_result_message`：结果入口记录。
 - `file_cache`：文件缓存、引用计数、删除状态。
 - `menu_input_draft`：菜单输入草稿和超时信息。
-- `user_account`：用户角色、余额和累计增加/消费。
-- `point_ledger`：积分流水和扣费幂等键。
 
 TDLib 的 `tg/user/db`、`tg/bot/db` 是 Telegram client 自身状态库，不等同于业务库。
 
@@ -666,9 +593,6 @@ TDLib 的 `tg/user/db`、`tg/bot/db` 是 Telegram client 自身状态库，不�
 - `transfer_bot/src/tgbot/error.rs`：命令错误提示、权限拒绝和自动转存引导卡片。
 - `transfer_bot/src/tgbot/send/error.rs`：统一交互错误卡片。
 - `transfer_bot/src/tgbot/transfer/command/transfer_cmd.rs`：`/transfer` 入口和参数解析。
-- `transfer_bot/src/tgbot/transfer/command/points.rs`：`/balance` 与 `/points` 命令入口。
-- `transfer_bot/src/tgbot/transfer/command/points/render.rs`：积分余额、积分流水卡片和分页按钮渲染。
-- `transfer_bot/src/tgbot/transfer/command/points/callback.rs`：积分流水翻页和刷新 callback。
 - `transfer_bot/src/tgbot/transfer/spawn.rs`：后台任务派发和进度卡片生命周期。
 - `transfer_bot/src/tgbot/transfer/workflow/start.rs`：复用、恢复、新建任务的决策层。
 - `transfer_bot/src/tgbot/transfer/workflow/runner.rs`：下载、准备、上传和终态写入的核心执行器。
@@ -701,7 +625,6 @@ main
 - `workflow::transfer`、`resume_one_job` 和 `runner` 入口现在也已显式接收 `AppContext`，为后续继续下推到执行细节做准备。
 - `health` / `observability` 这条只读查询链已经开始直接从 `AppContext` 读取运行时配置和活跃任务计数。
 - 交互层也开始收口状态语义：任务状态到“列表入口/按钮文案/可用控制”的映射正逐步统一，避免菜单、下载列表、任务详情和进度卡片各自编码一套规则。
-- `/balance` 与 `/points` 已按命令入口、流水渲染、callback 处理拆分，避免积分命令继续堆成单个大文件。
 - 恢复链路新增专项测试，覆盖 source-target 复用、重复活跃任务、同请求幂等取消和恢复扫描边界。
 
 这轮重构的业务目标不是改功能，而是先降低后续优化和测试演进的耦合成本。
@@ -736,7 +659,7 @@ cargo test -p transfer_bot test_postgres_migration_and_insert_when_env_is_presen
 
 这条测试会：
 - 创建独立测试 schema
-- 走真实启动数据库链（migration + 四类运行态 seed）
+- 走真实启动数据库链（migration + 两类运行态 seed）
 - 探测关键列
 - 做一次最小插入
 - 最后自动删除该 schema
@@ -744,7 +667,7 @@ cargo test -p transfer_bot test_postgres_migration_and_insert_when_env_is_presen
 最近一次完整验证结果：
 
 - `cargo check -p transfer_bot` 通过
-- `cargo test -p transfer_bot` 通过，`406 passed`
+- `cargo test -p transfer_bot` 通过，`381 passed`
 - `cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 通过
 
 注意：运行测试会重新生成 `transfer_bot/db.test.sqlite`。如果希望工作区里不保留业务数据库，测试结束后需要手动删除它。

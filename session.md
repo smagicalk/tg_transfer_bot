@@ -10,6 +10,47 @@
 
 ## 当前状态
 
+记录日期：2026-07-17
+
+当前项目已经切换为单所有者模式：
+
+- `config.json` 顶层使用单个必填 `owner_user_id`。
+- 仅处理 `chat_id == sender_user_id == owner_user_id` 的 bot 私聊。
+- TDLib `user` client 保留，只用于 bot 无法读取私有源时 fallback，不是交互用户。
+- 普通使用者、多用户角色、ACL、积分、计费、账户余额和流水代码已经删除。
+- 旧数据库不会自动 `DROP` 历史表；运行时代码不再读取旧表，新数据库也不再创建旧表。
+- `transfer_job.owner_user_id` 仅作为审计字段保留，不再参与任务权限过滤。
+- `/menu` 首页为：`快速转存 / 指定目标 / 任务 / 管理 / 帮助`。
+- 管理页仅保留：`运行配置 / 目标配置 / 运行健康 / 文件缓存`。
+- Bot 命令仅保留 `menu / transfer / lookup / downloads / job / config / health / cache / help`。
+- 单所有者模式下不可达的请求 chat 路由已经删除；目标配置只保留默认目标和别名。
+- 菜单旧选聊 callback、`ChatPicker` 草稿状态和共享选聊处理链已经删除。
+- 配置只暴露真实可变的 `workflow.upload_client`；交互固定 bot，源读取固定 bot-first + user fallback。
+- 未使用的 `utils::retry` 与纯转发 `menu/input/callbacks.rs` 已删除。
+- 目标别名普通列表和搜索列表共用 `AliasListContext`，查看、删除、设默认不再各维护两套动作。
+- 用户可见命令统一为完整命令，下载页不再维护或展示短命令兼容形式。
+- 下载列表分页只显示当前可用的方向按钮；首页、末页和单页不再提供等价于刷新的无效导航操作。
+- 手动输入目标的等待卡片支持返回目标选择，并保留原来源链接，不再需要取消后重走整个向导。
+- 重复的转存中转页已经删除；帮助页可直接开始转存，历史 `m:t` 按钮也会兼容启动新向导。
+- 快速转存/查询的来源输入显示为单步 `1/1`；指定目标流程仍为三步，继续输入和错误重试保持一致。
+- 默认目标未配置时固定回落当前私聊；不可达的“默认目标缺失”回退分支已删除。
+- 手动目标输入、继续输入和错误重试统一回显来源链接，旧 inline 等待卡也保留当前来源上下文。
+- 目标选择页始终提供当前私聊；上次目标、默认目标、当前私聊和别名按 chat_id 去重，重复别名稳定保留字典序靠前项。
+- 目标 callback 已删除不读取白名单的伪校验和无用 `app/config` 参数；默认目标回落当前私聊时，按钮提示同步显示“已选择当前私聊”。
+
+当前验证基线：
+
+```text
+cargo test -p transfer_bot
+369 passed; 0 failed
+```
+
+交付检查已完成：`cargo fmt --all -- --check`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings`、`git diff --check` 以及编码/BOM 检查均通过。
+
+## 历史记录（2026-06 多用户版本，已失效）
+
+以下内容仅用于理解历史演进，不代表当前接口、命令、schema 或交互行为。当前行为以本文件顶部检查点和 `README.md` 为准。
+
 记录日期：2026-06-14
 
 更新记录：2026-06-16
@@ -21,7 +62,7 @@
 
 更新记录：2026-06-17
 
-- 启动后若数据库里还没有目标配置，或 ACL 仍是空库默认状态，会向 `bootstrap_admin_user_ids` 发送“初始化引导”卡片。
+- 启动后若 ACL 仍是空库默认状态，会向 `bootstrap_admin_user_ids` 发送“初始化引导”卡片；`targets` 是可选配置，不再阻塞菜单使用。
 - `targets / acl / billing / config` 四页已升级为完整输入式管理流：按钮可直接进入 ForceReply，回复参数后复用原命令写库。
 - `config` 也已补成输入式编辑流，不再只靠 `-1/+1` 调整；现支持按钮进入：
   - 设并发
@@ -93,12 +134,12 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - `menu.rs` 测试里已补入口高层计划层 `MenuCallbackPlan`，用于稳定描述 `/menu` callback 的最终意图，而不直接绑定 TDLib 发送细节。
 - “继续输入为空”和“继续输入过期”现在都有独立文案构造函数，交互闭环的终态提示已统一成恢复态/空态，而不是继续复用等待态。
 - `workflow/recovery.rs` 已补“何时应该发送恢复摘要”测试，明确它只服务于转存任务恢复，不包含菜单草稿这种懒恢复状态。
-- `flow_callbacks.rs` 已补共享选群和目标文本输入的纯决策锚点：`SharedChatOutcome`、`TargetInputOutcome`，并把共享选群主流程接回这些高层分支。
-- 交互文案继续统一：共享选群失败的“目标不可用”提示已抽成单点，首页/继续输入的空态提示也继续向统一卡片语言收敛。
-- `flow_callbacks.rs` 已继续补 `SourceLinkOutcome`，把“源链接非法 / 默认目标缺失 / 进入目标选择 / 直接走默认目标执行”统一成高层动作。
-- `target.rs` 已支持带附加说明的目标选择卡片，默认目标缺失与共享选群失败回退现在会保留来源上下文并回到同一种目标选择视图。
+- `flow_callbacks.rs` 已补共享选聊和目标文本输入的纯决策锚点：`SharedChatOutcome`、`TargetInputOutcome`，并把旧选聊兼容主流程接回这些高层分支。
+- 交互文案继续统一：旧选聊目标失败的“目标不可用”提示已抽成单点，首页/继续输入的空态提示也继续向统一卡片语言收敛。
+- `flow_callbacks.rs` 已继续补 `SourceLinkOutcome`，把“源链接非法 / 默认目标不可用 / 进入目标选择 / 直接走默认目标执行”统一成高层动作。
+- `target.rs` 已支持带附加说明的目标选择卡片，默认目标不可用与旧选聊失败回退现在会保留来源上下文并回到同一种目标选择视图。
 - `menu/text.rs` 已补统一的 `build_menu_target_unavailable_text` 与 `build_menu_no_pending_input_text`，目标不可用和无未完成输入都收口到统一终态卡片语言。
-- `flow_callbacks.rs` 已补共享选群 ignored/wrong-step 边界测试，以及默认目标缺失回退路径的高层动作测试；目标选择链路的交互回退语义现在更稳。
+- `flow_callbacks.rs` 已补旧选聊 ignored/wrong-step 边界测试，以及默认目标不可用回退路径的高层动作测试；目标选择链路的交互回退语义现在更稳。
 - `flow_callbacks.rs` 已继续收口成更统一的“阶段动作 -> UI 动作”模型：`SourceLinkOutcome`、`TargetInputOutcome`、`SharedChatOutcome` 现在都会进一步映射到统一的 `FlowUiAction`。
 - 当前 `flow_callbacks.rs` 的角色已经更接近纯编排层：先决定动作，再执行 UI；后续如果还要继续优化交互，这里已经是稳定的继续演进点。
 - 跨交互页的页头/命令分区/空态说明 helper 已下沉到 `command/common.rs`，`downloads`、`cache`、`points` 三页已开始统一到同一套“ready + 命令 + 空态”风格。
@@ -133,10 +174,12 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
   - `targets / acl / billing / transfer runtime config` 以数据库运行态为准，不再要求先写入文件
 - README 已补首启建议：
   1. 先用 bootstrap admin 私聊 bot 打开 `/menu`
-  2. 先配 `targets`
-  3. 再配 `acl`
+  2. 先确认 `acl` 的普通用户入口策略和目标白名单
+  3. 再按需配置 `targets`
   4. 最后按需调 `billing / config`
-- 现在已明确：在 `targets` 和 `acl` 仍未初始化前，不建议对普通用户开放 `/transfer`、`/menu` 等入口。
+- 现在已明确：`targets` 可选，不配置时默认目标回落到当前私聊；普通用户开放前主要检查 `acl` 策略。
+- `targets` 列表页已继续收紧为“先选对象，再选动作”：路由列表和别名列表只显示编号按钮，进入详情后再改目标、设默认或删除；详情页返回会回到来源列表或来源搜索结果。
+- `acl` 列表页也已收紧为同一套“编号 -> 详情 -> 删除/解除”流程：管理员、允许用户、封禁、目标白名单和请求白名单列表不再直接显示 `删1`，详情页返回会回到来源列表。
 - `help transfer / lookup / downloads / job / menu` 与菜单各页文案已补上权限边界：
   - 普通用户只看自己的任务
   - 普通用户只查自己的结果
@@ -150,22 +193,29 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
   - `cargo fmt --all`
   - `cargo test -p transfer_bot`
   - `cargo check -p transfer_bot`
-  - 当前测试数：`407 passed`
+  - `cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings`
+  - 当前测试数：`460 passed`
 - 本轮继续完成第二批交互页统一：
-  - `cache` 现已统一为“视图主操作 -> 刷新/返回/菜单 -> 复制当前命令 -> 分页单独一行”。
+  - `cache` 现已统一为“视图主操作 -> 刷新/健康/菜单 -> 分页单独一行”，常规按钮区不再保留复制命令。
   - `points` 流水页现已统一为“分页主操作 -> 刷新/返回/菜单 -> 复制当前命令 -> 复制余额”，admin 返回按钮会安全降级为复制 `/points show <user_id>`。
-  - `health` 现已统一为“主操作 -> 刷新/帮助/菜单 -> 复制 /health”。
-  - `help detail` 现已把复制类按钮尽量收成单独一行，并统一“返回目录 / 菜单”导航行。
+  - `health` 现已统一为“主操作 -> 刷新/帮助/菜单”，常规按钮区不再保留复制 `/health`。
+  - `help detail` 现已统一成纯导航结构，按钮区只保留真实入口与“返回目录 / 菜单”。
 - 本轮继续把 `help index` 目录页彻底按同一套层级重排：
   - 主导航先放公开 help topic。
   - admin 专属 topic 独立成自己的主操作行，不再和复制按钮混排。
   - `刷新 / 帮助说明 / 菜单` 固定成单独导航行。
-  - 复制类命令统一沉到底部。
+  - `help` 目录页不再保留复制命令按钮，固定只保留 `刷新 / 帮助说明 / 菜单` 这一条 footer 导航。
 - 本轮继续收缩“非必要复制按钮”：
   - `tgbot/error.rs` 里的命令错误卡片已修正为“按钮文案和真实行为一致”，不再统一错误地跳菜单。
   - `menu` 中 `transfer / downloads / jobs / lookup` 这几页的模板复制按钮已删掉一批，改为优先使用现有交互入口。
   - `lookup`、转存进度卡片、成功结果卡片、失败卡片和中间状态卡片已继续收缩按钮区：能走 callback 的统一改成“查看任务详情 / 查看列表 / 菜单”，不再把“复制查询命令 / 复制重新转存”放在按钮区重复表达。
   - `transfer` 首次回执、`job pause` 结果卡片和启动恢复摘要也已收掉残留动作型复制按钮，改为直接 callback 导航；按钮区只保留源标识、`job_id` 这类排查数据复制。
+  - `help index` 已去掉 `/health`、`/config reset`、`/config show`、`/cache` 这类重复复制入口；这些页面都有真实 topic callback。
+  - `/help health` 与 `/help cache` 详情页也已去掉复制命令按钮，只保留打开页面、关联页面、返回目录和菜单。
+  - `/help job`、`/help downloads`、`/help points` 已去掉动作复制模板，按钮区只保留输入流或真实 callback，命令示例继续留在正文。
+  - `/help` 自身详情页以及 `/help config|targets|acl|billing` 也已改成纯导航，不再在按钮区额外挂 `复制 /help` 或 `复制 /config show` 这类 show 命令。
+  - `/help transfer` 与 `/help lookup` 也已去掉 `复制示例`，按钮区只保留真实交互入口，示例统一留在正文。
+  - 所有普通 UI 的 `停止` 按钮现在先发 `j:sc:<job_id>` 打开确认页；确认页里的 `确认停止` 才发旧的 `j:s:<job_id>` 真正停止，因此历史按钮仍兼容。
   - `menu/input.rs`、`menu/input/flow_callbacks.rs`、`menu/text.rs` 本轮继续把几处 `unreachable!` 风险改成可恢复分支：即使未来状态机分支意外漂移，也会回到“重问源链接 / 重问目标 / 返回菜单”这类恢复路径，而不是直接 panic。
   - 本轮继续清理“同页重复功能”按钮：
     - `menu/transfer` 页移除了与首行完全等价的 `指定目标 / 默认目标`。
@@ -200,7 +250,7 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - `transfer_bot/src/tgbot/send.rs` 现在只保留发送层入口转发，错误卡片排版细节已拆出。
 - `/balance` 与 `/points` 已拆成命令入口、流水渲染和 callback 子模块。
 - 新增恢复/查重专项测试：成功结果复用、重复活跃任务、同请求取消幂等、启动恢复扫描。
-- 最新验证：`cargo fmt --all -- --check`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 全部通过，`cargo test -p transfer_bot` 当前 `406 passed`。
+- 最新验证：`cargo fmt --all`、`cargo check -p transfer_bot`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 全部通过，`cargo test -p transfer_bot` 当前 `460 passed`。
 - 最新补充验证：
   - `cargo test -p transfer_bot db::tests -- --nocapture` 通过，当前 `8 passed`
   - `cargo test -p transfer_bot billing::tests -- --nocapture` 通过
@@ -306,7 +356,7 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - admin 只能私聊 bot 交互，可全局查看和控制任务，不扣积分，可使用 user fallback。
 - 普通用户只能私聊 bot，只能查看和控制自己的任务，链接源不允许借 user fallback。
 - 普通用户对外建议只开放 `/help /menu /transfer /lookup /downloads /job /balance`。
-- `targets` 和 `acl` 没完成初始化前，不建议对普通用户开放转存入口。
+- `targets` 不再要求初始化；普通用户开放前主要确认 `acl` 的入口策略和目标白名单。
 - 普通用户转存按 `billing.base_cost_points + billing.item_cost_points * item_count` 扣积分。
 - 扣费发生在 spider 成功后、创建 job 前；无效链接不会扣费。
 - 积分账本使用 `request_chat_id + request_message_id` 生成幂等键，防止同一命令重复扣费。
@@ -335,7 +385,7 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 - 直达动作：`开始转存`、`快速转存`、`快速查询`
 - 状态直达：`运行任务`、`失败任务`、`已暂停`
 - 其他入口：`下载列表`、`任务控制`、`转存页`、`查询页`、`运行配置`、`帮助`、`运行健康`、`文件缓存`、`用户流水`
-- 最近任务快捷按钮：运行中可直接 `暂停/停止`，暂停态可 `恢复/停止`
+- 最近任务快捷按钮：运行中可直接 `暂停`，暂停态可 `恢复`；`停止` 会先打开确认页
 - 如果存在未完成输入，首页顶部会显示 `继续输入：<阶段>` 和 `取消输入`
 - admin 可点 `用户流水` 后回复 Telegram user_id，直接进入 `/points history <user_id>` 流水卡片
 
@@ -352,12 +402,11 @@ d012df0 完善 bot 交互转存链路 / Improve bot transfer workflow
 第 2 步目标来源：
 
 - 上次目标
-- 默认目标
+- 当前私聊或显式默认目标
 - 配置别名
-- Telegram 原生 `选择群组`
 - 手动输入 `chat_id / alias / default`
 
-`快速转存` 会优先用默认目标；如果没有默认目标，会自动退回普通选目标流程。
+`快速转存` 会优先用默认目标；如果没有显式默认目标，会直接回落到当前私聊。只有默认目标被 `allowed_target_chat_ids` 拦截时，才会退回普通选目标流程。
 
 ### 下载列表
 
@@ -384,7 +433,7 @@ cancel
 - `刷新`
 - `复制当前命令`
 - `菜单`
-- 单任务直控：运行中 `暂停/停止`，暂停态 `恢复/停止`
+- 单任务直控：运行中 `暂停`，暂停态 `恢复`；`停止` 会先打开确认页
 
 ### 输入流程行为
 
@@ -392,7 +441,7 @@ cancel
 - reply keyboard 场景也支持 `取消` / `cancel`
 - 从菜单点进输入向导时，原消息会被编辑成等待态，只保留 `取消` / `首页`
 - 如果用户在输入流程里直接发送新命令，旧草稿会被丢弃
-- 如果旧草稿停在原生选群阶段，会自动收起选群键盘
+- 如果旧草稿停在原生选聊阶段，会自动收起旧键盘
 - `job_id` 输入流也会把原任务页编辑成等待态，避免旧按钮继续可点
 - 首页“继续输入”只读取草稿并重新发送当前步骤提示，不会消费草稿；真正消费仍发生在用户回复或确认按钮时
 
@@ -471,8 +520,9 @@ cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
 
 结果：
 
-- `cargo fmt --all -- --check` 通过
-- `cargo test -p transfer_bot` 通过，`406 passed`
+- `cargo fmt --all` 通过
+- `cargo check -p transfer_bot` 通过
+- `cargo test -p transfer_bot` 通过，`460 passed`
 - `cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 通过
 
 额外验证：

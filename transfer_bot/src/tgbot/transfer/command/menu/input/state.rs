@@ -17,7 +17,7 @@ use db_store::{
 
 /// 输入草稿索引。
 ///
-/// 同一个管理员可能在多个管理 chat 中操作，因此用 `(chat_id, user_id)` 做隔离。
+/// 输入草稿使用 `(chat_id, user_id)` 做隔离，避免不同会话互相覆盖。
 pub(super) type DraftKey = (i64, i64);
 
 /// 最近一次确认执行的目标。
@@ -88,16 +88,6 @@ impl MenuInputKind {
         }
     }
 
-    /// 默认目标按钮文案。
-    ///
-    /// 转存和查询都可能走“快速入口”，按钮文案必须按实际命令语义区分。
-    pub(super) fn default_target_button_label(self) -> &'static str {
-        match self {
-            Self::Transfer | Self::TransferDefault => "快速转存",
-            Self::Lookup | Self::LookupDefault => "快速查询",
-        }
-    }
-
     /// 源链接输入标题。
     pub(in crate::tgbot::transfer::command::menu) fn source_title(self) -> &'static str {
         match self {
@@ -112,9 +102,18 @@ impl MenuInputKind {
     pub(in crate::tgbot::transfer::command::menu) fn source_detail(self) -> &'static str {
         match self {
             Self::Transfer => "请回复要转存的 Telegram 消息或相册链接。",
-            Self::TransferDefault => "请回复源链接，目标 chat 将使用配置默认值。",
+            Self::TransferDefault => "请回复源链接，目标将使用默认目标（未配置时为当前私聊）。",
             Self::Lookup => "请回复要查询的 Telegram 消息或相册链接。",
-            Self::LookupDefault => "请回复源链接，目标 chat 将使用配置默认值。",
+            Self::LookupDefault => "请回复源链接，目标将使用默认目标（未配置时为当前私聊）。",
+        }
+    }
+
+    /// 来源输入在当前向导中的步骤位置。
+    pub(in crate::tgbot::transfer::command::menu) fn source_step_label(self) -> &'static str {
+        if self.uses_default_target() {
+            "1/1"
+        } else {
+            "1/3"
         }
     }
 
@@ -217,40 +216,20 @@ impl MenuJobAction {
 
 /// 菜单里的管理配置输入动作。
 ///
-/// 这些动作都属于“单步输入”：
-/// - 点按钮后等待用户回复一行参数
-/// - 状态机会把回复组装成已有命令，再复用原命令逻辑
+/// 大多数动作都是“单步输入”；`TargetsAliasName`
+/// 是 targets 新增项的第一步，收到 A 后会继续进入第二步输入目标 B。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot::transfer::command) enum AdminInputAction {
+    TargetsAliasName,
+    TargetsAliasSearch,
     TargetsSetDefault,
-    TargetsPickDefault,
-    TargetsSetRoute,
-    TargetsPickRoute,
-    TargetsDelRoute,
     TargetsSetAlias,
-    TargetsDelAlias,
-    AclAddAdmin,
-    AclDelAdmin,
-    AclAddAllowUser,
-    AclDelAllowUser,
-    AclAddBan,
-    AclDelBan,
-    AclAddAllowTarget,
-    AclDelAllowTarget,
-    AclAddAllowRequest,
-    AclDelAllowRequest,
     ConfigSetJobConcurrency,
     ConfigSetFileDeleteDelayMinutes,
     ConfigSetFileGcIntervalSeconds,
     ConfigSetProgressEditIntervalSeconds,
     ConfigSetDownloadsDefaultPageSize,
     ConfigSetMenuInputTimeoutSeconds,
-    BillingSetBaseCost,
-    BillingSetItemCost,
-    BillingSetInitialUserPoints,
-    BillingSetAnnouncement,
-    PointsAddUser,
-    PointsSubUser,
 }
 
 impl AdminInputAction {
@@ -259,35 +238,16 @@ impl AdminInputAction {
     /// 这个清单主要用于覆盖测试：新增动作时必须同步确认编码、文案和命令规格。
     #[cfg(test)]
     const ALL: &'static [Self] = &[
+        Self::TargetsAliasName,
+        Self::TargetsAliasSearch,
         Self::TargetsSetDefault,
-        Self::TargetsPickDefault,
-        Self::TargetsSetRoute,
-        Self::TargetsPickRoute,
-        Self::TargetsDelRoute,
         Self::TargetsSetAlias,
-        Self::TargetsDelAlias,
-        Self::AclAddAdmin,
-        Self::AclDelAdmin,
-        Self::AclAddAllowUser,
-        Self::AclDelAllowUser,
-        Self::AclAddBan,
-        Self::AclDelBan,
-        Self::AclAddAllowTarget,
-        Self::AclDelAllowTarget,
-        Self::AclAddAllowRequest,
-        Self::AclDelAllowRequest,
         Self::ConfigSetJobConcurrency,
         Self::ConfigSetFileDeleteDelayMinutes,
         Self::ConfigSetFileGcIntervalSeconds,
         Self::ConfigSetProgressEditIntervalSeconds,
         Self::ConfigSetDownloadsDefaultPageSize,
         Self::ConfigSetMenuInputTimeoutSeconds,
-        Self::BillingSetBaseCost,
-        Self::BillingSetItemCost,
-        Self::BillingSetInitialUserPoints,
-        Self::BillingSetAnnouncement,
-        Self::PointsAddUser,
-        Self::PointsSubUser,
     ];
 }
 
@@ -305,81 +265,79 @@ fn targets_input_spec(
     crate::tgbot::transfer::command::targets::targets_input_spec_for_admin_action(action)
 }
 
-/// 访问控制输入动作从 `/acl` 动作规格读取文案，保证按钮、help 和 ForceReply 一致。
-fn acl_input_spec(
-    action: AdminInputAction,
-) -> Option<&'static crate::tgbot::transfer::command::acl::AclInputSpec> {
-    crate::tgbot::transfer::command::acl::acl_input_spec_for_admin_action(action)
+/// 带上下文的管理输入提示元数据。
+///
+/// targets 的新增路由/别名会先收集 A，再收集目标 B；旧的修改现有项也会把已选中的
+/// request_chat_id 或 alias 放到上下文里。统一在这里渲染提示，避免“继续输入”和“错误重试”
+/// 使用另一套文案。
+#[derive(Debug, Clone)]
+pub(super) struct AdminInputPromptMeta {
+    pub(super) title: String,
+    pub(super) detail: String,
+    pub(super) placeholder: String,
 }
 
-/// 计费输入动作从 `/billing` 字段规格读取文案，保证按钮、help 和 ForceReply 一致。
-fn billing_input_meta(
+/// 根据管理动作和上下文生成 ForceReply 提示。
+pub(super) fn admin_input_prompt_meta(
     action: AdminInputAction,
-) -> Option<(&'static str, &'static str, &'static str)> {
-    if let Some(spec) =
-        crate::tgbot::transfer::command::billing::billing_numeric_spec_for_admin_action(action)
-    {
-        return Some((spec.input_title, spec.input_detail, spec.input_placeholder));
-    }
-    crate::tgbot::transfer::command::billing::billing_announcement_spec_for_admin_action(action)
-        .map(|spec| (spec.input_title, spec.input_detail, spec.input_placeholder))
-}
+    context_text: Option<&str>,
+    _context_i64: Option<i64>,
+) -> AdminInputPromptMeta {
+    let (title, detail, placeholder) = match action {
+        AdminInputAction::TargetsAliasName => (
+            "新增别名".to_owned(),
+            "请先回复别名（A），例如 archive；或发送 /cancel 取消。".to_owned(),
+            "输入 alias，或发送 /cancel".to_owned(),
+        ),
+        AdminInputAction::TargetsAliasSearch => (
+            "搜索别名".to_owned(),
+            "请回复要搜索的别名关键字，例如 archive；或发送 /cancel 取消。".to_owned(),
+            "输入别名关键字，或发送 /cancel".to_owned(),
+        ),
+        AdminInputAction::TargetsSetAlias if context_text.is_some() => (
+            "修改目标别名".to_owned(),
+            format!(
+                "已选 alias：{}。请只回复新的目标私聊 chat_id；或发送 /cancel 取消。",
+                context_text.expect("context_text checked above")
+            ),
+            "输入新的 target_chat_id，或发送 /cancel".to_owned(),
+        ),
+        _ => (
+            action.input_title().to_owned(),
+            action.input_detail().to_owned(),
+            action.input_placeholder().to_owned(),
+        ),
+    };
 
-fn points_input_meta(
-    action: AdminInputAction,
-) -> Option<(&'static str, &'static str, &'static str)> {
-    match action {
-        AdminInputAction::PointsAddUser => Some((
-            "添加积分",
-            "请回复积分数，或回复“积分 理由”，例如 10 admin_adjust；发送 /cancel 取消。",
-            "输入 amount [reason]，或发送 /cancel",
-        )),
-        AdminInputAction::PointsSubUser => Some((
-            "扣减积分",
-            "请回复积分数，或回复“积分 理由”，例如 10 admin_adjust；发送 /cancel 取消。",
-            "输入 amount [reason]，或发送 /cancel",
-        )),
-        _ => None,
+    AdminInputPromptMeta {
+        title,
+        detail,
+        placeholder,
     }
 }
 
 impl AdminInputAction {
     /// 对外展示的稳定标题。
     pub(super) fn input_title(self) -> &'static str {
+        match self {
+            Self::TargetsAliasName => return "新增别名",
+            Self::TargetsAliasSearch => return "搜索别名",
+            _ => {}
+        }
         if let Some(spec) = targets_input_spec(self) {
             return spec.input_title;
-        }
-        if let Some(spec) = acl_input_spec(self) {
-            return spec.input_title;
-        }
-        if let Some((title, _, _)) = billing_input_meta(self) {
-            return title;
-        }
-        if let Some((title, _, _)) = points_input_meta(self) {
-            return title;
         }
         if let Some(spec) = config_field_spec(self) {
             return spec.input_title;
         }
 
         match self {
-            Self::TargetsSetDefault
-            | Self::TargetsPickDefault
-            | Self::TargetsSetRoute
-            | Self::TargetsPickRoute
-            | Self::TargetsDelRoute
-            | Self::TargetsSetAlias
-            | Self::TargetsDelAlias => unreachable!("targets input title uses spec"),
-            Self::AclAddAdmin
-            | Self::AclDelAdmin
-            | Self::AclAddAllowUser
-            | Self::AclDelAllowUser
-            | Self::AclAddBan
-            | Self::AclDelBan
-            | Self::AclAddAllowTarget
-            | Self::AclDelAllowTarget
-            | Self::AclAddAllowRequest
-            | Self::AclDelAllowRequest => unreachable!("acl input title uses spec"),
+            Self::TargetsAliasName | Self::TargetsAliasSearch => {
+                unreachable!("two-step targets action title handled above")
+            }
+            Self::TargetsSetDefault | Self::TargetsSetAlias => {
+                unreachable!("targets input title uses spec")
+            }
             Self::ConfigSetJobConcurrency
             | Self::ConfigSetFileDeleteDelayMinutes
             | Self::ConfigSetFileGcIntervalSeconds
@@ -388,52 +346,34 @@ impl AdminInputAction {
             | Self::ConfigSetMenuInputTimeoutSeconds => {
                 unreachable!("config input title uses spec")
             }
-            Self::BillingSetBaseCost
-            | Self::BillingSetItemCost
-            | Self::BillingSetInitialUserPoints
-            | Self::BillingSetAnnouncement => unreachable!("billing input title uses spec"),
-            Self::PointsAddUser | Self::PointsSubUser => {
-                unreachable!("points input title uses spec")
-            }
         }
     }
 
     /// ForceReply 提示正文。
     pub(super) fn input_detail(self) -> &'static str {
+        match self {
+            Self::TargetsAliasName => {
+                return "请先回复别名（A），例如 archive；或发送 /cancel 取消。";
+            }
+            Self::TargetsAliasSearch => {
+                return "请回复要搜索的别名关键字，例如 archive；或发送 /cancel 取消。";
+            }
+            _ => {}
+        }
         if let Some(spec) = targets_input_spec(self) {
             return spec.input_detail;
-        }
-        if let Some(spec) = acl_input_spec(self) {
-            return spec.input_detail;
-        }
-        if let Some((_, detail, _)) = billing_input_meta(self) {
-            return detail;
-        }
-        if let Some((_, detail, _)) = points_input_meta(self) {
-            return detail;
         }
         if let Some(spec) = config_field_spec(self) {
             return spec.input_detail;
         }
 
         match self {
-            Self::TargetsSetDefault
-            | Self::TargetsPickDefault
-            | Self::TargetsSetRoute
-            | Self::TargetsPickRoute
-            | Self::TargetsDelRoute
-            | Self::TargetsSetAlias
-            | Self::TargetsDelAlias => unreachable!("targets input detail uses spec"),
-            Self::AclAddAdmin
-            | Self::AclDelAdmin
-            | Self::AclAddAllowUser
-            | Self::AclDelAllowUser
-            | Self::AclAddBan
-            | Self::AclDelBan
-            | Self::AclAddAllowTarget
-            | Self::AclDelAllowTarget
-            | Self::AclAddAllowRequest
-            | Self::AclDelAllowRequest => unreachable!("acl input detail uses spec"),
+            Self::TargetsAliasName | Self::TargetsAliasSearch => {
+                unreachable!("two-step targets action detail handled above")
+            }
+            Self::TargetsSetDefault | Self::TargetsSetAlias => {
+                unreachable!("targets input detail uses spec")
+            }
             Self::ConfigSetJobConcurrency
             | Self::ConfigSetFileDeleteDelayMinutes
             | Self::ConfigSetFileGcIntervalSeconds
@@ -442,52 +382,30 @@ impl AdminInputAction {
             | Self::ConfigSetMenuInputTimeoutSeconds => {
                 unreachable!("config input detail uses spec")
             }
-            Self::BillingSetBaseCost
-            | Self::BillingSetItemCost
-            | Self::BillingSetInitialUserPoints
-            | Self::BillingSetAnnouncement => unreachable!("billing input detail uses spec"),
-            Self::PointsAddUser | Self::PointsSubUser => {
-                unreachable!("points input detail uses spec")
-            }
         }
     }
 
     /// 输入框占位文案。
     pub(super) fn input_placeholder(self) -> &'static str {
+        match self {
+            Self::TargetsAliasName => return "输入 alias，或发送 /cancel",
+            Self::TargetsAliasSearch => return "输入别名关键字，或发送 /cancel",
+            _ => {}
+        }
         if let Some(spec) = targets_input_spec(self) {
             return spec.input_placeholder;
-        }
-        if let Some(spec) = acl_input_spec(self) {
-            return spec.input_placeholder;
-        }
-        if let Some((_, _, placeholder)) = billing_input_meta(self) {
-            return placeholder;
-        }
-        if let Some((_, _, placeholder)) = points_input_meta(self) {
-            return placeholder;
         }
         if let Some(spec) = config_field_spec(self) {
             return spec.input_placeholder;
         }
 
         match self {
-            Self::TargetsSetDefault
-            | Self::TargetsPickDefault
-            | Self::TargetsSetRoute
-            | Self::TargetsPickRoute
-            | Self::TargetsDelRoute
-            | Self::TargetsSetAlias
-            | Self::TargetsDelAlias => unreachable!("targets input placeholder uses spec"),
-            Self::AclAddAdmin
-            | Self::AclDelAdmin
-            | Self::AclAddAllowUser
-            | Self::AclDelAllowUser
-            | Self::AclAddBan
-            | Self::AclDelBan
-            | Self::AclAddAllowTarget
-            | Self::AclDelAllowTarget
-            | Self::AclAddAllowRequest
-            | Self::AclDelAllowRequest => unreachable!("acl input placeholder uses spec"),
+            Self::TargetsAliasName | Self::TargetsAliasSearch => {
+                unreachable!("two-step targets action placeholder handled above")
+            }
+            Self::TargetsSetDefault | Self::TargetsSetAlias => {
+                unreachable!("targets input placeholder uses spec")
+            }
             Self::ConfigSetJobConcurrency
             | Self::ConfigSetFileDeleteDelayMinutes
             | Self::ConfigSetFileGcIntervalSeconds
@@ -496,48 +414,22 @@ impl AdminInputAction {
             | Self::ConfigSetMenuInputTimeoutSeconds => {
                 unreachable!("config input placeholder uses spec")
             }
-            Self::BillingSetBaseCost
-            | Self::BillingSetItemCost
-            | Self::BillingSetInitialUserPoints
-            | Self::BillingSetAnnouncement => unreachable!("billing input placeholder uses spec"),
-            Self::PointsAddUser | Self::PointsSubUser => {
-                unreachable!("points input placeholder uses spec")
-            }
         }
     }
 
     /// 日志与持久化使用的稳定编码。
     pub(in crate::tgbot::transfer::command) fn log_name(self) -> &'static str {
         match self {
+            Self::TargetsAliasName => "targets_new_alias_name",
+            Self::TargetsAliasSearch => "targets_alias_search",
             Self::TargetsSetDefault => "targets_set_default",
-            Self::TargetsPickDefault => "targets_pick_default",
-            Self::TargetsSetRoute => "targets_set_route",
-            Self::TargetsPickRoute => "targets_pick_route",
-            Self::TargetsDelRoute => "targets_del_route",
             Self::TargetsSetAlias => "targets_set_alias",
-            Self::TargetsDelAlias => "targets_del_alias",
-            Self::AclAddAdmin => "acl_add_admin",
-            Self::AclDelAdmin => "acl_del_admin",
-            Self::AclAddAllowUser => "acl_add_allow_user",
-            Self::AclDelAllowUser => "acl_del_allow_user",
-            Self::AclAddBan => "acl_add_ban",
-            Self::AclDelBan => "acl_del_ban",
-            Self::AclAddAllowTarget => "acl_add_allow_target",
-            Self::AclDelAllowTarget => "acl_del_allow_target",
-            Self::AclAddAllowRequest => "acl_add_allow_request",
-            Self::AclDelAllowRequest => "acl_del_allow_request",
             Self::ConfigSetJobConcurrency => "config_set_job_concurrency",
             Self::ConfigSetFileDeleteDelayMinutes => "config_set_delete_delay",
             Self::ConfigSetFileGcIntervalSeconds => "config_set_gc_interval",
             Self::ConfigSetProgressEditIntervalSeconds => "config_set_progress_interval",
             Self::ConfigSetDownloadsDefaultPageSize => "config_set_page_size",
             Self::ConfigSetMenuInputTimeoutSeconds => "config_set_menu_timeout",
-            Self::BillingSetBaseCost => "billing_set_base_cost",
-            Self::BillingSetItemCost => "billing_set_item_cost",
-            Self::BillingSetInitialUserPoints => "billing_set_initial_points",
-            Self::BillingSetAnnouncement => "billing_set_announcement",
-            Self::PointsAddUser => "points_add_user",
-            Self::PointsSubUser => "points_sub_user",
         }
     }
 
@@ -547,35 +439,16 @@ impl AdminInputAction {
 
     pub(in crate::tgbot::transfer::command) fn parse(code: &str) -> Option<Self> {
         match code {
+            "targets_new_alias_name" => Some(Self::TargetsAliasName),
+            "targets_alias_search" => Some(Self::TargetsAliasSearch),
             "targets_set_default" => Some(Self::TargetsSetDefault),
-            "targets_pick_default" => Some(Self::TargetsPickDefault),
-            "targets_set_route" => Some(Self::TargetsSetRoute),
-            "targets_pick_route" => Some(Self::TargetsPickRoute),
-            "targets_del_route" => Some(Self::TargetsDelRoute),
             "targets_set_alias" => Some(Self::TargetsSetAlias),
-            "targets_del_alias" => Some(Self::TargetsDelAlias),
-            "acl_add_admin" => Some(Self::AclAddAdmin),
-            "acl_del_admin" => Some(Self::AclDelAdmin),
-            "acl_add_allow_user" => Some(Self::AclAddAllowUser),
-            "acl_del_allow_user" => Some(Self::AclDelAllowUser),
-            "acl_add_ban" => Some(Self::AclAddBan),
-            "acl_del_ban" => Some(Self::AclDelBan),
-            "acl_add_allow_target" => Some(Self::AclAddAllowTarget),
-            "acl_del_allow_target" => Some(Self::AclDelAllowTarget),
-            "acl_add_allow_request" => Some(Self::AclAddAllowRequest),
-            "acl_del_allow_request" => Some(Self::AclDelAllowRequest),
             "config_set_job_concurrency" => Some(Self::ConfigSetJobConcurrency),
             "config_set_delete_delay" => Some(Self::ConfigSetFileDeleteDelayMinutes),
             "config_set_gc_interval" => Some(Self::ConfigSetFileGcIntervalSeconds),
             "config_set_progress_interval" => Some(Self::ConfigSetProgressEditIntervalSeconds),
             "config_set_page_size" => Some(Self::ConfigSetDownloadsDefaultPageSize),
             "config_set_menu_timeout" => Some(Self::ConfigSetMenuInputTimeoutSeconds),
-            "billing_set_base_cost" => Some(Self::BillingSetBaseCost),
-            "billing_set_item_cost" => Some(Self::BillingSetItemCost),
-            "billing_set_initial_points" => Some(Self::BillingSetInitialUserPoints),
-            "billing_set_announcement" => Some(Self::BillingSetAnnouncement),
-            "points_add_user" => Some(Self::PointsAddUser),
-            "points_sub_user" => Some(Self::PointsSubUser),
             _ => None,
         }
     }
@@ -595,10 +468,6 @@ pub(super) enum MenuInputStep {
         kind: MenuInputKind,
         source_link: String,
     },
-    ChatPicker {
-        kind: MenuInputKind,
-        source_link: String,
-    },
     Confirm {
         kind: MenuInputKind,
         source_link: String,
@@ -611,15 +480,6 @@ pub(super) enum MenuInputStep {
         action: AdminInputAction,
         context_text: Option<String>,
         context_i64: Option<i64>,
-    },
-    AdminChatPicker {
-        action: AdminInputAction,
-        request_chat_id_input: Option<i64>,
-    },
-    PointLedgerUserId,
-    PointsAdjust {
-        action: AdminInputAction,
-        target_user_id: i64,
     },
 }
 
@@ -641,13 +501,9 @@ impl MenuInputDraft {
             MenuInputStep::SourceLink { kind } => kind.source_title(),
             MenuInputStep::TargetChoice { .. } => "选择目标",
             MenuInputStep::TargetChat { .. } => "输入目标",
-            MenuInputStep::ChatPicker { .. } => "选择群组",
             MenuInputStep::Confirm { .. } => "确认执行",
             MenuInputStep::JobId { action } => action.input_title(),
             MenuInputStep::AdminInput { action, .. } => action.input_title(),
-            MenuInputStep::AdminChatPicker { action, .. } => action.input_title(),
-            MenuInputStep::PointLedgerUserId => "用户积分流水",
-            MenuInputStep::PointsAdjust { action, .. } => action.input_title(),
         }
     }
 
@@ -659,11 +515,6 @@ impl MenuInputDraft {
     /// 构造等待手动输入目标的草稿。
     pub(super) fn target_chat(kind: MenuInputKind, source_link: String) -> Self {
         Self::new(MenuInputStep::TargetChat { kind, source_link })
-    }
-
-    /// 构造等待 Telegram 原生选群结果的草稿。
-    pub(super) fn chat_picker(kind: MenuInputKind, source_link: String) -> Self {
-        Self::new(MenuInputStep::ChatPicker { kind, source_link })
     }
 
     /// 构造等待确认执行的草稿。
@@ -690,29 +541,6 @@ impl MenuInputDraft {
             action,
             context_text,
             context_i64,
-        })
-    }
-
-    /// 构造等待管理配置选群结果的草稿。
-    pub(super) fn admin_chat_picker(
-        action: AdminInputAction,
-        request_chat_id_input: Option<i64>,
-    ) -> Self {
-        Self::new(MenuInputStep::AdminChatPicker {
-            action,
-            request_chat_id_input,
-        })
-    }
-
-    /// 构造等待用户 ID 的积分流水草稿。
-    pub(super) fn point_ledger_user_id() -> Self {
-        Self::new(MenuInputStep::PointLedgerUserId)
-    }
-
-    pub(super) fn points_adjust(action: AdminInputAction, target_user_id: i64) -> Self {
-        Self::new(MenuInputStep::PointsAdjust {
-            action,
-            target_user_id,
         })
     }
 
@@ -754,10 +582,6 @@ impl MenuInputDraft {
                 kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
                 source_link: model.source_link.clone()?,
             },
-            "chat_picker" => MenuInputStep::ChatPicker {
-                kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
-                source_link: model.source_link.clone()?,
-            },
             "confirm" => MenuInputStep::Confirm {
                 kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
                 source_link: model.source_link.clone()?,
@@ -770,15 +594,6 @@ impl MenuInputDraft {
                 action: AdminInputAction::parse(model.job_action.as_deref()?)?,
                 context_text: model.source_link.clone(),
                 context_i64: model.target_chat_id,
-            },
-            "admin_chat_picker" => MenuInputStep::AdminChatPicker {
-                action: AdminInputAction::parse(model.job_action.as_deref()?)?,
-                request_chat_id_input: model.target_chat_id,
-            },
-            "point_ledger_user_id" => MenuInputStep::PointLedgerUserId,
-            "points_adjust" => MenuInputStep::PointsAdjust {
-                action: AdminInputAction::parse(model.job_action.as_deref()?)?,
-                target_user_id: model.target_chat_id?,
             },
             _ => return None,
         };
@@ -820,13 +635,6 @@ impl DraftFields {
                 source_link: Some(source_link),
                 target_chat_id: None,
             },
-            MenuInputStep::ChatPicker { kind, source_link } => Self {
-                step: "chat_picker",
-                input_kind: Some(kind.code()),
-                job_action: None,
-                source_link: Some(source_link),
-                target_chat_id: None,
-            },
             MenuInputStep::Confirm {
                 kind,
                 source_link,
@@ -857,44 +665,8 @@ impl DraftFields {
                 source_link: context_text,
                 target_chat_id: context_i64,
             },
-            MenuInputStep::AdminChatPicker {
-                action,
-                request_chat_id_input,
-            } => Self {
-                step: "admin_chat_picker",
-                input_kind: None,
-                job_action: Some(action.code()),
-                source_link: None,
-                target_chat_id: request_chat_id_input,
-            },
-            MenuInputStep::PointLedgerUserId => Self {
-                step: "point_ledger_user_id",
-                input_kind: None,
-                job_action: None,
-                source_link: None,
-                target_chat_id: None,
-            },
-            MenuInputStep::PointsAdjust {
-                action,
-                target_user_id,
-            } => Self {
-                step: "points_adjust",
-                input_kind: None,
-                job_action: Some(action.code()),
-                source_link: None,
-                target_chat_id: Some(target_user_id),
-            },
         }
     }
-}
-
-/// 取消草稿后的附加信息。
-///
-/// 目前只有 Telegram 原生选群阶段会展示 reply keyboard；取消这类草稿时需要额外发送
-/// `replyMarkupRemoveKeyboard`，否则客户端输入框下方可能继续残留“选择群组”按钮。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::tgbot::transfer::command::menu) struct CancelledMenuInput {
-    pub(in crate::tgbot::transfer::command::menu) needs_reply_keyboard_cleanup: bool,
 }
 
 /// 取草稿的结果。
@@ -917,7 +689,6 @@ pub(super) struct TargetContext {
 pub(super) enum TargetDraftAdvance {
     TargetChoice,
     TargetChat,
-    ChatPicker,
     Confirm { target_chat_id: i64 },
 }
 
@@ -968,43 +739,17 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input(
     chat_id: i64,
     user_id: i64,
 ) -> anyhow::Result<bool> {
-    Ok(cancel_menu_input_with_state(chat_id, user_id)
-        .await?
-        .is_some())
-}
-
-/// 取消一个菜单输入流程，并返回是否需要清理 reply keyboard。
-pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input_with_state(
-    chat_id: i64,
-    user_id: i64,
-) -> anyhow::Result<Option<CancelledMenuInput>> {
     let _guard = acquire_draft_key_guard((chat_id, user_id)).await;
     purge_expired().await?;
     let Some(removed) = find_draft_model(chat_id, user_id).await? else {
-        return Ok(None);
+        return Ok(false);
     };
     if !delete_draft_if_current(&removed).await? {
         tracing::debug!(chat_id, user_id, "menu input draft cancel lost write race");
-        return Ok(None);
+        return Ok(false);
     }
-    let removed = match MenuInputDraft::from_model(&removed) {
-        Some(removed) => removed,
-        None => {
-            return Ok(Some(CancelledMenuInput {
-                needs_reply_keyboard_cleanup: false,
-            }));
-        }
-    };
-    let needs_reply_keyboard_cleanup = step_uses_reply_keyboard(&removed.step);
-    tracing::debug!(
-        chat_id,
-        user_id,
-        needs_reply_keyboard_cleanup,
-        "menu input draft cancelled"
-    );
-    Ok(Some(CancelledMenuInput {
-        needs_reply_keyboard_cleanup,
-    }))
+    tracing::debug!(chat_id, user_id, "menu input draft cancelled");
+    Ok(true)
 }
 
 /// 取出当前草稿；若草稿过期，则清理后返回过期状态。
@@ -1076,7 +821,6 @@ pub(super) async fn advance_target_context(
             MenuInputDraft::target_choice(kind, source_link.clone())
         }
         TargetDraftAdvance::TargetChat => MenuInputDraft::target_chat(kind, source_link.clone()),
-        TargetDraftAdvance::ChatPicker => MenuInputDraft::chat_picker(kind, source_link.clone()),
         TargetDraftAdvance::Confirm { target_chat_id } => {
             MenuInputDraft::confirm(kind, source_link.clone(), target_chat_id)
         }
@@ -1205,25 +949,13 @@ pub(super) fn target_context_from_step(step: &MenuInputStep) -> Option<(MenuInpu
     match step {
         MenuInputStep::TargetChoice { kind, source_link }
         | MenuInputStep::TargetChat { kind, source_link }
-        | MenuInputStep::ChatPicker { kind, source_link }
         | MenuInputStep::Confirm {
             kind, source_link, ..
         } => Some((*kind, source_link.clone())),
         MenuInputStep::SourceLink { .. }
         | MenuInputStep::JobId { .. }
-        | MenuInputStep::AdminInput { .. }
-        | MenuInputStep::AdminChatPicker { .. }
-        | MenuInputStep::PointLedgerUserId
-        | MenuInputStep::PointsAdjust { .. } => None,
+        | MenuInputStep::AdminInput { .. } => None,
     }
-}
-
-/// 判断当前阶段是否曾展示 reply keyboard。
-pub(super) fn step_uses_reply_keyboard(step: &MenuInputStep) -> bool {
-    matches!(
-        step,
-        MenuInputStep::ChatPicker { .. } | MenuInputStep::AdminChatPicker { .. }
-    )
 }
 
 /// 统一生成 UTC+8 时间戳。
@@ -1257,7 +989,7 @@ mod tests {
         Ok(guard)
     }
 
-    // 草稿应按 chat + user 隔离，避免多个管理员互相覆盖输入。
+    // 草稿应按 chat + user 隔离，避免不同会话互相覆盖输入。
     #[tokio::test]
     async fn test_start_and_cancel_menu_input() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1533,24 +1265,6 @@ mod tests {
         Ok(())
     }
 
-    // admin 查询用户积分流水的输入草稿也必须持久化，保证重启后首页可继续输入。
-    #[tokio::test]
-    async fn test_point_ledger_user_id_draft_roundtrip() -> anyhow::Result<()> {
-        let _guard = prepare_schema().await?;
-        let key = (900_007, 900_008);
-        put_draft(key, MenuInputDraft::point_ledger_user_id()).await?;
-
-        let draft = take_current_draft(key).await?;
-
-        assert!(matches!(
-            draft,
-            DraftTakeResult::Active(MenuInputDraft {
-                step: MenuInputStep::PointLedgerUserId
-            })
-        ));
-        Ok(())
-    }
-
     // 多步草稿应能按“源链接 -> 目标选择 -> 确认 -> 消费确认”完整推进，避免状态机只在局部测试里成立。
     #[tokio::test]
     async fn test_multi_step_draft_flow_roundtrip() -> anyhow::Result<()> {
@@ -1602,6 +1316,37 @@ mod tests {
         Ok(())
     }
 
+    // 手动输入目标后返回选择页时，必须保留输入类型和来源链接。
+    #[tokio::test]
+    async fn test_target_chat_can_return_to_target_choice() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_043, 900_044);
+        let source_link = "https://t.me/c/1/9";
+        put_draft(
+            key,
+            MenuInputDraft::target_chat(MenuInputKind::Transfer, source_link.to_owned()),
+        )
+        .await?;
+
+        assert_eq!(
+            advance_target_context(key, TargetDraftAdvance::TargetChoice).await?,
+            TargetContextAdvanceResult::Active(TargetContext {
+                kind: MenuInputKind::Transfer,
+                source_link: source_link.to_owned(),
+            })
+        );
+        assert!(matches!(
+            peek_current_draft(key).await?,
+            DraftTakeResult::Active(MenuInputDraft {
+                step: MenuInputStep::TargetChoice {
+                    kind: MenuInputKind::Transfer,
+                    source_link: stored_source,
+                }
+            }) if stored_source == source_link
+        ));
+        Ok(())
+    }
+
     // 不同输入流程应使用对应的长命令，最终复用已有命令入口。
     #[test]
     fn test_menu_input_kind_command_name() {
@@ -1611,26 +1356,13 @@ mod tests {
         assert_eq!(MenuInputKind::LookupDefault.command_name(), "/lookup");
     }
 
-    // 原生选群阶段会展示 reply keyboard，因此取消时需要额外清理键盘。
+    // 快速流程只输入一次来源；指定目标流程仍保留来源、目标、确认三步。
     #[test]
-    fn test_step_uses_reply_keyboard_only_for_chat_picker() {
-        let source_link = "https://t.me/c/1/2".to_owned();
-
-        assert!(step_uses_reply_keyboard(&MenuInputStep::ChatPicker {
-            kind: MenuInputKind::Transfer,
-            source_link: source_link.clone(),
-        }));
-        assert!(step_uses_reply_keyboard(&MenuInputStep::AdminChatPicker {
-            action: AdminInputAction::TargetsPickDefault,
-            request_chat_id_input: None,
-        }));
-        assert!(!step_uses_reply_keyboard(&MenuInputStep::TargetChoice {
-            kind: MenuInputKind::Transfer,
-            source_link,
-        }));
-        assert!(!step_uses_reply_keyboard(&MenuInputStep::JobId {
-            action: MenuJobAction::Status,
-        }));
+    fn test_menu_input_kind_source_step_label() {
+        assert_eq!(MenuInputKind::Transfer.source_step_label(), "1/3");
+        assert_eq!(MenuInputKind::Lookup.source_step_label(), "1/3");
+        assert_eq!(MenuInputKind::TransferDefault.source_step_label(), "1/1");
+        assert_eq!(MenuInputKind::LookupDefault.source_step_label(), "1/1");
     }
 
     // 菜单任务动作应稳定映射到 `/job` 的公开长参数，避免交互入口和命令入口语义分叉。
@@ -1644,23 +1376,24 @@ mod tests {
 
     #[test]
     fn test_admin_input_action_prompt_meta() {
+        assert!(
+            AdminInputAction::TargetsAliasName
+                .input_detail()
+                .contains("别名")
+        );
         assert_eq!(
             AdminInputAction::TargetsSetDefault.input_title(),
             "设置默认目标"
         );
-        assert_eq!(
-            AdminInputAction::TargetsPickDefault.input_title(),
-            "选择默认目标"
-        );
-        assert!(
-            AdminInputAction::TargetsSetRoute
-                .input_detail()
-                .contains("request_chat_id")
-        );
-        assert_eq!(
-            AdminInputAction::BillingSetAnnouncement.input_placeholder(),
-            "输入公告内容，或发送 /cancel"
-        );
+    }
+
+    #[test]
+    fn test_admin_input_prompt_meta_uses_targets_context() {
+        let alias =
+            admin_input_prompt_meta(AdminInputAction::TargetsSetAlias, Some("archive"), None);
+
+        assert!(alias.detail.contains("alias：archive"));
+        assert_eq!(alias.title, "修改目标别名");
     }
 
     #[test]
@@ -1690,7 +1423,7 @@ mod tests {
         }
     }
 
-    // 上次目标只是交互捷径，按 chat + user 隔离，避免多个管理员互相覆盖。
+    // 上次目标只是交互捷径，按 chat + user 隔离，避免不同会话互相覆盖。
     #[test]
     fn test_last_target_is_isolated_by_chat_and_user() {
         remember_last_target(10, 20, -100);

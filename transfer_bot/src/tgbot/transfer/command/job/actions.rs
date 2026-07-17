@@ -27,13 +27,12 @@ pub(super) async fn pause_job_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let job = store::pause_job_with_owner_scope(job_id, actor.request_chat_id, actor.owner_scope())
-        .await?;
+    let job = store::pause_job(job_id).await?;
     tracing::info!(
         job_id = job.id,
         request_chat_id = actor.request_chat_id,
         owner_user_id = actor.user_id,
-        actor_role = actor.role.as_str(),
+        owner_user_id = actor.user_id,
         status = %job.status,
         "transfer job paused by command"
     );
@@ -50,7 +49,7 @@ pub(super) async fn pause_job_on(
 
 /// 构造暂停结果卡片按钮。
 ///
-/// 暂停后的下一步都是明确 callback；复制区只保留 `job_id` 作为排查数据。
+/// 暂停后的下一步都是明确 callback；正文命令已经能兜底，这里不再重复复制 `job_id`。
 fn build_pause_job_action_rows(job_id: i64) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
         vec![
@@ -82,11 +81,6 @@ fn build_pause_job_action_rows(job_id: i64) -> Vec<Vec<tdlib_rs::types::InlineKe
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
-        vec![send::build_copy_button(
-            "复制 job_id",
-            &job_id.to_string(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )],
     ]
 }
 
@@ -97,8 +91,7 @@ pub(super) async fn resume_job_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let job = store::wake_job_with_owner_scope(job_id, actor.request_chat_id, actor.owner_scope())
-        .await?;
+    let job = store::wake_job(job_id).await?;
     // 恢复任务最终需要把后台执行器派发到 tokio 中，因此这里把当前请求的
     // `&AppContext` 克隆成 `Arc<AppContext>`，保持执行器和当前运行态一致。
     let app_context = std::sync::Arc::new(app.clone());
@@ -114,7 +107,7 @@ pub(super) async fn resume_job_on(
         job_id = job.id,
         request_chat_id = actor.request_chat_id,
         owner_user_id = actor.user_id,
-        actor_role = actor.role.as_str(),
+        owner_user_id = actor.user_id,
         status = %job.status,
         is_running,
         "transfer job resumed by command"
@@ -172,12 +165,7 @@ pub(super) async fn stop_job_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let requested = store::request_cancel_job_with_owner_scope(
-        job_id,
-        actor.request_chat_id,
-        actor.owner_scope(),
-    )
-    .await?;
+    let requested = store::request_cancel_job(job_id).await?;
     let is_running = workflow::is_job_running_in_process(app, job_id).await;
     let job = if is_running {
         requested
@@ -193,7 +181,7 @@ pub(super) async fn stop_job_on(
         job_id = job.id,
         request_chat_id = actor.request_chat_id,
         owner_user_id = actor.user_id,
-        actor_role = actor.role.as_str(),
+        owner_user_id = actor.user_id,
         status = %job.status,
         is_running,
         "transfer job stopped by command"
@@ -229,11 +217,6 @@ pub(super) async fn stop_job_on(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ])
-        .row(vec![send::build_copy_button(
-            "复制 job_id",
-            &job.id.to_string(),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )])
         .send(actor.request_chat_id, client_id)
         .await
 }
@@ -245,15 +228,14 @@ pub(super) async fn show_job_status_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let Some(snapshot) = store::get_job_progress_snapshot_for_actor(app, job_id, actor).await?
-    else {
+    let Some(snapshot) = store::get_job_progress_snapshot_with_context(app, job_id).await? else {
         anyhow::bail!("job not found: {}", job_id);
     };
     tracing::info!(
         job_id,
         request_chat_id = actor.request_chat_id,
         owner_user_id = actor.user_id,
-        actor_role = actor.role.as_str(),
+        owner_user_id = actor.user_id,
         status = %snapshot.job.status,
         "transfer job status requested"
     );
@@ -267,8 +249,9 @@ pub(super) async fn show_job_status_on(
 #[cfg(test)]
 mod tests {
     use super::build_pause_job_action_rows;
+    use base64::{Engine as _, engine::general_purpose};
 
-    // 暂停结果卡片应提供直接操作按钮，不再要求用户复制停止命令。
+    // 暂停结果卡片应提供直接操作按钮；停止按钮进入确认页，不再直接停止。
     #[test]
     fn test_build_pause_job_action_rows() {
         let rows = build_pause_job_action_rows(42);
@@ -281,13 +264,22 @@ mod tests {
         assert_eq!(rows[0][0].text, "查看详情");
         assert_eq!(rows[0][1].text, "恢复");
         assert_eq!(rows[0][2].text, "停止");
+        assert_eq!(decoded_callback_data(&rows[0][2]), "j:sc:42");
         assert_eq!(rows[1][0].text, "查看暂停列表");
         assert_eq!(rows[1][1].text, "菜单");
-        assert_eq!(rows[2][0].text, "复制 job_id");
+        assert_eq!(rows.len(), 2);
         assert!(!labels.contains(&"复制停止命令"));
+        assert!(!labels.contains(&"复制 job_id"));
         assert!(matches!(
             rows[0][1].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
+    }
+
+    fn decoded_callback_data(button: &tdlib_rs::types::InlineKeyboardButton) -> String {
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type else {
+            panic!("button must be callback");
+        };
+        String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap()
     }
 }

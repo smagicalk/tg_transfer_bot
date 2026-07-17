@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::config::{AccessControlConfig, BillingConfig, ClientRole, TargetsConfig};
+use crate::config::{ClientRole, TargetsConfig};
 
 /// 转存子系统运行时初始化快照。
 ///
@@ -8,12 +8,8 @@ use crate::config::{AccessControlConfig, BillingConfig, ClientRole, TargetsConfi
 pub struct RuntimeInitBundle {
     pub transfer_config: crate::config::TransferConfig,
     pub transfer_default_config: crate::config::TransferConfig,
-    pub billing_config: BillingConfig,
-    pub billing_default_config: BillingConfig,
     pub targets_config: TargetsConfig,
     pub targets_default_config: TargetsConfig,
-    pub access_control_config: AccessControlConfig,
-    pub access_control_default_config: AccessControlConfig,
     pub tdlib_files_directories: std::collections::HashMap<ClientRole, PathBuf>,
 }
 
@@ -41,30 +37,6 @@ pub fn targets_runtime_default_config_on(app: &crate::app_context::AppContext) -
     app.targets_runtime.runtime_default_config()
 }
 
-/// 从指定上下文读取 billing 运行时配置。
-pub fn billing_runtime_config_on(app: &crate::app_context::AppContext) -> BillingConfig {
-    app.billing_runtime.runtime_config()
-}
-
-/// 从指定上下文读取 billing 默认配置。
-pub fn billing_runtime_default_config_on(app: &crate::app_context::AppContext) -> BillingConfig {
-    app.billing_runtime.runtime_default_config()
-}
-
-/// 从指定上下文读取 ACL 运行时配置。
-pub fn access_control_runtime_config_on(
-    app: &crate::app_context::AppContext,
-) -> AccessControlConfig {
-    app.access_control_runtime.runtime_config()
-}
-
-/// 从指定上下文读取 ACL 默认配置。
-pub fn access_control_runtime_default_config_on(
-    app: &crate::app_context::AppContext,
-) -> AccessControlConfig {
-    app.access_control_runtime.runtime_default_config()
-}
-
 /// 在指定上下文上初始化 transfer 运行时配置。
 pub fn init_runtime_config_on(app: &crate::app_context::AppContext, bundle: RuntimeInitBundle) {
     app.transfer_runtime.init_runtime_config(
@@ -72,14 +44,8 @@ pub fn init_runtime_config_on(app: &crate::app_context::AppContext, bundle: Runt
         bundle.transfer_default_config,
         bundle.tdlib_files_directories,
     );
-    app.billing_runtime
-        .init_runtime_config(bundle.billing_config, bundle.billing_default_config);
     app.targets_runtime
         .init_runtime_config(bundle.targets_config, bundle.targets_default_config);
-    app.access_control_runtime.init_runtime_config(
-        bundle.access_control_config,
-        bundle.access_control_default_config,
-    );
 }
 
 /// 在指定上下文上更新 transfer 运行时配置。
@@ -96,20 +62,4 @@ pub fn update_targets_runtime_config_on(
     config: TargetsConfig,
 ) {
     app.targets_runtime.update_runtime_config(config);
-}
-
-/// 在指定上下文上更新 ACL 运行时配置。
-pub fn update_access_control_runtime_config_on(
-    app: &crate::app_context::AppContext,
-    config: AccessControlConfig,
-) {
-    app.access_control_runtime.update_runtime_config(config);
-}
-
-/// 在指定上下文上更新 billing 运行时配置。
-pub fn update_billing_runtime_config_on(
-    app: &crate::app_context::AppContext,
-    config: BillingConfig,
-) {
-    app.billing_runtime.update_runtime_config(config);
 }

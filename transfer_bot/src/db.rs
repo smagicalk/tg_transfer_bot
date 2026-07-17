@@ -1,6 +1,6 @@
 // 数据库模块：
 // - 初始化 SeaORM 连接池
-// - 定义 transfer_job / transfer_item / transfer_result_message / file_cache / menu_input_draft / user_account / point_ledger / transfer_runtime_config 实体
+// - 定义 transfer_job / transfer_item / transfer_result_message / file_cache / menu_input_draft / transfer_runtime_config 实体
 // - 启动时执行 SeaORM migration；具体 DDL 统一放到 migration/runtime_schema.rs
 use sea_orm_migration::MigratorTrait;
 
@@ -41,24 +41,14 @@ pub(crate) async fn ensure_runtime_schema(db: &sea_orm::DatabaseConnection) -> a
 pub(crate) static TEST_DB_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-pub(crate) mod access_control_admin_user;
-pub(crate) mod access_control_allowed_request_chat;
-pub(crate) mod access_control_allowed_target_chat;
-pub(crate) mod access_control_allowed_user;
-pub(crate) mod access_control_banned_user;
-pub(crate) mod access_control_runtime_config;
-pub(crate) mod billing_runtime_config;
 pub(crate) mod file_cache;
 pub(crate) mod menu_input_draft;
-pub(crate) mod point_ledger;
 pub(crate) mod transfer_item;
 pub(crate) mod transfer_job;
 pub(crate) mod transfer_result_message;
 pub(crate) mod transfer_runtime_config;
 pub(crate) mod transfer_target_alias;
 pub(crate) mod transfer_target_config;
-pub(crate) mod transfer_target_route;
-pub(crate) mod user_account;
 
 #[cfg(test)]
 mod tests;

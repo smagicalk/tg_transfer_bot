@@ -1,5 +1,6 @@
 {
   "config_version": 2,
+  "owner_user_id": 123456789,
   "tdlib_defaults": {
     "use_test_dc": false,
     "api_id": 0,
@@ -42,10 +43,5 @@
   },
   "workflow": {
     "upload_client": "bot"
-  },
-  "access_control": {
-    "bootstrap_admin_user_ids": [
-      123456789
-    ]
   }
 }

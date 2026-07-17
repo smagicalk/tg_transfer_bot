@@ -239,10 +239,6 @@ pub struct UserClientConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct BotClientConfig {
-    // bot 是当前交互模式的必需 client；该开关只保留给旧配置兼容。
-    // 新配置省略时按启用处理，避免模板里出现一个不能实际关闭的误导项。
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
-    pub enabled: bool,
     pub token: String,
     pub tdlib: ClientTdlibConfig,
 }
@@ -259,19 +255,7 @@ pub struct ClientsConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkflowConfig {
-    // 交互端固定为 bot；保留字段是为了兼容旧配置和内部运行时视图。
-    #[serde(
-        default = "default_client_role_bot",
-        skip_serializing_if = "is_bot_role"
-    )]
-    pub interaction_client: ClientRole,
-    // 链接源真实策略是 bot-first + user fallback；该字段只作为旧配置兼容下载端。
-    #[serde(
-        default = "default_client_role_bot",
-        skip_serializing_if = "is_bot_role"
-    )]
-    pub download_client: ClientRole,
-    // 上传端是当前 workflow 中唯一需要用户主动选择的角色。
+    // 上传端是 workflow 中唯一需要用户主动选择的角色。
     #[serde(default = "default_client_role_bot")]
     pub upload_client: ClientRole,
 }
@@ -279,238 +263,31 @@ pub struct WorkflowConfig {
 impl Default for WorkflowConfig {
     fn default() -> Self {
         Self {
-            interaction_client: ClientRole::Bot,
-            download_client: ClientRole::Bot,
             upload_client: ClientRole::Bot,
         }
     }
 }
 
-// 重复转存策略。
-// 当前数据库查重固定使用 source_link + target_chat_id，不把 uploader 放进唯一语义。
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "snake_case")]
-pub struct DeduplicateConfig {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default = "default_true")]
-    pub return_running_job: bool,
-    #[serde(default = "default_true")]
-    pub return_finished_result: bool,
-}
-
-impl Default for DeduplicateConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            return_running_job: true,
-            return_finished_result: true,
-        }
-    }
-}
-
-impl DeduplicateConfig {
-    /// 当前查重策略固定为 source_link + target_chat_id。
-    /// 配置写回时隐藏固定值，避免用户误以为可以通过配置切换查重语义。
-    fn is_fixed(&self) -> bool {
-        self.enabled && self.return_running_job && self.return_finished_result
-    }
-}
-
-// 交互用户角色。
-// admin 不消耗积分且可管理全局；user 只能查看和控制自己的任务。
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ActorRole {
-    Admin,
-    User,
-}
-
-impl ActorRole {
-    /// 数据库存储值与日志字段统一使用小写英文。
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Admin => "admin",
-            Self::User => "user",
-        }
-    }
-
-    /// 普通用户权限判断的反向辅助。
-    pub fn is_admin(self) -> bool {
-        self == Self::Admin
-    }
-}
-
-// 一次 bot 交互的身份上下文。
-// chat_id 表示这条命令发到哪里；user_id 表示真正点击按钮或发送命令的人。
+// 所有者的一次 bot 交互上下文。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestActor {
     pub request_chat_id: i64,
     pub user_id: i64,
-    pub role: ActorRole,
-}
-
-impl RequestActor {
-    /// 是否管理员。
-    pub fn is_admin(self) -> bool {
-        self.role.is_admin()
-    }
-
-    /// 任务可见范围：None 表示 admin 全局可见，Some 表示普通用户只能看自己的任务。
-    pub fn owner_scope(self) -> Option<i64> {
-        if self.is_admin() {
-            None
-        } else {
-            Some(self.user_id)
-        }
-    }
-}
-
-// 积分计费配置。
-// 第一版按任务和条目数计费，不按文件大小计费，避免下载前无法准确估算成本。
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "snake_case")]
-pub struct BillingConfig {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default = "default_billing_base_cost_points")]
-    pub base_cost_points: i64,
-    #[serde(default = "default_billing_item_cost_points")]
-    pub item_cost_points: i64,
-    #[serde(default)]
-    pub initial_user_points: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub announcement_text: Option<String>,
-}
-
-impl Default for BillingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_true(),
-            base_cost_points: default_billing_base_cost_points(),
-            item_cost_points: default_billing_item_cost_points(),
-            initial_user_points: 0,
-            announcement_text: None,
-        }
-    }
-}
-
-impl BillingConfig {
-    /// 根据抓取到的消息数量计算本次转存成本。
-    pub fn cost_for_items(&self, item_count: usize) -> i64 {
-        if !self.enabled {
-            return 0;
-        }
-        let item_count = i64::try_from(item_count).unwrap_or(i64::MAX);
-        self.base_cost_points
-            .saturating_add(self.item_cost_points.saturating_mul(item_count))
-            .max(0)
-    }
-
-    /// 转成数据库单行配置。
-    pub fn to_db_row(
-        &self,
-        now: chrono::DateTime<chrono::FixedOffset>,
-    ) -> crate::db::billing_runtime_config::ActiveModel {
-        crate::db::billing_runtime_config::ActiveModel {
-            id: sea_orm::ActiveValue::Set(1),
-            enabled: sea_orm::ActiveValue::Set(self.enabled),
-            base_cost_points: sea_orm::ActiveValue::Set(self.base_cost_points),
-            item_cost_points: sea_orm::ActiveValue::Set(self.item_cost_points),
-            initial_user_points: sea_orm::ActiveValue::Set(self.initial_user_points),
-            announcement_text: sea_orm::ActiveValue::Set(self.announcement_text.clone()),
-            created_at: sea_orm::ActiveValue::Set(now),
-            updated_at: sea_orm::ActiveValue::Set(now),
-        }
-    }
-
-    /// 从数据库单行配置恢复计费配置。
-    pub fn from_db_model(model: &crate::db::billing_runtime_config::Model) -> Self {
-        Self {
-            enabled: model.enabled,
-            base_cost_points: model.base_cost_points,
-            item_cost_points: model.item_cost_points,
-            initial_user_points: model.initial_user_points,
-            announcement_text: model.announcement_text.clone(),
-        }
-    }
-}
-
-// 访问控制配置。
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
-#[serde(rename_all = "snake_case")]
-pub struct AccessControlConfig {
-    #[serde(default)]
-    pub bootstrap_admin_user_ids: Vec<i64>,
-    #[serde(default)]
-    pub admin_user_ids: Vec<i64>,
-    #[serde(default)]
-    pub allowed_user_ids: Vec<i64>,
-    #[serde(default)]
-    pub allow_all_private_users: bool,
-    #[serde(default)]
-    pub banned_user_ids: Vec<i64>,
-    #[serde(default)]
-    pub allowed_request_chat_ids: Vec<i64>,
-    #[serde(default)]
-    pub allowed_target_chat_ids: Vec<i64>,
-}
-
-impl AccessControlConfig {
-    /// 兼容旧代码的 admin_ids 判断：同时包含“允许发命令的 chat”和“管理员用户”。
-    fn merged_admin_ids(&self) -> Vec<i64> {
-        let mut ids = BTreeSet::new();
-        for id in &self.bootstrap_admin_user_ids {
-            ids.insert(*id);
-        }
-        for id in &self.admin_user_ids {
-            ids.insert(*id);
-        }
-        for id in &self.allowed_request_chat_ids {
-            ids.insert(*id);
-        }
-        ids.into_iter().collect()
-    }
 }
 
 // 默认目标配置。
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct TargetsConfig {
     pub default_chat_id: i64,
-    #[serde(default)]
-    pub by_request_chat_id: HashMap<i64, i64>,
     #[serde(default)]
     pub aliases: HashMap<String, i64>,
 }
 
 impl TargetsConfig {
-    /// 兼容旧命令层 target_map：request_chat_id -> target_chat_id，0 表示全局兜底。
-    pub(crate) fn to_target_map(&self) -> HashMap<i64, i64> {
-        let mut target_map = self.by_request_chat_id.clone();
-        if self.default_chat_id != 0 {
-            target_map.entry(0).or_insert(self.default_chat_id);
-        }
-        target_map
-    }
-
-    /// 从运行时 target_map + aliases 恢复为原始目标配置视图。
-    pub fn from_runtime_target_state(
-        target_map: &HashMap<i64, i64>,
-        aliases: &HashMap<String, i64>,
-    ) -> Self {
-        let mut by_request_chat_id = target_map.clone();
-        let default_chat_id = by_request_chat_id.remove(&0).unwrap_or(0);
-        Self {
-            default_chat_id,
-            by_request_chat_id,
-            aliases: aliases.clone(),
-        }
-    }
-
     /// 判断 targets 默认值是否为空。
     pub fn is_empty(&self) -> bool {
-        self.default_chat_id == 0 && self.by_request_chat_id.is_empty() && self.aliases.is_empty()
+        self.default_chat_id == 0 && self.aliases.is_empty()
     }
 }
 
@@ -519,20 +296,16 @@ impl TargetsConfig {
 #[serde(rename_all = "snake_case")]
 pub struct BotConfigV2 {
     pub config_version: i32,
+    #[serde(default)]
+    pub owner_user_id: i64,
     pub tdlib_defaults: TdlibDefaults,
     #[serde(default)]
     pub storage: StorageConfig,
     pub clients: ClientsConfig,
     #[serde(default)]
     pub workflow: WorkflowConfig,
-    #[serde(default, skip_serializing_if = "DeduplicateConfig::is_fixed")]
-    pub deduplicate: DeduplicateConfig,
-    #[serde(default)]
-    pub access_control: AccessControlConfig,
     #[serde(default)]
     pub targets: TargetsConfig,
-    #[serde(default)]
-    pub billing: BillingConfig,
     #[serde(default)]
     pub transfer_config: TransferConfig,
 }
@@ -608,58 +381,19 @@ impl TransferClientIds {
 
 // 机器人运行时配置。
 // 这里是业务代码读取的“视图”，不再要求和 config.json 结构一一对应。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BotConfig {
+    // 唯一允许与 bot 私聊交互的所有者 Telegram user ID。
+    pub owner_user_id: i64,
+
     // 机器人业务数据库配置。
     pub storage: StorageConfig,
 
-    // 兼容旧代码的默认 TDLib 配置，取 interaction client。
-    pub tdlib_config: TdlibConfig,
-
-    // 兼容旧代码的管理员 chat/user id 白名单。
-    pub admin_ids: Vec<i64>,
-
-    // 文件兜底管理员用户 ID。数据库访问控制损坏或为空时，仍允许这些用户进入管理命令。
-    pub bootstrap_admin_user_ids: Vec<i64>,
-
-    // 明确的管理员用户 ID；权限判断以 sender_user_id 为准，不再只看 chat_id。
-    pub admin_user_ids: Vec<i64>,
-
-    // 允许管理员在其中发命令的 chat ID。
-    // 普通用户只允许私聊，避免群聊里多人共享同一个 request_chat_id。
-    pub allowed_request_chat_ids: Vec<i64>,
-
-    // 允许作为普通用户使用 bot 的用户 ID。
-    pub allowed_user_ids: Vec<i64>,
-
-    // 是否允许任意私聊用户作为普通用户使用。
-    pub allow_all_private_users: bool,
-
-    // 被禁止使用 bot 的用户 ID。
-    pub banned_user_ids: Vec<i64>,
-
-    // 兼容旧代码的默认 client id，取 interaction client。
-    pub client_id: Option<i32>,
-
-    // 默认转存目标映射：request_chat_id -> target_chat_id。
-    // 可使用 key=0 作为兜底目标。
-    pub target_map: HashMap<i64, i64>,
-
-    // 目标 chat 别名：命令里可以用 `/transfer <link> archive` 替代数字 chat_id。
-    pub target_aliases: HashMap<String, i64>,
-
-    // 允许作为转存目标的 chat 白名单。
-    // 空数组表示不限制；非空时显式参数、默认目标和别名都必须命中白名单。
-    pub allowed_target_chat_ids: Vec<i64>,
+    // 启动时用于 seed 数据库的目标配置。
+    pub targets: TargetsConfig,
 
     // 转存相关运行参数。
     pub transfer_config: TransferConfig,
-
-    // 普通用户积分计费参数。
-    pub billing: BillingConfig,
-
-    // 兼容旧代码的默认登录方式，取 interaction client。
-    pub login_info: LoginInfo,
 
     // v2 原始配置中提取出的工作流角色。
     pub workflow: WorkflowConfig,
@@ -669,36 +403,6 @@ pub struct BotConfig {
 
     // user/bot 的运行期 TDLib 配置。
     pub runtime_clients: HashMap<ClientRole, RuntimeClientConfig>,
-
-    // TDLib 日志级别。
-    pub log_verbosity_level: i32,
-}
-
-impl Default for BotConfig {
-    fn default() -> Self {
-        Self {
-            tdlib_config: TdlibConfig::default(),
-            storage: StorageConfig::default(),
-            admin_ids: Vec::new(),
-            bootstrap_admin_user_ids: Vec::new(),
-            admin_user_ids: Vec::new(),
-            allowed_request_chat_ids: Vec::new(),
-            allowed_user_ids: Vec::new(),
-            allow_all_private_users: false,
-            banned_user_ids: Vec::new(),
-            client_id: None,
-            target_map: HashMap::new(),
-            target_aliases: HashMap::new(),
-            allowed_target_chat_ids: Vec::new(),
-            transfer_config: TransferConfig::default(),
-            billing: BillingConfig::default(),
-            login_info: LoginInfo::default(),
-            workflow: WorkflowConfig::default(),
-            client_ids: RuntimeClientIds::default(),
-            runtime_clients: HashMap::new(),
-            log_verbosity_level: default_tdlib_log_verbosity_level(),
-        }
-    }
 }
 
 impl BotConfig {
@@ -720,11 +424,8 @@ impl BotConfig {
     pub fn required_client_roles(&self) -> Vec<ClientRole> {
         let mut roles = BTreeSet::new();
         // 链接源采用 bot-first + user fallback；user 始终作为私有源链接的兜底读取/下载端启动。
-        // download_client 是旧配置兼容字段，真实下载端会跟随每个 job 的 source_client_role。
         roles.insert(ClientRole::User);
-        roles.insert(self.workflow.interaction_client);
-        roles.insert(self.workflow.download_client);
-        roles.insert(self.workflow.upload_client);
+        roles.insert(ClientRole::Bot);
         roles.into_iter().collect()
     }
 
@@ -738,7 +439,7 @@ impl BotConfig {
     /// 获取交互 client id。
     pub fn interaction_client_id(&self) -> anyhow::Result<i32> {
         self.client_ids
-            .get(self.workflow.interaction_client)
+            .get(ClientRole::Bot)
             .ok_or_else(|| anyhow::anyhow!("interaction client is not ready"))
     }
 
@@ -746,10 +447,7 @@ impl BotConfig {
     pub fn transfer_client_ids(&self) -> anyhow::Result<TransferClientIds> {
         Ok(TransferClientIds {
             interaction: self.interaction_client_id()?,
-            download: self
-                .client_ids
-                .get(self.workflow.download_client)
-                .ok_or_else(|| anyhow::anyhow!("download client is not ready"))?,
+            download: self.interaction_client_id()?,
             upload: self
                 .client_ids
                 .get(self.workflow.upload_client)
@@ -759,17 +457,9 @@ impl BotConfig {
         })
     }
 
-    /// 写入某个角色的 TDLib client id，并同步兼容字段。
+    /// 写入某个角色的 TDLib client id。
     pub fn set_client_id(&mut self, role: ClientRole, client_id: i32) {
         self.client_ids.set(role, client_id);
-        if role == self.workflow.interaction_client {
-            self.client_id = Some(client_id);
-            if let Some(runtime) = self.runtime_clients.get(&role) {
-                self.tdlib_config = runtime.tdlib_config.clone();
-                self.login_info = runtime.login_info.clone();
-                self.log_verbosity_level = runtime.log_verbosity_level;
-            }
-        }
     }
 
     /// 判断所有 workflow 依赖的 client 是否已经 Ready。
@@ -779,60 +469,28 @@ impl BotConfig {
             .all(|role| ready_roles.contains(&role))
     }
 
-    /// 是否支持 TDLib inline keyboard/callback。
-    pub fn supports_reply_markup(&self) -> bool {
-        self.workflow.interaction_client == ClientRole::Bot
-    }
-
     /// 根据请求 chat 与发送者 user 判断是否允许交互。
     ///
     /// 项目明确只支持私聊 bot 交互，不处理群聊命令，避免多人共用一个 chat_id
-    /// 时产生任务归属、菜单草稿和积分幂等混乱。
+    /// 时产生任务归属和菜单草稿混乱。
     pub fn request_actor(&self, request_chat_id: i64, sender_user_id: i64) -> Option<RequestActor> {
-        if self.banned_user_ids.contains(&sender_user_id) {
-            return None;
-        }
-
-        if self.bootstrap_admin_user_ids.contains(&sender_user_id)
-            || self.admin_user_ids.contains(&sender_user_id)
-        {
-            if self.admin_request_chat_allowed(request_chat_id, sender_user_id) {
-                return Some(RequestActor {
-                    request_chat_id,
-                    user_id: sender_user_id,
-                    role: ActorRole::Admin,
-                });
-            }
-            return None;
-        }
-
-        if self.normal_user_request_allowed(request_chat_id, sender_user_id) {
-            return Some(RequestActor {
+        (self.owner_user_id != 0
+            && request_chat_id == sender_user_id
+            && sender_user_id == self.owner_user_id)
+            .then_some(RequestActor {
                 request_chat_id,
                 user_id: sender_user_id,
-                role: ActorRole::User,
-            });
-        }
-
-        None
-    }
-
-    /// admin 也只能私聊 bot 操作。
-    ///
-    /// `allowed_request_chat_ids` 作为旧配置兼容字段保留，但不再扩大命令入口范围。
-    fn admin_request_chat_allowed(&self, request_chat_id: i64, sender_user_id: i64) -> bool {
-        request_chat_id == sender_user_id
-    }
-
-    /// 普通用户只允许私聊，且必须在白名单中或开启 allow_all_private_users。
-    fn normal_user_request_allowed(&self, request_chat_id: i64, sender_user_id: i64) -> bool {
-        request_chat_id == sender_user_id
-            && (self.allow_all_private_users || self.allowed_user_ids.contains(&sender_user_id))
+            })
     }
 
     /// 从 v2 配置构造运行时视图。
     fn from_v2(config: BotConfigV2) -> anyhow::Result<Self> {
         config.validate()?;
+
+        let owner_user_id = config.owner_user_id;
+        if owner_user_id <= 0 {
+            anyhow::bail!("owner_user_id must be positive");
+        }
 
         let mut runtime_clients = HashMap::new();
         runtime_clients.insert(
@@ -848,48 +506,28 @@ impl BotConfig {
                 log_verbosity_level: config.tdlib_defaults.log_verbosity_level,
             },
         );
-        if config.clients.bot.enabled {
-            runtime_clients.insert(
-                ClientRole::Bot,
-                RuntimeClientConfig {
-                    role: ClientRole::Bot,
-                    tdlib_config: config
-                        .clients
-                        .bot
-                        .tdlib
-                        .to_tdlib_config(&config.tdlib_defaults),
-                    login_info: LoginInfo::Token(config.clients.bot.token.clone()),
-                    log_verbosity_level: config.tdlib_defaults.log_verbosity_level,
-                },
-            );
-        }
-
-        let interaction_runtime = runtime_clients
-            .get(&config.workflow.interaction_client)
-            .ok_or_else(|| anyhow::anyhow!("interaction client is not configured"))?
-            .clone();
+        runtime_clients.insert(
+            ClientRole::Bot,
+            RuntimeClientConfig {
+                role: ClientRole::Bot,
+                tdlib_config: config
+                    .clients
+                    .bot
+                    .tdlib
+                    .to_tdlib_config(&config.tdlib_defaults),
+                login_info: LoginInfo::Token(config.clients.bot.token.clone()),
+                log_verbosity_level: config.tdlib_defaults.log_verbosity_level,
+            },
+        );
 
         Ok(Self {
-            tdlib_config: interaction_runtime.tdlib_config.clone(),
+            owner_user_id,
             storage: config.storage,
-            admin_ids: config.access_control.merged_admin_ids(),
-            bootstrap_admin_user_ids: config.access_control.bootstrap_admin_user_ids,
-            admin_user_ids: config.access_control.admin_user_ids,
-            allowed_request_chat_ids: config.access_control.allowed_request_chat_ids,
-            allowed_user_ids: config.access_control.allowed_user_ids,
-            allow_all_private_users: config.access_control.allow_all_private_users,
-            banned_user_ids: config.access_control.banned_user_ids,
-            client_id: None,
-            target_map: config.targets.to_target_map(),
-            target_aliases: config.targets.aliases,
-            allowed_target_chat_ids: config.access_control.allowed_target_chat_ids,
+            targets: config.targets,
             transfer_config: config.transfer_config,
-            billing: config.billing,
-            login_info: interaction_runtime.login_info.clone(),
             workflow: config.workflow,
             client_ids: RuntimeClientIds::default(),
             runtime_clients,
-            log_verbosity_level: interaction_runtime.log_verbosity_level,
         })
     }
 }
@@ -905,41 +543,14 @@ impl BotConfigV2 {
             anyhow::bail!("storage.database_url cannot be empty");
         }
 
-        if self.billing.base_cost_points < 0 || self.billing.item_cost_points < 0 {
-            anyhow::bail!("billing cost points cannot be negative");
+        if self.owner_user_id <= 0 {
+            anyhow::bail!("owner_user_id must be positive");
         }
 
-        // 交互链路依赖 bot-only 的 inline keyboard、callback 和 copy-text 按钮。
-        // 这里提前拒绝 user 交互，避免启动后菜单卡片没有按钮、callback 永远进不来。
-        if self.workflow.interaction_client != ClientRole::Bot {
-            anyhow::bail!(
-                "workflow.interaction_client must be bot because Telegram interactive cards require bot reply markup"
-            );
+        if self.clients.bot.token.trim().is_empty() {
+            anyhow::bail!("clients.bot.token is required");
         }
-
-        // 当前查重语义固定为 source_link + target_chat_id：
-        // 上传者只记录实际执行者，不参与“是否同一个转存”的判断。
-        if !self.deduplicate.enabled
-            || !self.deduplicate.return_running_job
-            || !self.deduplicate.return_finished_result
-        {
-            anyhow::bail!("deduplicate options are fixed to true for source_link + target_chat_id");
-        }
-
-        for role in [
-            self.workflow.interaction_client,
-            self.workflow.download_client,
-            self.workflow.upload_client,
-        ] {
-            if role == ClientRole::Bot && !self.clients.bot.enabled {
-                anyhow::bail!("workflow requires bot client but clients.bot.enabled is false");
-            }
-        }
-
-        if self.clients.bot.enabled && self.clients.bot.token.trim().is_empty() {
-            anyhow::bail!("clients.bot.token is required when bot is enabled");
-        }
-        if self.clients.bot.enabled && !looks_like_bot_token(self.clients.bot.token.trim()) {
+        if !looks_like_bot_token(self.clients.bot.token.trim()) {
             anyhow::bail!("clients.bot.token format is invalid");
         }
 
@@ -949,18 +560,16 @@ impl BotConfigV2 {
             anyhow::bail!("clients.user.tdlib directories cannot be empty");
         }
 
-        if self.clients.bot.enabled {
-            let bot_db = self.clients.bot.tdlib.database_directory.trim();
-            let bot_files = self.clients.bot.tdlib.files_directory.trim();
-            if bot_db.is_empty() || bot_files.is_empty() {
-                anyhow::bail!("clients.bot.tdlib directories cannot be empty");
-            }
-            if user_db == bot_db {
-                anyhow::bail!("user and bot database_directory must be different");
-            }
-            if user_files == bot_files {
-                anyhow::bail!("user and bot files_directory must be different");
-            }
+        let bot_db = self.clients.bot.tdlib.database_directory.trim();
+        let bot_files = self.clients.bot.tdlib.files_directory.trim();
+        if bot_db.is_empty() || bot_files.is_empty() {
+            anyhow::bail!("clients.bot.tdlib directories cannot be empty");
+        }
+        if user_db == bot_db {
+            anyhow::bail!("user and bot database_directory must be different");
+        }
+        if user_files == bot_files {
+            anyhow::bail!("user and bot files_directory must be different");
         }
 
         Ok(())
@@ -1006,16 +615,6 @@ fn default_downloads_page_size() -> u64 {
     8
 }
 
-// 默认单次转存基础积分成本。
-fn default_billing_base_cost_points() -> i64 {
-    1
-}
-
-// 默认每条消息积分成本。
-fn default_billing_item_cost_points() -> i64 {
-    1
-}
-
 // 默认菜单输入超时时间秒数。
 fn default_menu_input_timeout_seconds() -> u64 {
     10 * 60
@@ -1047,24 +646,9 @@ fn looks_like_bot_token(token: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-// serde 默认 true 辅助函数。
-fn default_true() -> bool {
-    true
-}
-
-// serde 跳过默认 true 字段时使用，避免配置写回时保留冗余开关。
-fn is_true(value: &bool) -> bool {
-    *value
-}
-
-// workflow 的交互端和兼容下载端都默认 bot。
+// workflow 的上传端默认 bot。
 fn default_client_role_bot() -> ClientRole {
     ClientRole::Bot
-}
-
-// workflow 固定 bot 的字段在写回时隐藏，只保留真正需要选择的 upload_client。
-fn is_bot_role(role: &ClientRole) -> bool {
-    *role == ClientRole::Bot
 }
 
 #[cfg(test)]
@@ -1072,7 +656,7 @@ mod tests {
     use super::*;
 
     // 旧版 v1 单 client 配置不能再启动。
-    // 当前交互固定 bot，下载/上传又需要显式 user/bot client，继续兼容 v1 会隐藏配置错误。
+    // 当前配置需要显式 user/bot client，继续兼容 v1 会隐藏配置错误。
     #[test]
     fn test_legacy_config_is_rejected() {
         let bot_config_str = r#"
@@ -1113,78 +697,71 @@ mod tests {
         assert!(err.to_string().contains("config_version 2 is required"));
     }
 
-    // v2 配置应解析出 bot 交互、bot 兼容下载、bot 上传这三个角色。
+    // v2 配置应固定启动 user/bot，并保留可选上传角色。
     #[test]
     fn test_v2_config_maps_to_runtime_clients() {
         let config = BotConfig::from_json_str(v2_config_text()).unwrap();
 
-        assert_eq!(config.workflow.interaction_client, ClientRole::Bot);
-        assert_eq!(config.workflow.download_client, ClientRole::Bot);
         assert_eq!(config.workflow.upload_client, ClientRole::Bot);
         assert_eq!(
             config.required_client_roles(),
             vec![ClientRole::User, ClientRole::Bot]
         );
-        assert!(matches!(config.login_info, LoginInfo::Token(_)));
-        assert!(config.supports_reply_markup());
+        assert!(matches!(
+            config.runtime_client(ClientRole::Bot).unwrap().login_info,
+            LoginInfo::Token(_)
+        ));
         assert!(config.runtime_client(ClientRole::User).is_ok());
         assert!(config.runtime_client(ClientRole::Bot).is_ok());
         assert_eq!(
             config.storage.database_url,
             "sqlite://tg/app/transfer.sqlite?mode=rwc"
         );
-        assert!(config.target_map.is_empty());
-        assert!(config.allowed_target_chat_ids.is_empty());
-        assert_eq!(
-            config.billing.base_cost_points,
-            default_billing_base_cost_points()
-        );
-        assert_eq!(
-            config.billing.item_cost_points,
-            default_billing_item_cost_points()
-        );
+        assert!(config.targets.is_empty());
         assert!(config.request_actor(123, 1).is_none());
-        assert!(
-            config
-                .request_actor(1, 1)
-                .is_some_and(|actor| actor.is_admin())
-        );
+        assert!(config.request_actor(1, 1).is_some());
         assert!(config.request_actor(999, 1).is_none());
         assert!(config.request_actor(2, 2).is_none());
         assert!(config.request_actor(3, 3).is_none());
     }
 
-    // 文件配置只保留启动级字段时仍可启动；targets / billing / transfer_config 后续由数据库运行态接管。
+    #[test]
+    fn test_v2_owner_user_id_is_the_only_private_actor() {
+        let config_text = v2_config_text();
+        let config = BotConfig::from_json_str(config_text).unwrap();
+
+        assert_eq!(config.owner_user_id, 1);
+        assert!(config.request_actor(1, 1).is_some());
+        assert!(config.request_actor(2, 2).is_none());
+        assert!(config.request_actor(999, 1).is_none());
+    }
+
+    #[test]
+    fn test_v2_rejects_missing_owner_user_id() {
+        let config_text = v2_config_text().replace("\"owner_user_id\": 1", "\"owner_user_id\": 0");
+
+        let err = BotConfig::from_json_str(&config_text).unwrap_err();
+
+        assert!(err.to_string().contains("owner_user_id must be positive"));
+    }
+
+    // 文件配置只保留启动级字段时仍可启动；targets / transfer_config 后续由数据库运行态接管。
     #[test]
     fn test_v2_config_accepts_database_owned_runtime_defaults() {
         let config = BotConfig::from_json_str(v2_config_text()).unwrap();
 
-        assert_eq!(config.bootstrap_admin_user_ids, vec![1]);
-        assert!(config.admin_user_ids.is_empty());
-        assert!(config.allowed_user_ids.is_empty());
-        assert!(config.target_map.is_empty());
-        assert!(config.target_aliases.is_empty());
+        assert_eq!(config.owner_user_id, 1);
+        assert!(config.targets.is_empty());
         assert_eq!(
             config.transfer_config.job_concurrency,
             default_transfer_job_concurrency()
         );
-        assert_eq!(config.billing.enabled, BillingConfig::default().enabled);
-        assert_eq!(
-            config.billing.base_cost_points,
-            default_billing_base_cost_points()
-        );
-        assert_eq!(
-            config.billing.item_cost_points,
-            default_billing_item_cost_points()
-        );
-        assert_eq!(config.billing.initial_user_points, 0);
-        assert!(config.billing.announcement_text.is_none());
     }
 
     // 同一个链接转到同一个目标是否复用由数据库层 source_link + target_chat_id 决定，
     // 配置里的 upload_client 只决定谁上传，不应被要求参与查重键。
     #[test]
-    fn test_v2_upload_client_does_not_affect_deduplicate_config() {
+    fn test_v2_upload_client_does_not_affect_target_defaults() {
         let bot_upload = BotConfig::from_json_str(v2_config_text()).unwrap();
         let user_upload = BotConfig::from_json_str(
             &v2_config_text().replace("\"upload_client\": \"bot\"", "\"upload_client\": \"user\""),
@@ -1193,7 +770,7 @@ mod tests {
 
         assert_eq!(bot_upload.workflow.upload_client, ClientRole::Bot);
         assert_eq!(user_upload.workflow.upload_client, ClientRole::User);
-        assert_eq!(bot_upload.target_map, user_upload.target_map);
+        assert_eq!(bot_upload.targets, user_upload.targets);
     }
 
     // bot 可以只负责命令交互，上传仍由 user 执行。
@@ -1205,32 +782,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(config.workflow.interaction_client, ClientRole::Bot);
-        assert_eq!(config.workflow.download_client, ClientRole::Bot);
         assert_eq!(config.workflow.upload_client, ClientRole::User);
         assert_eq!(
             config.required_client_roles(),
             vec![ClientRole::User, ClientRole::Bot]
         );
-        assert!(config.supports_reply_markup());
     }
 
-    // 交互端必须是 bot：菜单按钮、callback、copy-text 都依赖 bot reply_markup。
-    #[test]
-    fn test_v2_rejects_user_interaction_client() {
-        let err = BotConfig::from_json_str(&v2_config_text().replace(
-            "\"interaction_client\": \"bot\"",
-            "\"interaction_client\": \"user\"",
-        ))
-        .unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("workflow.interaction_client must be bot")
-        );
-    }
-
-    // bot 默认负责上传和兼容下载端；user 仍会作为链接源 fallback client 启动。
+    // bot 默认负责上传和源读取；user 仍会作为链接源 fallback client 启动。
     // 查重维度保持 source_link + target_chat_id，不因为上传者变化而分裂历史结果。
     #[test]
     fn test_v2_supports_bot_source_with_bot_upload() {
@@ -1242,7 +801,6 @@ mod tests {
             config.transfer_client_ids().unwrap()
         };
 
-        assert_eq!(config.workflow.download_client, ClientRole::Bot);
         assert_eq!(config.workflow.upload_client, ClientRole::Bot);
         assert_eq!(ids.interaction, 20);
         assert_eq!(ids.download, 20);
@@ -1251,83 +809,19 @@ mod tests {
 
     // 运行时默认 workflow 也保持 bot-first + bot-upload，避免测试或兜底构造误用 user 上传。
     #[test]
-    fn test_workflow_default_uses_bot_for_interaction_download_and_upload() {
+    fn test_workflow_default_uses_bot_for_upload() {
         let workflow = WorkflowConfig::default();
 
-        assert_eq!(workflow.interaction_client, ClientRole::Bot);
-        assert_eq!(workflow.download_client, ClientRole::Bot);
         assert_eq!(workflow.upload_client, ClientRole::Bot);
     }
 
-    // 新模板只保留真正需要选择的 upload_client：
-    // - bot.enabled 省略时默认启用
-    // - interaction/download 省略时默认 bot
-    // - deduplicate 省略时使用固定查重策略
+    // 新模板只保留真正需要选择的 upload_client。
     #[test]
     fn test_v2_accepts_simplified_workflow_and_fixed_defaults() {
-        let simplified = v2_config_text()
-            .replace("              \"enabled\": true,\n", "")
-            .replace(
-                "            \"interaction_client\": \"bot\",\n            \"download_client\": \"bot\",\n",
-                "",
-            )
-            .replace(
-                "          \"deduplicate\": {\n            \"enabled\": true,\n            \"return_running_job\": true,\n            \"return_finished_result\": true\n          },\n",
-                "",
-            );
+        let config = BotConfig::from_json_str(v2_config_text()).unwrap();
 
-        let config = BotConfig::from_json_str(&simplified).unwrap();
-
-        assert_eq!(config.workflow.interaction_client, ClientRole::Bot);
-        assert_eq!(config.workflow.download_client, ClientRole::Bot);
         assert_eq!(config.workflow.upload_client, ClientRole::Bot);
         assert!(config.runtime_client(ClientRole::Bot).is_ok());
-    }
-
-    // 当前重复转存策略固定开启，避免配置写成 false 但数据库仍按固定规则查重。
-    #[test]
-    fn test_v2_rejects_disabled_deduplicate() {
-        let err = BotConfig::from_json_str(&v2_config_text().replace(
-            "\"deduplicate\": {\n            \"enabled\": true",
-            "\"deduplicate\": {\n            \"enabled\": false",
-        ))
-        .unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("deduplicate options are fixed to true")
-        );
-    }
-
-    // v2 允许 user 作为兼容下载端；但 user 无论如何都会作为链接源 fallback client 启动。
-    #[test]
-    fn test_v2_supports_user_download_client_with_user_fallback() {
-        let config = BotConfig::from_json_str(&v2_config_text().replace(
-            "\"download_client\": \"bot\"",
-            "\"download_client\": \"user\"",
-        ))
-        .unwrap();
-
-        assert_eq!(config.workflow.download_client, ClientRole::User);
-        assert_eq!(
-            config.required_client_roles(),
-            vec![ClientRole::User, ClientRole::Bot]
-        );
-    }
-
-    // workflow 使用 bot 时必须启用 bot client，避免启动后才发现缺少 token/client。
-    #[test]
-    fn test_v2_rejects_disabled_required_bot() {
-        let err = BotConfig::from_json_str(&v2_config_text().replace(
-            "\"bot\": {\n              \"enabled\": true",
-            "\"bot\": {\n              \"enabled\": false",
-        ))
-        .unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("workflow requires bot client but clients.bot.enabled is false")
-        );
     }
 
     // 业务数据库连接串不能为空，避免运行时才发现 SeaORM 无法连接。
@@ -1409,7 +903,6 @@ mod tests {
               }
             },
             "bot": {
-              "enabled": true,
               "token": "123456789:abcdefghijklmnopqrstuvwxyzABCDEF",
               "tdlib": {
                 "database_directory": "tg/bot/db",
@@ -1422,18 +915,9 @@ mod tests {
             }
           },
           "workflow": {
-            "interaction_client": "bot",
-            "download_client": "bot",
             "upload_client": "bot"
           },
-          "deduplicate": {
-            "enabled": true,
-            "return_running_job": true,
-            "return_finished_result": true
-          },
-          "access_control": {
-            "bootstrap_admin_user_ids": [1]
-          }
+          "owner_user_id": 1
         }"#
     }
 }

@@ -8,27 +8,26 @@ mod recent_jobs;
 use crate::tgbot::send;
 
 use super::super::super::store;
-use super::super::common::{CommandStyle, build_refresh_return_menu_row, downloads_command};
-use super::super::downloads::build_downloads_menu_callback_data;
+use super::super::common::build_refresh_return_menu_row;
+use super::super::downloads::build_downloads_menu_filter_rows;
 use super::super::help;
+use super::super::job::build_job_menu_filter_rows;
 use super::callback::{self, MenuPage};
 use super::input::{MenuDraftSummary, MenuJobAction};
 use home::home_buttons;
-use hubs::{account_hub_buttons, admin_hub_buttons, tasks_hub_buttons};
+use hubs::{admin_hub_buttons, tasks_hub_buttons};
 
 /// 构建当前菜单页按钮。
 #[cfg(test)]
 pub(super) fn build_menu_buttons(
     page: MenuPage,
     recent_jobs: &[store::JobProgressSnapshot],
-    is_admin: bool,
     draft_summary: Option<&MenuDraftSummary>,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     build_menu_buttons_on(
         crate::app_context::app_context().as_ref(),
         page,
         recent_jobs,
-        is_admin,
         draft_summary,
     )
 }
@@ -38,181 +37,89 @@ pub(super) fn build_menu_buttons_on(
     app: &crate::app_context::AppContext,
     page: MenuPage,
     recent_jobs: &[store::JobProgressSnapshot],
-    is_admin: bool,
     draft_summary: Option<&MenuDraftSummary>,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     match page {
-        MenuPage::Home => home_buttons(recent_jobs, is_admin, draft_summary),
+        MenuPage::Home => home_buttons(recent_jobs, draft_summary),
         MenuPage::TasksHub => tasks_hub_buttons(recent_jobs),
-        MenuPage::AccountHub => account_hub_buttons(is_admin),
-        MenuPage::AdminHub if is_admin => admin_hub_buttons(),
-        MenuPage::AdminHub => user_home_fallback_buttons(MenuPage::AdminHub),
-        MenuPage::Transfer => transfer_buttons(),
+        MenuPage::AdminHub => admin_hub_buttons(),
         MenuPage::Downloads => downloads_buttons(),
         MenuPage::Jobs => jobs_buttons(),
         MenuPage::Lookup => lookup_buttons(),
-        MenuPage::Config if is_admin => super::super::config_cmd::build_config_buttons_on(app),
-        MenuPage::Config => user_home_fallback_buttons(MenuPage::Config),
-        MenuPage::Targets if is_admin => super::super::targets::build_targets_buttons_on(app),
-        MenuPage::Targets => user_home_fallback_buttons(MenuPage::Targets),
-        MenuPage::Acl if is_admin => super::super::acl::build_acl_buttons_on(app),
-        MenuPage::Acl => user_home_fallback_buttons(MenuPage::Acl),
-        MenuPage::Billing if is_admin => super::super::billing::build_billing_buttons_on(app),
-        MenuPage::Billing => user_home_fallback_buttons(MenuPage::Billing),
-        MenuPage::Help => help_buttons(is_admin),
+        MenuPage::Config => super::super::config_cmd::build_config_buttons_on(app),
+        MenuPage::Targets => super::super::targets::build_targets_buttons_on(app),
+        MenuPage::Help => help_buttons(),
     }
-}
-
-/// 转存页按钮。
-fn transfer_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
-        vec![
-            send::build_callback_button(
-                "开始转存",
-                &callback::new_transfer_callback_data(),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_callback_button(
-                "快速转存",
-                &callback::quick_transfer_default_callback_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        build_refresh_return_menu_row(
-            menu_nav_button(
-                "刷新",
-                MenuPage::Transfer,
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            menu_nav_button(
-                "首页",
-                MenuPage::Home,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            menu_nav_button(
-                "帮助",
-                MenuPage::Help,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ),
-        vec![send::build_callback_button(
-            "取消输入",
-            &callback::cancel_input_callback_data(),
-            tdlib_rs::enums::ButtonStyle::Danger,
-        )],
-    ]
 }
 
 /// 下载页按钮。
 fn downloads_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
-        vec![
-            downloads_button("全部", "all", tdlib_rs::enums::ButtonStyle::Primary),
-            downloads_button("运行", "run", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button("等待", "wait", tdlib_rs::enums::ButtonStyle::Default),
-        ],
-        vec![
-            downloads_button("下载", "dl", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button("上传", "up", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button("就绪", "ready", tdlib_rs::enums::ButtonStyle::Default),
-        ],
-        vec![
-            downloads_button("完成", "done", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button("成功", "ok", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button("失败", "fail", tdlib_rs::enums::ButtonStyle::Default),
-        ],
-        vec![
-            downloads_button("暂停", "pause", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button(
-                "停止中",
-                "cancelling",
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            downloads_button("已停止", "cancel", tdlib_rs::enums::ButtonStyle::Default),
-        ],
-        build_refresh_return_menu_row(
-            menu_nav_button(
-                "刷新",
-                MenuPage::Downloads,
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            menu_nav_button(
-                "首页",
-                MenuPage::Home,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            menu_nav_button(
-                "帮助",
-                MenuPage::Help,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
+    let mut rows = build_downloads_menu_filter_rows();
+    rows.push(build_refresh_return_menu_row(
+        menu_nav_button(
+            "刷新",
+            MenuPage::Downloads,
+            tdlib_rs::enums::ButtonStyle::Primary,
         ),
-    ]
+        menu_nav_button(
+            "首页",
+            MenuPage::Home,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        menu_nav_button(
+            "帮助",
+            MenuPage::Help,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ));
+    rows
 }
 
 /// 任务页按钮。
 fn jobs_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
-        vec![
-            downloads_button("最近任务", "all", tdlib_rs::enums::ButtonStyle::Primary),
-            downloads_button("运行任务", "run", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button("暂停任务", "pause", tdlib_rs::enums::ButtonStyle::Default),
-        ],
-        vec![
-            downloads_button(
-                "停止中",
-                "cancelling",
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            downloads_button("已停止", "cancel", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button("失败任务", "fail", tdlib_rs::enums::ButtonStyle::Default),
-        ],
-        vec![
-            downloads_button("成功任务", "ok", tdlib_rs::enums::ButtonStyle::Default),
-            downloads_button("就绪任务", "ready", tdlib_rs::enums::ButtonStyle::Default),
-        ],
-        vec![
-            job_id_input_button(
-                "输入详情",
-                MenuJobAction::Status,
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            job_id_input_button(
-                "输入暂停",
-                MenuJobAction::Pause,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            job_id_input_button(
-                "输入恢复",
-                MenuJobAction::Resume,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            job_id_input_button(
-                "输入停止",
-                MenuJobAction::Stop,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        build_refresh_return_menu_row(
-            menu_nav_button(
-                "刷新",
-                MenuPage::Jobs,
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            menu_nav_button(
-                "首页",
-                MenuPage::Home,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            menu_nav_button(
-                "帮助",
-                MenuPage::Help,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
+    let mut rows = build_job_menu_filter_rows();
+    rows.push(vec![
+        job_id_input_button(
+            "输入详情",
+            MenuJobAction::Status,
+            tdlib_rs::enums::ButtonStyle::Primary,
         ),
-    ]
+        job_id_input_button(
+            "输入暂停",
+            MenuJobAction::Pause,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]);
+    rows.push(vec![
+        job_id_input_button(
+            "输入恢复",
+            MenuJobAction::Resume,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        job_id_input_button(
+            "输入停止",
+            MenuJobAction::Stop,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]);
+    rows.push(build_refresh_return_menu_row(
+        menu_nav_button(
+            "刷新",
+            MenuPage::Jobs,
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        menu_nav_button(
+            "首页",
+            MenuPage::Home,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        menu_nav_button(
+            "帮助",
+            MenuPage::Help,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ));
+    rows
 }
 
 /// 查询页按钮。
@@ -251,112 +158,26 @@ fn lookup_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
 }
 
 /// 帮助页按钮。
-fn help_buttons(is_admin: bool) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    let mut rows = vec![
-        vec![send::build_callback_button(
-            "帮助目录",
-            &help::build_help_callback_data(None),
+fn help_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut rows = help::build_help_menu_topic_rows();
+    rows.push(build_refresh_return_menu_row(
+        menu_nav_button(
+            "刷新",
+            MenuPage::Help,
             tdlib_rs::enums::ButtonStyle::Primary,
-        )],
-        vec![
-            send::build_callback_button(
-                "转存帮助",
-                &help::build_help_callback_data(Some("transfer")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "查询帮助",
-                &help::build_help_callback_data(Some("lookup")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "下载帮助",
-                &help::build_help_callback_data(Some("downloads")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            send::build_callback_button(
-                "任务帮助",
-                &help::build_help_callback_data(Some("job")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "积分帮助",
-                &help::build_help_callback_data(Some("points")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![send::build_callback_button(
-            "菜单页",
-            &help::build_help_callback_data(Some("menu")),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )],
-        vec![send::build_callback_button(
-            "帮助说明",
-            &help::build_help_callback_data(Some("help")),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )],
-        build_refresh_return_menu_row(
-            menu_nav_button(
-                "刷新",
-                MenuPage::Help,
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            menu_nav_button(
-                "首页",
-                MenuPage::Home,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            menu_nav_button(
-                "转存页",
-                MenuPage::Transfer,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
         ),
-    ];
-    if is_admin {
-        rows.insert(
-            3,
-            vec![send::build_callback_button(
-                "配置帮助",
-                &help::build_help_callback_data(Some("config")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            )],
-        );
-    }
+        menu_nav_button(
+            "首页",
+            MenuPage::Home,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        send::build_callback_button(
+            "开始转存",
+            &callback::new_transfer_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ));
     rows
-}
-
-/// 普通用户误入 admin-only 页时只保留安全导航。
-fn user_home_fallback_buttons(page: MenuPage) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
-        build_refresh_return_menu_row(
-            menu_nav_button("刷新", page, tdlib_rs::enums::ButtonStyle::Primary),
-            menu_nav_button(
-                "首页",
-                MenuPage::Home,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            menu_nav_button(
-                "帮助",
-                MenuPage::Help,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ),
-        vec![
-            send::build_callback_button(
-                "余额",
-                &super::super::points::build_balance_home_callback_data(),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_callback_button(
-                "积分流水",
-                &super::super::points::build_balance_history_home_callback_data(10, 1),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-    ]
 }
 
 /// 构建等待用户输入 job_id 的任务控制按钮。
@@ -372,19 +193,12 @@ fn job_id_input_button(
 fn downloads_button(
     text: &str,
     filter: &str,
+    limit: u64,
     style: tdlib_rs::enums::ButtonStyle,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    if let Some(data) = build_downloads_menu_callback_data(filter, 8) {
-        return send::build_callback_button(text, &data, style);
-    }
-
-    tracing::debug!(
-        filter,
-        "invalid downloads menu filter, fallback to copy command button"
-    );
-    send::build_copy_button(
+    send::build_callback_button(
         text,
-        &downloads_command(Some(filter), None, None, CommandStyle::Short),
+        &crate::tgbot::transfer::command::require_downloads_filter_button_data(filter, limit),
         style,
     )
 }
@@ -405,29 +219,30 @@ mod tests {
     // 首页应提供主要入口，保持日常操作足够短。
     #[test]
     fn test_home_buttons() {
-        let rows = build_menu_buttons(MenuPage::Home, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::Home, &[], None);
 
-        assert_eq!(rows[0][0].text, "开始转存");
-        assert_eq!(rows[0][1].text, "快速转存");
+        assert_eq!(rows[0][0].text, "快速转存");
+        assert_eq!(rows[0][1].text, "指定目标");
         assert_eq!(rows[1][0].text, "任务");
-        assert_eq!(rows[1][1].text, "账户");
-        assert_eq!(rows[2][0].text, "管理");
+        assert_eq!(rows[1][1].text, "管理");
+        assert_eq!(rows[1][2].text, "帮助");
         assert!(
             !rows
                 .iter()
                 .flatten()
                 .any(|button| button.text == "快速查询")
         );
-        assert_eq!(rows[3][0].text, "刷新");
-        assert_eq!(rows[3].len(), 1);
+        assert_eq!(rows[2][0].text, "刷新");
+        assert_eq!(rows[2].len(), 1);
     }
 
     // 首页按钮按“主要动作 -> hub 导航 -> footer”分组，避免再次变回功能总表。
     #[test]
     fn test_home_buttons_use_hub_navigation() {
-        let rows = build_menu_buttons(MenuPage::Home, &[], false, None);
+        let rows = build_menu_buttons(MenuPage::Home, &[], None);
         assert_eq!(rows[1][0].text, "任务");
-        assert_eq!(rows[1][1].text, "账户");
+        assert_eq!(rows[1][1].text, "管理");
+        assert_eq!(rows[1][2].text, "帮助");
         assert_eq!(rows[2][0].text, "刷新");
     }
 
@@ -436,7 +251,7 @@ mod tests {
     fn test_downloads_buttons_use_downloads_callback() {
         use base64::{Engine as _, engine::general_purpose};
 
-        let rows = build_menu_buttons(MenuPage::Downloads, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::Downloads, &[], None);
 
         let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
         else {
@@ -452,7 +267,7 @@ mod tests {
     fn test_help_buttons_use_help_callback() {
         use base64::{Engine as _, engine::general_purpose};
 
-        let rows = build_menu_buttons(MenuPage::Help, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::Help, &[], None);
 
         let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
         else {
@@ -468,12 +283,7 @@ mod tests {
     fn test_recent_jobs_button_uses_downloads_callback() {
         use base64::{Engine as _, engine::general_purpose};
 
-        let rows = build_menu_buttons(
-            MenuPage::TasksHub,
-            &[snapshot_with_status("running")],
-            true,
-            None,
-        );
+        let rows = build_menu_buttons(MenuPage::TasksHub, &[snapshot_with_status("running")], None);
         let recent = rows
             .iter()
             .flatten()
@@ -487,15 +297,12 @@ mod tests {
         assert!(decoded.starts_with("d:"));
     }
 
-    // 任务 hub 最近任务应能直接暂停/停止，减少进入详情页再操作的步骤。
+    // 任务 hub 最近任务应能直接暂停，并把停止导向确认页。
     #[test]
     fn test_tasks_hub_recent_jobs_have_inline_controls() {
-        let rows = build_menu_buttons(
-            MenuPage::TasksHub,
-            &[snapshot_with_status("running")],
-            true,
-            None,
-        );
+        use base64::{Engine as _, engine::general_purpose};
+
+        let rows = build_menu_buttons(MenuPage::TasksHub, &[snapshot_with_status("running")], None);
         let labels = rows
             .iter()
             .flatten()
@@ -504,12 +311,23 @@ mod tests {
 
         assert!(labels.contains(&"暂停"));
         assert!(labels.contains(&"停止"));
+        let stop = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "停止")
+            .expect("tasks hub should have stop confirmation button");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &stop.r#type else {
+            panic!("stop button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "j:sc:42");
     }
 
     // 任务 hub 应承接原首页的状态快捷入口。
     #[test]
     fn test_tasks_hub_has_status_shortcuts() {
-        let rows = build_menu_buttons(MenuPage::TasksHub, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::TasksHub, &[], None);
         let labels = rows
             .iter()
             .flatten()
@@ -519,7 +337,7 @@ mod tests {
         assert!(labels.contains(&"最近任务"));
         assert!(labels.contains(&"运行中"));
         assert!(labels.contains(&"已暂停"));
-        assert!(labels.contains(&"失败/已停"));
+        assert!(labels.contains(&"失败任务"));
         assert!(labels.contains(&"快速查询"));
         assert!(labels.contains(&"查询页"));
         assert!(!labels.contains(&"复制当前列表"));
@@ -529,15 +347,15 @@ mod tests {
     // 首页按钮应收敛成高频动作 + hub + footer，不再直接暴露细页或最近任务。
     #[test]
     fn test_home_buttons_follow_row_hierarchy() {
-        let rows = build_menu_buttons(MenuPage::Home, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::Home, &[], None);
 
-        assert_eq!(rows[0][0].text, "开始转存");
+        assert_eq!(rows[0][0].text, "快速转存");
         assert_eq!(rows[1][0].text, "任务");
-        assert_eq!(rows[1][1].text, "账户");
-        assert_eq!(rows[2][0].text, "管理");
-        assert_eq!(rows[3][0].text, "刷新");
-        assert_eq!(rows[3].len(), 1);
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[1][1].text, "管理");
+        assert_eq!(rows[1][2].text, "帮助");
+        assert_eq!(rows[2][0].text, "刷新");
+        assert_eq!(rows[2].len(), 1);
+        assert_eq!(rows.len(), 3);
         assert!(
             !rows
                 .iter()
@@ -555,43 +373,35 @@ mod tests {
     // 下载页和帮助页都应保留独立的刷新/返回/菜单层级。
     #[test]
     fn test_downloads_and_help_buttons_follow_footer_hierarchy() {
-        let downloads = build_menu_buttons(MenuPage::Downloads, &[], true, None);
-        let help = build_menu_buttons(MenuPage::Help, &[], true, None);
+        use base64::Engine as _;
+
+        let downloads = build_menu_buttons(MenuPage::Downloads, &[], None);
+        let help = build_menu_buttons(MenuPage::Help, &[], None);
 
         assert_eq!(downloads[4][0].text, "刷新");
         assert_eq!(downloads[4][1].text, "首页");
         assert_eq!(downloads[4][2].text, "帮助");
 
-        assert_eq!(help[5][0].text, "帮助说明");
-        assert_eq!(help[6][0].text, "刷新");
-        assert_eq!(help[6][1].text, "首页");
-        assert_eq!(help[6][2].text, "转存页");
+        assert_eq!(help[4][0].text, "刷新");
+        assert_eq!(help[4][1].text, "首页");
+        assert_eq!(help[4][2].text, "开始转存");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &help[4][2].r#type
+        else {
+            panic!("help transfer action must be callback");
+        };
+        let decoded = String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(&callback.data)
+                .expect("callback should be base64"),
+        )
+        .expect("callback should be utf8");
+        assert_eq!(decoded, "m:new");
         assert!(
             !help
                 .iter()
                 .flatten()
                 .any(|button| button.text == "复制帮助命令")
         );
-    }
-
-    // 管理 hub 应提供用户积分流水入口，避免手打 `/points history <user_id>`。
-    #[test]
-    fn test_admin_hub_has_point_ledger_input() {
-        use base64::{Engine as _, engine::general_purpose};
-
-        let rows = build_menu_buttons(MenuPage::AdminHub, &[], true, None);
-        let button = rows
-            .iter()
-            .flatten()
-            .find(|button| button.text == "用户流水")
-            .expect("admin hub should have point ledger input");
-
-        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type else {
-            panic!("point ledger input must be callback");
-        };
-        let decoded =
-            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
-        assert_eq!(decoded, "m:pl");
     }
 
     // 首页存在未完成输入时，应把恢复动作放在最前面，避免用户重新开始导致旧草稿残留。
@@ -602,7 +412,7 @@ mod tests {
         let draft = MenuDraftSummary {
             title: "快速转存"
         };
-        let rows = build_menu_buttons(MenuPage::Home, &[], true, Some(&draft));
+        let rows = build_menu_buttons(MenuPage::Home, &[], Some(&draft));
 
         assert_eq!(rows[0][0].text, "继续输入：快速转存");
         assert_eq!(rows[0][1].text, "取消输入");
@@ -619,7 +429,7 @@ mod tests {
     // 下载菜单应覆盖 `/downloads` 当前支持的全部筛选参数。
     #[test]
     fn test_downloads_buttons_cover_all_filters() {
-        let rows = build_menu_buttons(MenuPage::Downloads, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::Downloads, &[], None);
         let labels = rows
             .iter()
             .flatten()
@@ -647,21 +457,10 @@ mod tests {
         }
     }
 
-    // 下载筛选参数未来调整时，菜单按钮不能因为旧参数 panic，应降级为复制命令按钮。
-    #[test]
-    fn test_downloads_button_invalid_filter_falls_back_to_copy() {
-        let button = downloads_button("未知筛选", "unknown", tdlib_rs::enums::ButtonStyle::Default);
-
-        assert!(matches!(
-            button.r#type,
-            tdlib_rs::enums::InlineKeyboardButtonType::CopyText(_)
-        ));
-    }
-
-    // 帮助菜单应覆盖所有 help topic，不让用户必须记 `/help <topic>`。
+    // 帮助菜单应直接复用 help topic 导航，不让用户必须记 `/help <topic>`。
     #[test]
     fn test_help_buttons_cover_all_topics() {
-        let rows = build_menu_buttons(MenuPage::Help, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::Help, &[], None);
         let labels = rows
             .iter()
             .flatten()
@@ -669,32 +468,35 @@ mod tests {
             .collect::<Vec<_>>();
 
         for expected in [
-            "帮助目录",
-            "转存帮助",
-            "查询帮助",
-            "下载帮助",
-            "任务帮助",
-            "积分帮助",
-            "配置帮助",
-            "菜单页",
-            "帮助说明",
+            "转存",
+            "查询",
+            "下载列表",
+            "任务控制",
+            "交互菜单",
+            "运行健康",
+            "文件缓存",
+            "运行配置",
+            "目标配置",
         ] {
             assert!(labels.contains(&expected), "missing help topic: {expected}");
         }
     }
 
-    // 普通用户隐藏 admin-only 配置帮助时，不能误删同一行的菜单页入口。
+    // 单所有者帮助页展示全部保留主题。
     #[test]
-    fn test_help_buttons_for_user_keep_menu_help_without_config() {
-        let rows = build_menu_buttons(MenuPage::Help, &[], false, None);
+    fn test_help_buttons_include_management_topics() {
+        let rows = build_menu_buttons(MenuPage::Help, &[], None);
         let labels = rows
             .iter()
             .flatten()
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        assert!(labels.contains(&"菜单页"));
-        assert!(!labels.contains(&"配置帮助"));
+        assert!(labels.contains(&"转存"));
+        assert!(labels.contains(&"交互菜单"));
+        assert!(labels.contains(&"运行健康"));
+        assert!(labels.contains(&"运行配置"));
+        assert!(labels.contains(&"目标配置"));
         assert!(!labels.contains(&"复制帮助命令"));
     }
 
@@ -703,7 +505,7 @@ mod tests {
     fn test_jobs_buttons_have_job_id_input_callbacks() {
         use base64::{Engine as _, engine::general_purpose};
 
-        let rows = build_menu_buttons(MenuPage::Jobs, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::Jobs, &[], None);
         let labels = rows
             .iter()
             .flatten()
@@ -731,10 +533,9 @@ mod tests {
     // 已经有交互入口的页面不应继续保留旧模板复制按钮，避免按钮区重复表达同一动作。
     #[test]
     fn test_menu_pages_drop_redundant_template_copy_buttons() {
-        let transfer = build_menu_buttons(MenuPage::Transfer, &[], true, None);
-        let downloads = build_menu_buttons(MenuPage::Downloads, &[], true, None);
-        let jobs = build_menu_buttons(MenuPage::Jobs, &[], true, None);
-        let lookup = build_menu_buttons(MenuPage::Lookup, &[], true, None);
+        let downloads = build_menu_buttons(MenuPage::Downloads, &[], None);
+        let jobs = build_menu_buttons(MenuPage::Jobs, &[], None);
+        let lookup = build_menu_buttons(MenuPage::Lookup, &[], None);
 
         let labels = |rows: Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>| {
             rows.into_iter()
@@ -743,16 +544,10 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        let transfer_labels = labels(transfer);
         let downloads_labels = labels(downloads);
         let jobs_labels = labels(jobs);
         let lookup_labels = labels(lookup);
 
-        assert!(!transfer_labels.contains(&"复制转存模板".to_owned()));
-        assert!(transfer_labels.contains(&"取消输入".to_owned()));
-        assert!(!transfer_labels.contains(&"复制取消命令".to_owned()));
-        assert!(!transfer_labels.contains(&"指定目标".to_owned()));
-        assert!(!transfer_labels.contains(&"默认目标".to_owned()));
         assert!(!downloads_labels.contains(&"复制全部列表".to_owned()));
         assert!(!downloads_labels.contains(&"复制运行列表命令".to_owned()));
         assert!(!jobs_labels.contains(&"复制详情模板".to_owned()));
@@ -763,8 +558,8 @@ mod tests {
     // 首页 footer 不应重新膨胀成细页导航，只保留刷新。
     #[test]
     fn test_home_buttons_drop_self_home_footer_button() {
-        let rows = build_menu_buttons(MenuPage::Home, &[], true, None);
-        let footer = &rows[3];
+        let rows = build_menu_buttons(MenuPage::Home, &[], None);
+        let footer = &rows[2];
 
         assert_eq!(footer[0].text, "刷新");
         assert_eq!(footer.len(), 1);
@@ -773,12 +568,7 @@ mod tests {
     // 任务 hub 有最近任务时应展示任务详情，不再额外挂同义列表入口和复制入口。
     #[test]
     fn test_tasks_hub_recent_jobs_and_copy() {
-        let rows = build_menu_buttons(
-            MenuPage::TasksHub,
-            &[snapshot_with_status("running")],
-            true,
-            None,
-        );
+        let rows = build_menu_buttons(MenuPage::TasksHub, &[snapshot_with_status("running")], None);
         let labels = rows
             .iter()
             .flatten()
@@ -791,38 +581,14 @@ mod tests {
         assert!(!labels.contains(&"复制当前列表"));
     }
 
-    // 账户 hub 应提供余额和流水入口，admin 额外有用户流水。
-    #[test]
-    fn test_account_hub_buttons() {
-        let user_rows = build_menu_buttons(MenuPage::AccountHub, &[], false, None);
-        let admin_rows = build_menu_buttons(MenuPage::AccountHub, &[], true, None);
-
-        assert_eq!(user_rows[0][0].text, "余额");
-        assert_eq!(user_rows[0][1].text, "积分流水");
-        assert!(
-            !user_rows
-                .iter()
-                .flatten()
-                .any(|button| button.text == "用户流水")
-        );
-        assert!(
-            admin_rows
-                .iter()
-                .flatten()
-                .any(|button| button.text == "用户流水")
-        );
-    }
-
-    // 三个 hub 的 footer 统一为“刷新当前页 -> 首页 -> 帮助”，减少跨页记忆成本。
+    // 两个 hub 的 footer 统一为“刷新当前页 -> 首页 -> 帮助”，减少跨页记忆成本。
     #[test]
     fn test_hub_footers_use_same_hierarchy() {
-        let tasks = build_menu_buttons(MenuPage::TasksHub, &[], true, None);
-        let account = build_menu_buttons(MenuPage::AccountHub, &[], true, None);
-        let admin = build_menu_buttons(MenuPage::AdminHub, &[], true, None);
+        let tasks = build_menu_buttons(MenuPage::TasksHub, &[], None);
+        let admin = build_menu_buttons(MenuPage::AdminHub, &[], None);
 
         for footer in [
             tasks.last().expect("tasks hub should have footer"),
-            account.last().expect("account hub should have footer"),
             admin.last().expect("admin hub should have footer"),
         ] {
             assert_eq!(footer[0].text, "刷新");
@@ -834,7 +600,7 @@ mod tests {
     // 首页不应同时出现两个“帮助”按钮。
     #[test]
     fn test_home_buttons_have_single_help_entry() {
-        let rows = build_menu_buttons(MenuPage::Home, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::Home, &[], None);
         let help_count = rows
             .iter()
             .flatten()
@@ -847,12 +613,7 @@ mod tests {
     // 有最近任务时，任务 hub 不应同时出现“最近任务”和“查看最近任务”两个列表入口。
     #[test]
     fn test_tasks_hub_drops_duplicate_recent_list_entry_when_jobs_exist() {
-        let rows = build_menu_buttons(
-            MenuPage::TasksHub,
-            &[snapshot_with_status("running")],
-            true,
-            None,
-        );
+        let rows = build_menu_buttons(MenuPage::TasksHub, &[snapshot_with_status("running")], None);
         let labels = rows
             .iter()
             .flatten()
@@ -864,69 +625,53 @@ mod tests {
         assert!(!labels.contains(&"复制当前列表"));
     }
 
-    // 管理 hub 应集中承接配置、健康、缓存和用户流水，不再散落首页。
+    // 管理 hub 应集中承接配置、健康和缓存，不再散落首页。
     #[test]
     fn test_admin_hub_buttons() {
         use base64::{Engine as _, engine::general_purpose};
 
-        let rows = build_menu_buttons(MenuPage::AdminHub, &[], true, None);
+        let rows = build_menu_buttons(MenuPage::AdminHub, &[], None);
         let labels = rows
             .iter()
             .flatten()
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        for expected in [
-            "运行配置",
-            "目标配置",
-            "访问控制",
-            "计费配置",
-            "运行健康",
-            "文件缓存",
-            "用户流水",
-        ] {
+        for expected in ["运行配置", "目标配置", "运行健康", "文件缓存"] {
             assert!(
                 labels.contains(&expected),
                 "missing admin hub button: {expected}"
             );
         }
 
-        for (label, expected_payload) in [
-            ("目标配置", "m:tg"),
-            ("访问控制", "m:acl"),
-            ("计费配置", "m:bil"),
-        ] {
-            let button = rows
-                .iter()
-                .flatten()
-                .find(|button| button.text == label)
-                .unwrap_or_else(|| panic!("missing admin hub button: {label}"));
-            let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type
-            else {
-                panic!("{label} should navigate by callback");
-            };
-            let decoded =
-                String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap())
-                    .unwrap();
-            assert_eq!(decoded, expected_payload);
-        }
+        let button = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "目标配置")
+            .expect("missing target config button");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type else {
+            panic!("target config should navigate by callback");
+        };
+        let decoded = String::from_utf8(
+            general_purpose::STANDARD
+                .decode(&callback.data)
+                .expect("callback should be base64"),
+        )
+        .expect("callback should be utf8");
+        assert_eq!(decoded, "m:tg");
     }
 
-    // 三个数据库运行态配置页应复用各自命令模块按钮，而不是只在管理页复制命令。
+    // 目标配置页应复用目标命令模块按钮，而不是只在管理页复制命令。
     #[test]
     fn test_runtime_admin_pages_have_command_buttons() {
-        let targets = build_menu_buttons(MenuPage::Targets, &[], true, None);
-        let acl = build_menu_buttons(MenuPage::Acl, &[], true, None);
-        let billing = build_menu_buttons(MenuPage::Billing, &[], true, None);
+        let targets = build_menu_buttons(MenuPage::Targets, &[], None);
 
-        assert_eq!(targets[0][0].text, "刷新");
-        assert_eq!(acl[0][1].text, "刷新");
-        assert_eq!(billing[0][1].text, "刷新");
+        assert_eq!(targets[0][0].text, "默认目标");
         assert!(
             targets
                 .iter()
                 .flatten()
-                .any(|button| button.text == "设默认")
+                .any(|button| button.text == "默认目标")
         );
         assert!(
             targets
@@ -934,82 +679,24 @@ mod tests {
                 .flatten()
                 .any(|button| button.text == "恢复私聊默认")
         );
-        assert!(acl.iter().flatten().any(|button| button.text == "加管理员"));
-        assert!(acl.iter().flatten().any(|button| button.text == "删管理员"));
         assert!(
-            billing
+            !targets
                 .iter()
                 .flatten()
-                .any(|button| button.text == "设公告")
+                .any(|button| button.text == "设默认")
         );
         assert!(
-            billing
+            !targets
                 .iter()
                 .flatten()
-                .any(|button| button.text == "设基础")
+                .any(|button| button.text == "设路由")
         );
-    }
-
-    // 普通用户打开数据库运行态配置页时，只能看到受限页导航，不能看到管理命令模板。
-    #[test]
-    fn test_runtime_admin_pages_for_user_use_safe_fallback() {
-        for page in [MenuPage::Targets, MenuPage::Acl, MenuPage::Billing] {
-            let rows = build_menu_buttons(page, &[], false, None);
-            let labels = rows
+        assert!(
+            !targets
                 .iter()
                 .flatten()
-                .map(|button| button.text.as_str())
-                .collect::<Vec<_>>();
-
-            assert_eq!(rows[0][0].text, "刷新");
-            assert_eq!(rows[0][1].text, "首页");
-            assert_eq!(rows[0][2].text, "帮助");
-            assert!(labels.contains(&"余额"));
-            assert!(labels.contains(&"积分流水"));
-            assert!(!labels.contains(&"复制余额"));
-            assert!(!labels.contains(&"复制 show"));
-        }
-    }
-
-    // 普通用户误入 admin-only 页时不应出现含糊的“返回”；刷新只刷新当前受限页。
-    #[test]
-    fn test_user_home_fallback_buttons_keep_actions_distinct() {
-        let rows = build_menu_buttons(MenuPage::Config, &[], false, None);
-        let admin_rows = build_menu_buttons(MenuPage::AdminHub, &[], false, None);
-        let help_count = rows
-            .iter()
-            .flatten()
-            .filter(|button| button.text == "帮助")
-            .count();
-
-        assert_eq!(help_count, 1);
-        assert!(!rows.iter().flatten().any(|button| button.text == "返回"));
-        assert_eq!(rows[0][0].text, "刷新");
-        assert_eq!(rows[0][1].text, "首页");
-        assert_eq!(rows[0][2].text, "帮助");
-        assert_eq!(rows[1][0].text, "余额");
-        assert_eq!(rows[1][1].text, "积分流水");
-        assert_eq!(admin_rows[0][0].text, "刷新");
-        assert_eq!(admin_rows[0][1].text, "首页");
-        assert_eq!(admin_rows[0][2].text, "帮助");
-    }
-
-    // 转存页不应再保留与首行动作完全等价的重复按钮。
-    #[test]
-    fn test_transfer_buttons_drop_duplicate_action_labels() {
-        let transfer = build_menu_buttons(MenuPage::Transfer, &[], true, None);
-        let labels = transfer
-            .iter()
-            .flatten()
-            .map(|button| button.text.as_str())
-            .collect::<Vec<_>>();
-
-        assert!(labels.contains(&"开始转存"));
-        assert!(labels.contains(&"快速转存"));
-        assert!(labels.contains(&"取消输入"));
-        assert!(!labels.contains(&"指定目标"));
-        assert!(!labels.contains(&"默认目标"));
-        assert!(!labels.contains(&"复制取消命令"));
+                .any(|button| button.text == "设别名")
+        );
     }
 
     fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {

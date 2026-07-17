@@ -5,12 +5,14 @@ use std::sync::Arc;
 use crate::config::ClientRole;
 use crate::config::{BotConfig, RequestActor};
 use crate::tgbot::send;
-use crate::tgbot::transfer::billing_runtime_config_on;
 use crate::tgbot::transfer::card;
 
 use super::build_downloads_status_button_data;
 use super::build_menu_home_button_data;
-use super::common::{CommandStyle, downloads_command, lookup_command, resolve_target_chat_id_on};
+use super::common::{
+    CommandStyle, downloads_command, lookup_command, resolve_target_chat_id_on,
+    transfer_command as build_transfer_command,
+};
 use super::menu;
 use crate::tgbot::transfer::types::{SourceKind, TransferPlan};
 
@@ -112,12 +114,11 @@ async fn run_transfer_plan_on(
     )?;
 
     let plan = TransferPlan {
-        billing: billing_runtime_config_on(app_context.as_ref()),
         actor,
         source_link: source.source_link,
         source_kind: source.source_kind,
         preferred_source_client_role: source.preferred_source_client_role,
-        allow_user_fallback: actor.is_admin(),
+        allow_user_fallback: true,
         source_message_chat_id: source.source_message_chat_id,
         source_message_id: source.source_message_id,
         target_chat_id,
@@ -152,7 +153,6 @@ async fn dispatch_transfer_plan(
         source_kind = plan.source_kind.as_str(),
         source_role = plan.preferred_source_client_role.as_str(),
         owner_user_id = plan.actor.user_id,
-        actor_role = plan.actor.role.as_str(),
         "transfer command accepted"
     );
 
@@ -160,7 +160,7 @@ async fn dispatch_transfer_plan(
     let progress_message = send::send_card_message_with_buttons_returning(
         format_transfer_accepted_text(&plan),
         request_chat_id,
-        build_transfer_accepted_button_rows(&plan.source_link),
+        build_transfer_accepted_button_rows(),
         client_id,
     )
     .await?;
@@ -178,29 +178,63 @@ async fn dispatch_transfer_plan(
 /// 构造 `/transfer` 首次回执按钮。
 ///
 /// 查询命令已经在正文里保留；按钮区优先放可直接点击的运行列表和菜单，
-/// 只保留源标识复制，方便用户排查 bot-message 伪链接或原始源链接。
-fn build_transfer_accepted_button_rows(
-    source_link: &str,
-) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
-        vec![
-            send::build_callback_button(
-                "查看运行列表",
-                &build_downloads_status_button_data("running", 8),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_callback_button(
-                "菜单",
-                &build_menu_home_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![send::build_copy_button(
-            "复制源标识",
-            source_link,
+/// 来源信息已经在正文显示，这里不再重复堆复制按钮。
+fn build_transfer_accepted_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![vec![
+        send::build_callback_button(
+            "查看运行列表",
+            &build_downloads_status_button_data("running", 8),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        send::build_callback_button(
+            "菜单",
+            &build_menu_home_button_data(),
             tdlib_rs::enums::ButtonStyle::Default,
-        )],
+        ),
+    ]]
+}
+
+/// `/help transfer` 共用的详细说明正文。
+///
+/// 转存命令支持“链接源”和“bot 可见消息源”两种输入方式，说明留在转存模块维护，
+/// 避免 help 模块重复理解目标解析、bot/user 下载策略和交互入口。
+pub(in crate::tgbot::transfer::command) fn build_transfer_help_detail_text() -> String {
+    [
+        "transfer".to_owned(),
+        "用途：转存单条消息或相册链接。".to_owned(),
+        "说明：target 可填数字 chat_id 或配置里的别名；不传时使用预先配置的目标。".to_owned(),
+        "说明：bot 无法读取链接源时会尝试使用备用 user；两个账号至少有一个必须能访问源。"
+            .to_owned(),
+        card::DIVIDER.to_owned(),
+        card::section("命令"),
+        build_transfer_command("<link>", 0, CommandStyle::Long).replace(" 0", " [target]"),
+        String::new(),
+        card::section("示例"),
+        "/transfer https://t.me/c/123/456".to_owned(),
+        "/transfer https://t.me/c/123/456 -1001234567890".to_owned(),
+        "/transfer https://t.me/c/123/456 archive".to_owned(),
     ]
+    .join("\n")
+}
+
+/// `/help transfer` 共用的按钮入口。
+///
+/// help 详情页正文已经给出命令示例，这里只保留真实交互入口；
+/// 返回目录和菜单由 help 模块统一追加。
+pub(in crate::tgbot::transfer::command) fn build_transfer_help_entry_rows()
+-> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![vec![
+        send::build_callback_button(
+            "开始转存",
+            &menu::build_menu_new_transfer_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        send::build_callback_button(
+            "快速转存",
+            &menu::build_menu_quick_transfer_default_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]]
 }
 
 /// 解析 `/transfer` 的源输入。
@@ -333,7 +367,7 @@ fn replied_message_location(message: &tdlib_rs::types::Message) -> Option<(i64, 
 /// 从转发消息中提取原始消息定位。
 ///
 /// 优先使用 TDLib 给出的 `forward_info.source`，因为它包含“上一次转发来源”的真实 chat/message；
-/// 如果没有 source，再退回 channel origin 的 `chat_id/message_id`。匿名来源或普通用户来源没有稳定
+/// 如果没有 source，再退回 channel origin 的 `chat_id/message_id`。匿名来源或个人来源没有稳定
 /// message_id 时不返回，避免生成伪源标识。
 fn forwarded_message_location(message: &tdlib_rs::types::Message) -> Option<(i64, i64)> {
     let forward = message.forward_info.as_ref()?;
@@ -413,17 +447,12 @@ mod tests {
     };
     use crate::ClientRole;
     use crate::app_context::app_context;
-    use crate::config::{ActorRole, BillingConfig, BotConfig, RequestActor};
+    use crate::config::{BotConfig, RequestActor};
     use crate::tgbot::transfer::types::{SourceKind, TransferPlan};
 
-    fn install_target_runtime(
-        targets: crate::config::TargetsConfig,
-        access_control: crate::config::AccessControlConfig,
-    ) {
+    fn install_target_runtime(targets: crate::config::TargetsConfig) {
         let app = app_context();
         app.targets_runtime.update_runtime_config(targets);
-        app.access_control_runtime
-            .update_runtime_config(access_control);
     }
 
     // 首次回执应直接使用卡片标记，后续编辑不会从 Markdown 样式跳到 card 样式。
@@ -433,13 +462,11 @@ mod tests {
             actor: RequestActor {
                 request_chat_id: 1,
                 user_id: 1,
-                role: ActorRole::Admin,
             },
             source_link: "https://t.me/c/1/2".to_owned(),
             source_kind: SourceKind::Link,
             preferred_source_client_role: ClientRole::Bot,
             allow_user_fallback: true,
-            billing: BillingConfig::default(),
             source_message_chat_id: None,
             source_message_id: None,
             target_chat_id: -100,
@@ -455,7 +482,7 @@ mod tests {
     // 首次回执按钮应直接跳运行列表和菜单，查询命令留在正文，避免按钮区重复复制命令。
     #[test]
     fn test_build_transfer_accepted_button_rows() {
-        let rows = build_transfer_accepted_button_rows("https://t.me/c/1/2");
+        let rows = build_transfer_accepted_button_rows();
         let labels = rows
             .iter()
             .flatten()
@@ -464,8 +491,9 @@ mod tests {
 
         assert_eq!(rows[0][0].text, "查看运行列表");
         assert_eq!(rows[0][1].text, "菜单");
-        assert_eq!(rows[1][0].text, "复制源标识");
+        assert_eq!(rows.len(), 1);
         assert!(!labels.contains(&"复制查询命令"));
+        assert!(!labels.contains(&"复制源标识"));
         assert!(matches!(
             rows[0][0].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
@@ -851,14 +879,10 @@ mod tests {
     #[test]
     fn test_resolve_target_for_bot_message_source() {
         let config = BotConfig::default();
-        install_target_runtime(
-            crate::config::TargetsConfig {
-                default_chat_id: 0,
-                by_request_chat_id: Default::default(),
-                aliases: std::collections::HashMap::from([("archive".to_owned(), -100)]),
-            },
-            crate::config::AccessControlConfig::default(),
-        );
+        install_target_runtime(crate::config::TargetsConfig {
+            default_chat_id: 0,
+            aliases: std::collections::HashMap::from([("archive".to_owned(), -100)]),
+        });
         let source = ResolvedTransferSource {
             source_link: bot_message_source_link(10, 20),
             source_kind: SourceKind::BotMessage,

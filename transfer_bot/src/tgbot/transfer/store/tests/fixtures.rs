@@ -3,7 +3,6 @@
 
 use super::super::*;
 use crate::ClientRole;
-use crate::config::ActorRole;
 use crate::db;
 use crate::tgbot::transfer::types::TransferBundle;
 use rand::RngExt;
@@ -56,9 +55,6 @@ pub(super) async fn insert_job(status: &str) -> anyhow::Result<db::transfer_job:
         done_items: sea_orm::ActiveValue::Set(0),
         failed_items: sea_orm::ActiveValue::Set(0),
         retry_count: sea_orm::ActiveValue::Set(0),
-        cost_points: sea_orm::ActiveValue::Set(0),
-        charged_points: sea_orm::ActiveValue::Set(0),
-        billing_status: sea_orm::ActiveValue::Set("free".to_owned()),
         last_error: sea_orm::ActiveValue::Set(None),
         created_at: sea_orm::ActiveValue::Set(now),
         updated_at: sea_orm::ActiveValue::Set(now),
@@ -68,50 +64,6 @@ pub(super) async fn insert_job(status: &str) -> anyhow::Result<db::transfer_job:
     .insert(db_conn)
     .await
     .map_err(Into::into)
-}
-
-/// 构造一个已经向普通用户扣过积分的任务。
-///
-/// 用于验证失败/取消终态的退款逻辑；成功或部分成功是否退款由具体测试显式断言。
-pub(super) async fn insert_charged_job(
-    status: &str,
-    charged_points: i64,
-) -> anyhow::Result<db::transfer_job::Model> {
-    let mut job = insert_job(status).await?;
-    ensure_user_account(job.owner_user_id, ActorRole::User, 0).await?;
-    change_points(PointsChange {
-        telegram_user_id: job.owner_user_id,
-        delta: charged_points,
-        reason: "test_seed".to_owned(),
-        job_id: None,
-        request_chat_id: Some(job.request_chat_id),
-        request_message_id: None,
-        idempotency_key: None,
-        created_by: None,
-    })
-    .await?;
-    change_points(PointsChange {
-        telegram_user_id: job.owner_user_id,
-        delta: -charged_points,
-        reason: "transfer_charge".to_owned(),
-        job_id: Some(job.id),
-        request_chat_id: Some(job.request_chat_id),
-        request_message_id: Some(job.request_message_id),
-        idempotency_key: Some(format!(
-            "transfer:{}:{}",
-            job.request_chat_id, job.request_message_id
-        )),
-        created_by: Some(job.owner_user_id),
-    })
-    .await?;
-
-    let db_conn = prepare_test_schema().await?;
-    let mut active: db::transfer_job::ActiveModel = job.clone().into();
-    active.cost_points = sea_orm::ActiveValue::Set(charged_points);
-    active.charged_points = sea_orm::ActiveValue::Set(charged_points);
-    active.billing_status = sea_orm::ActiveValue::Set("charged".to_owned());
-    job = active.update(db_conn).await?;
-    Ok(job)
 }
 
 /// 为任务插入一个真实媒体子项和对应 file_cache 引用。

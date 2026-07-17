@@ -5,11 +5,13 @@
 mod callback;
 
 use super::common::{
-    CommandStyle, RuntimeAdminHelpCopyButton, RuntimeAdminHelpDescriptor, RuntimeAdminUsageItem,
-    build_command_examples, build_help_menu_row, build_runtime_admin_page_intro,
-    config_set_command, config_show_command, edit_runtime_admin_interaction_card_or_error,
-    reset_action_title, send_runtime_admin_callback_error, updated_action_title,
+    CommandStyle, RuntimeAdminHelpDescriptor, RuntimeAdminUsageItem, build_command_examples,
+    build_runtime_admin_back_menu_row, build_runtime_admin_detail_text,
+    build_runtime_admin_page_intro, build_runtime_admin_section_block, config_set_command,
+    config_show_command, edit_runtime_admin_interaction_card_or_error, reset_action_title,
+    send_runtime_admin_callback_error, updated_action_title,
 };
+use super::menu::build_menu_config_callback_data;
 use crate::tgbot::send;
 use crate::tgbot::transfer::card;
 use callback::{CONFIG_FIELD_SPECS, ConfigCallbackAction, parse_config_callback_data};
@@ -26,6 +28,68 @@ pub(in crate::tgbot::transfer::command) fn config_field_spec_for_admin_action(
         .find(|spec| spec.admin_input_action == action)
 }
 
+/// 返回 `/config set` 当前支持的全部动态字段规格。
+///
+/// 菜单页、帮助页和输入流都应尽量从同一份字段定义读取，避免字段名漂移。
+pub(in crate::tgbot::transfer::command) fn config_field_specs()
+-> &'static [callback::ConfigFieldSpec] {
+    CONFIG_FIELD_SPECS
+}
+
+/// 构造配置页共用的“可调项”摘要区块。
+///
+/// 菜单页和 help 详情页都应直接复用这份字段摘要，避免字段增减时两边漂移。
+pub(in crate::tgbot::transfer::command) fn config_summary_lines() -> Vec<String> {
+    build_runtime_admin_section_block(
+        "可调字段",
+        config_field_specs()
+            .iter()
+            .map(|spec| card::field(spec.short_label, spec.key)),
+    )
+}
+
+/// `config` 页在菜单和帮助详情里共用的开场说明。
+pub(in crate::tgbot::transfer::command) fn config_intro_lines() -> Vec<String> {
+    vec![
+        "先看字段当前值，再进入字段详情页回复新值。".to_owned(),
+        "字段详情页优先引导输入式修改，不再强调碎片化 +/- 微调。".to_owned(),
+    ]
+}
+
+/// 构造 `/help config` 的入口按钮行。
+///
+/// 帮助页直接复用配置模块自己的字段规格，避免新增配置字段后只改正文忘改按钮。
+pub(in crate::tgbot::transfer::command) fn build_config_help_entry_rows()
+-> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut rows = vec![vec![send::build_callback_button(
+        "打开配置页",
+        &build_menu_config_callback_data(),
+        tdlib_rs::enums::ButtonStyle::Primary,
+    )]];
+
+    let buttons = config_field_specs()
+        .iter()
+        .map(|spec| {
+            send::build_callback_button(
+                &format!("{}详情", spec.short_label),
+                &build_config_field_detail_button_data(spec.field),
+                tdlib_rs::enums::ButtonStyle::Default,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if buttons.len() >= 2 {
+        rows[0].extend(buttons[..2].iter().cloned());
+        for chunk in buttons[2..].chunks(3) {
+            rows.push(chunk.to_vec());
+        }
+    } else {
+        rows[0].extend(buttons);
+    }
+
+    rows
+}
+
 /// 构造配置字段详情页按钮数据，供帮助页等外层入口复用。
 pub(in crate::tgbot::transfer::command) fn build_config_field_detail_button_data(
     field: ConfigField,
@@ -36,6 +100,8 @@ pub(in crate::tgbot::transfer::command) fn build_config_field_detail_button_data
 /// `config` 管理页的最小帮助 descriptor。
 pub(in crate::tgbot::transfer::command) fn config_help_descriptor() -> RuntimeAdminHelpDescriptor {
     RuntimeAdminHelpDescriptor {
+        purpose: "查看或修改可动态生效的运行配置。",
+        summary: "查看或修改可动态生效的运行配置；支持字段详情和输入式设置。",
         synopsis: format!(
             "{} [show|reset|set <key> <value>]",
             super::common::command_root("config", CommandStyle::Long)
@@ -62,26 +128,6 @@ pub(in crate::tgbot::transfer::command) fn config_help_descriptor() -> RuntimeAd
         ],
         interaction_items: vec!["按钮进入输入流后，会发送 ForceReply；回复参数即可。".to_owned()],
         example_commands: config_example_commands(),
-        help_copy_buttons: {
-            let mut buttons = vec![RuntimeAdminHelpCopyButton::new(
-                "复制 /config show",
-                config_show_command(CommandStyle::Long),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            )];
-            buttons.extend(CONFIG_FIELD_SPECS.iter().take(1).map(|spec| {
-                RuntimeAdminHelpCopyButton::new(
-                    "复制并发",
-                    config_set_command(spec.key, spec.example_value, CommandStyle::Long),
-                    tdlib_rs::enums::ButtonStyle::Default,
-                )
-            }));
-            buttons.push(RuntimeAdminHelpCopyButton::new(
-                "复制 /config reset",
-                "/config reset",
-                tdlib_rs::enums::ButtonStyle::Default,
-            ));
-            buttons
-        },
     }
 }
 
@@ -127,7 +173,7 @@ const MENU_INPUT_TIMEOUT_SECONDS_MAX: u64 = 24 * 60 * 60;
 const CONFIG_PAGE_TITLE: &str = "运行配置";
 /// 配置页简要说明。
 const CONFIG_PAGE_DETAIL: &str =
-    "按钮可直接微调；点“设并发 / 设删除 / 设GC / 设进度 / 设分页 / 设超时”后回复一个值。";
+    "先查看字段当前值，再进入字段详情页回复新值；不再提供碎片化 +/- 微调。";
 
 /// 配置字段详情页。
 fn format_config_field_detail_text(
@@ -135,14 +181,18 @@ fn format_config_field_detail_text(
     field: ConfigField,
 ) -> String {
     let spec = field.spec();
-    [
-        spec.input_title.to_owned(),
-        card::field(spec.key, current_config_field_value(config, field)),
-        String::new(),
-        card::section("说明"),
-        format!("可直接微调，或点“{}”进入输入流。", spec.input_label),
-    ]
-    .join("\n")
+    build_runtime_admin_detail_text(
+        spec.input_title,
+        vec![card::field(
+            spec.key,
+            current_config_field_value(config, field),
+        )],
+        "说明",
+        vec![
+            format!("点“{}”后直接回复新值即可。", spec.input_label),
+            "点“恢复默认值”只恢复当前字段，不会重置其他运行参数。".to_owned(),
+        ],
+    )
 }
 
 /// 配置字段详情页按钮。
@@ -150,44 +200,24 @@ fn build_config_field_detail_buttons(
     field: ConfigField,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let spec = field.spec();
-    let minus_delta = -spec.adjust_step;
-    let plus_delta = spec.adjust_step;
     vec![
-        vec![
-            send::build_callback_button(
-                &format!("{} {}{}", spec.short_label, minus_delta, spec.adjust_unit),
-                &callback::build_config_detail_callback_data(ConfigCallbackAction::Adjust {
-                    field,
-                    delta: minus_delta,
-                }),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                &format!("{} +{}{}", spec.short_label, plus_delta, spec.adjust_unit),
-                &callback::build_config_detail_callback_data(ConfigCallbackAction::Adjust {
-                    field,
-                    delta: plus_delta,
-                }),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-        ],
         vec![send::build_callback_button(
             spec.input_label,
             &callback::build_config_detail_callback_data(ConfigCallbackAction::Input { field }),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        )],
+        vec![send::build_callback_button(
+            "恢复默认值",
+            &callback::build_config_detail_callback_data(ConfigCallbackAction::ResetField {
+                field,
+            }),
             tdlib_rs::enums::ButtonStyle::Default,
         )],
-        build_help_menu_row(
-            send::build_callback_button(
-                "返回配置",
-                &callback::build_config_detail_callback_data(ConfigCallbackAction::Refresh),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "菜单",
-                &super::build_menu_home_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ),
+        build_runtime_admin_back_menu_row(send::build_callback_button(
+            "返回配置",
+            &callback::build_config_detail_callback_data(ConfigCallbackAction::Refresh),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )),
     ]
 }
 
@@ -264,6 +294,11 @@ pub async fn config_callback_query_on(
     let action_result = match action {
         ConfigCallbackAction::Refresh => Ok(()),
         ConfigCallbackAction::Reset => reset_transfer_config_to_default_on(app).await.map(|_| ()),
+        ConfigCallbackAction::ResetField { field } => {
+            reset_transfer_config_field_to_default_on(app, field)
+                .await
+                .map(|_| ())
+        }
         ConfigCallbackAction::View { field } => {
             let config = crate::tgbot::transfer::runtime_config_on(app);
             let (text, keyboard) =
@@ -281,9 +316,6 @@ pub async fn config_callback_query_on(
             )
             .await?;
             return Ok(());
-        }
-        ConfigCallbackAction::Adjust { field, delta } => {
-            adjust_transfer_config_on(app, field, delta).await
         }
         ConfigCallbackAction::Input { field } => {
             return crate::tgbot::transfer::command::menu::start_admin_input_callback(
@@ -414,72 +446,27 @@ async fn update_transfer_config_on(
     ))
 }
 
-/// 在指定上下文上按按钮小步调整运行配置。
-async fn adjust_transfer_config_on(
+/// 只把某一个运行字段恢复成启动配置中的默认值。
+async fn reset_transfer_config_field_to_default_on(
     app: &crate::app_context::AppContext,
     field: ConfigField,
-    delta: i64,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let mut transfer_config = crate::tgbot::transfer::runtime_config_on(app);
-    match field {
-        ConfigField::JobConcurrency => {
-            let current = i64::try_from(transfer_config.job_concurrency)?;
-            transfer_config.job_concurrency = clamp_i64(
-                current + delta,
-                JOB_CONCURRENCY_MIN as i64,
-                JOB_CONCURRENCY_MAX as i64,
-            ) as usize;
-        }
-        ConfigField::FileDeleteDelayMinutes => {
-            let current = transfer_config.file_delete_delay_minutes;
-            transfer_config.file_delete_delay_minutes = clamp_i64(
-                current + delta,
-                FILE_DELETE_DELAY_MINUTES_MIN,
-                FILE_DELETE_DELAY_MINUTES_MAX,
-            );
-        }
-        ConfigField::FileGcIntervalSeconds => {
-            let current = i64::try_from(transfer_config.file_gc_interval_seconds)?;
-            transfer_config.file_gc_interval_seconds = clamp_i64(
-                current + delta,
-                FILE_GC_INTERVAL_SECONDS_MIN as i64,
-                FILE_GC_INTERVAL_SECONDS_MAX as i64,
-            ) as u64;
-        }
-        ConfigField::ProgressEditIntervalSeconds => {
-            let current = i64::try_from(transfer_config.progress_edit_interval_seconds)?;
-            transfer_config.progress_edit_interval_seconds = clamp_i64(
-                current + delta,
-                PROGRESS_EDIT_INTERVAL_SECONDS_MIN as i64,
-                PROGRESS_EDIT_INTERVAL_SECONDS_MAX as i64,
-            ) as u64;
-        }
-        ConfigField::DownloadsDefaultPageSize => {
-            let current = i64::try_from(transfer_config.downloads_default_page_size)?;
-            transfer_config.downloads_default_page_size = clamp_i64(
-                current + delta,
-                DOWNLOADS_DEFAULT_PAGE_SIZE_MIN as i64,
-                DOWNLOADS_DEFAULT_PAGE_SIZE_MAX as i64,
-            ) as u64;
-        }
-        ConfigField::MenuInputTimeoutSeconds => {
-            let current = i64::try_from(transfer_config.menu_input_timeout_seconds)?;
-            transfer_config.menu_input_timeout_seconds = clamp_i64(
-                current + delta,
-                MENU_INPUT_TIMEOUT_SECONDS_MIN as i64,
-                MENU_INPUT_TIMEOUT_SECONDS_MAX as i64,
-            ) as u64;
-        }
-    }
+    let default_config = crate::tgbot::transfer::runtime_default_config_on(app);
+
+    apply_transfer_config_field_from(&mut transfer_config, &default_config, field);
 
     crate::tgbot::transfer::save_transfer_runtime_config(&transfer_config).await?;
-    crate::tgbot::transfer::update_runtime_config_on(app, transfer_config);
+    crate::tgbot::transfer::update_runtime_config_on(app, transfer_config.clone());
     tracing::info!(
-        field = field.key(),
-        delta,
-        "transfer runtime config adjusted by callback"
+        field = field.spec().key,
+        "transfer runtime config field reset to startup default"
     );
-    Ok(())
+
+    Ok(format_transfer_config_text(
+        &reset_action_title(field.spec().key),
+        &transfer_config,
+    ))
 }
 
 /// 在指定上下文上把运行配置重置为启动配置里的默认值。
@@ -521,27 +508,29 @@ pub(super) fn format_current_transfer_config_text_on(
 /// 格式化当前可调配置。
 fn format_transfer_config_text(title: &str, config: &crate::config::TransferConfig) -> String {
     let mut lines = build_runtime_admin_page_intro(title, CONFIG_PAGE_DETAIL);
-    lines.extend([
-        card::section("运行参数"),
-        card::field("job_concurrency", config.job_concurrency),
-        card::field(
-            "file_delete_delay_minutes",
-            config.file_delete_delay_minutes,
-        ),
-        card::field("file_gc_interval_seconds", config.file_gc_interval_seconds),
-        card::field(
-            "progress_edit_interval_seconds",
-            config.progress_edit_interval_seconds,
-        ),
-        card::field(
-            "downloads_default_page_size",
-            config.downloads_default_page_size,
-        ),
-        card::field(
-            "menu_input_timeout_seconds",
-            config.menu_input_timeout_seconds,
-        ),
-    ]);
+    lines.extend(build_runtime_admin_section_block(
+        "运行参数",
+        vec![
+            card::field("job_concurrency", config.job_concurrency),
+            card::field(
+                "file_delete_delay_minutes",
+                config.file_delete_delay_minutes,
+            ),
+            card::field("file_gc_interval_seconds", config.file_gc_interval_seconds),
+            card::field(
+                "progress_edit_interval_seconds",
+                config.progress_edit_interval_seconds,
+            ),
+            card::field(
+                "downloads_default_page_size",
+                config.downloads_default_page_size,
+            ),
+            card::field(
+                "menu_input_timeout_seconds",
+                config.menu_input_timeout_seconds,
+            ),
+        ],
+    ));
     lines.extend(build_command_examples(config_example_commands()));
     lines.join("\n")
 }
@@ -558,14 +547,36 @@ fn current_config_field_value(config: &crate::config::TransferConfig, field: Con
     }
 }
 
-/// 把整数限制在安全区间内。
-fn clamp_i64(value: i64, min: i64, max: i64) -> i64 {
-    value.clamp(min, max)
+/// 把指定字段从来源配置复制到目标配置。
+fn apply_transfer_config_field_from(
+    target: &mut crate::config::TransferConfig,
+    source: &crate::config::TransferConfig,
+    field: ConfigField,
+) {
+    match field {
+        ConfigField::JobConcurrency => target.job_concurrency = source.job_concurrency,
+        ConfigField::FileDeleteDelayMinutes => {
+            target.file_delete_delay_minutes = source.file_delete_delay_minutes;
+        }
+        ConfigField::FileGcIntervalSeconds => {
+            target.file_gc_interval_seconds = source.file_gc_interval_seconds;
+        }
+        ConfigField::ProgressEditIntervalSeconds => {
+            target.progress_edit_interval_seconds = source.progress_edit_interval_seconds;
+        }
+        ConfigField::DownloadsDefaultPageSize => {
+            target.downloads_default_page_size = source.downloads_default_page_size;
+        }
+        ConfigField::MenuInputTimeoutSeconds => {
+            target.menu_input_timeout_seconds = source.menu_input_timeout_seconds;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{Engine as _, engine::general_purpose};
 
     // 配置页文本应包含主要字段与命令示例。
     #[test]
@@ -587,11 +598,79 @@ mod tests {
         assert!(text.contains("/config show"));
     }
 
-    // 按钮调整必须做边界限制，避免误触后出现 0 并发或过短 GC。
+    // 配置首页不应回退到旧版 +/- 微调，而应统一进入字段详情再输入目标值。
     #[test]
-    fn test_clamp_i64() {
-        assert_eq!(clamp_i64(0, 1, 32), 1);
-        assert_eq!(clamp_i64(33, 1, 32), 32);
-        assert_eq!(clamp_i64(10, 1, 32), 10);
+    fn test_config_buttons_use_detail_navigation_only() {
+        let rows = build_config_buttons_on(crate::app_context::app_context().as_ref());
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.iter().any(|label| label.starts_with("并发")));
+        assert!(labels.iter().any(|label| label.starts_with("删除")));
+        assert!(labels.contains(&"刷新"));
+        assert!(labels.contains(&"重置默认"));
+        assert!(!labels.iter().any(|label| label.starts_with("+")));
+        assert!(!labels.iter().any(|label| label.starts_with("-")));
+    }
+
+    // 字段详情页里的“恢复默认值”必须只作用于当前字段，不得误导成全局 reset。
+    #[test]
+    fn test_config_field_detail_buttons_use_field_reset_action() {
+        let rows = build_config_field_detail_buttons(ConfigField::JobConcurrency);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"设并发"));
+        assert!(labels.contains(&"恢复默认值"));
+        assert!(!labels.contains(&"重置默认"));
+
+        let reset_button = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "恢复默认值")
+            .expect("detail page should have field reset button");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &reset_button.r#type
+        else {
+            panic!("field reset button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "cfg:xf:jc");
+    }
+
+    // 字段级恢复默认值只能覆盖当前字段，不能把其它运行参数一并抹掉。
+    #[test]
+    fn test_apply_transfer_config_field_from_only_updates_selected_field() {
+        let mut target = crate::config::TransferConfig {
+            job_concurrency: 8,
+            file_delete_delay_minutes: 12,
+            file_gc_interval_seconds: 99,
+            progress_edit_interval_seconds: 7,
+            downloads_default_page_size: 15,
+            menu_input_timeout_seconds: 333,
+        };
+        let source = crate::config::TransferConfig {
+            job_concurrency: 2,
+            file_delete_delay_minutes: 3,
+            file_gc_interval_seconds: 30,
+            progress_edit_interval_seconds: 4,
+            downloads_default_page_size: 10,
+            menu_input_timeout_seconds: 900,
+        };
+
+        apply_transfer_config_field_from(&mut target, &source, ConfigField::FileGcIntervalSeconds);
+
+        assert_eq!(target.job_concurrency, 8);
+        assert_eq!(target.file_delete_delay_minutes, 12);
+        assert_eq!(target.file_gc_interval_seconds, 30);
+        assert_eq!(target.progress_edit_interval_seconds, 7);
+        assert_eq!(target.downloads_default_page_size, 15);
+        assert_eq!(target.menu_input_timeout_seconds, 333);
     }
 }

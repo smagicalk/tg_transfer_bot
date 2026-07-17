@@ -39,7 +39,6 @@ pub(super) async fn update_transfer_progress_message(
         let snapshot = match store::find_active_job_id_by_source_target(
             &plan.source_link,
             plan.target_chat_id,
-            plan.actor.owner_scope(),
         )
         .await
         {
@@ -139,6 +138,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         Ok(workflow::TransferOutcome::Running { job_id }) => (
             format_transfer_control_text(
                 "相同链接正在转存中",
+                "running",
                 source_link,
                 target_chat_id,
                 *job_id,
@@ -154,6 +154,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         Ok(workflow::TransferOutcome::Paused { job_id }) => (
             format_transfer_control_text(
                 "转存任务已暂停",
+                "paused",
                 source_link,
                 target_chat_id,
                 *job_id,
@@ -169,6 +170,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         Ok(workflow::TransferOutcome::Cancelling { job_id }) => (
             format_transfer_control_text(
                 "转存任务正在停止",
+                "cancelling",
                 source_link,
                 target_chat_id,
                 *job_id,
@@ -184,6 +186,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         Ok(workflow::TransferOutcome::Cancelled { job_id }) => (
             format_transfer_control_text(
                 "转存任务已停止",
+                "cancelled",
                 source_link,
                 target_chat_id,
                 *job_id,
@@ -207,7 +210,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
             build_transfer_result_keyboard(source_link, target_chat_id, Some(*job_id), Some(link)),
         ),
         Err(err) => (
-            format_transfer_error_text(source_link, target_chat_id, &err.to_string()),
+            format_transfer_error_text("转存失败", source_link, target_chat_id, &err.to_string()),
             build_transfer_result_keyboard(source_link, target_chat_id, None, None),
         ),
     };

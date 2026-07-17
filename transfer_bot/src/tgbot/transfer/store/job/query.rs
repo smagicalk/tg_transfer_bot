@@ -27,18 +27,15 @@ pub(in crate::tgbot::transfer) async fn find_job_by_request(
         .map_err(Into::into)
 }
 
-/// 按 actor 可见范围查找任务。
-/// owner_scope=None 表示 admin 全局可见；Some 表示普通用户只能访问自己的任务。
-pub(in crate::tgbot::transfer) async fn find_job_for_owner_scope(
+/// 按主键查找任务。
+pub(in crate::tgbot::transfer) async fn find_job(
     job_id: i64,
-    owner_scope: Option<i64>,
 ) -> anyhow::Result<Option<db::transfer_job::Model>> {
     let db_conn = db::get_db().await?;
-    let mut query = db::transfer_job::Entity::find_by_id(job_id);
-    if let Some(owner_user_id) = owner_scope {
-        query = query.filter(db::transfer_job::Column::OwnerUserId.eq(owner_user_id));
-    }
-    query.one(db_conn).await.map_err(Into::into)
+    db::transfer_job::Entity::find_by_id(job_id)
+        .one(db_conn)
+        .await
+        .map_err(Into::into)
 }
 
 /// 扫描待恢复任务：

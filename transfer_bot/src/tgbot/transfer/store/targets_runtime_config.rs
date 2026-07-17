@@ -54,14 +54,6 @@ pub(crate) async fn load_targets_runtime_config_on(
         .map(|row| row.default_chat_id)
         .unwrap_or(0);
 
-    let by_request_chat_id = db::transfer_target_route::Entity::find()
-        .order_by_asc(db::transfer_target_route::Column::RequestChatId)
-        .all(db_conn)
-        .await?
-        .into_iter()
-        .map(|row| (row.request_chat_id, row.target_chat_id))
-        .collect::<std::collections::HashMap<_, _>>();
-
     let aliases = db::transfer_target_alias::Entity::find()
         .order_by_asc(db::transfer_target_alias::Column::Alias)
         .all(db_conn)
@@ -72,7 +64,6 @@ pub(crate) async fn load_targets_runtime_config_on(
 
     let config = TargetsConfig {
         default_chat_id,
-        by_request_chat_id,
         aliases,
     };
 
@@ -110,20 +101,6 @@ pub(crate) async fn save_targets_runtime_config_on(
     )
     .exec_without_returning(db_conn)
     .await?;
-
-    db::transfer_target_route::Entity::delete_many()
-        .exec(db_conn)
-        .await?;
-    for (request_chat_id, target_chat_id) in &config.by_request_chat_id {
-        db::transfer_target_route::Entity::insert(db::transfer_target_route::ActiveModel {
-            request_chat_id: sea_orm::ActiveValue::Set(*request_chat_id),
-            target_chat_id: sea_orm::ActiveValue::Set(*target_chat_id),
-            created_at: sea_orm::ActiveValue::Set(now),
-            updated_at: sea_orm::ActiveValue::Set(now),
-        })
-        .exec_without_returning(db_conn)
-        .await?;
-    }
 
     db::transfer_target_alias::Entity::delete_many()
         .exec(db_conn)

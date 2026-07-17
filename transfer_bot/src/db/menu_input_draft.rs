@@ -11,7 +11,7 @@ pub struct Model {
     /// 管理私聊 chat_id。
     #[sea_orm(primary_key, auto_increment = false)]
     pub request_chat_id: i64,
-    /// 发起输入流程的管理员 user_id。
+    /// 发起输入流程的所有者 user_id。
     #[sea_orm(primary_key, auto_increment = false)]
     pub sender_user_id: i64,
     /// 当前步骤：source_link / target_choice / target_chat / chat_picker / confirm / job_id。

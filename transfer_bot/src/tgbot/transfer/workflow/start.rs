@@ -54,12 +54,8 @@ pub(super) async fn build_transfer_start(
     // 业务查重第一层：
     // 同一个源链接转到同一个目标 chat，如果已经成功完成，直接返回历史结果。
     // 这里不看 request_message_id，因为不同命令重复转存同一链接时也应复用成功结果。
-    if let Some(old) = store::find_success_job_by_source_target(
-        &plan.source_link,
-        plan.target_chat_id,
-        plan.actor.owner_scope(),
-    )
-    .await?
+    if let Some(old) =
+        store::find_success_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
     {
         let link = refresh_stored_result_link(
             old.id,
@@ -83,12 +79,8 @@ pub(super) async fn build_transfer_start(
     // 业务查重第二层：
     // 同一个源链接转到同一个目标 chat，如果已有活跃任务，不能再创建新任务。
     // 这一步能处理“用户发送两条相同命令但 message_id 不同”的情况。
-    if let Some(old) = store::find_active_job_by_source_target(
-        &plan.source_link,
-        plan.target_chat_id,
-        plan.actor.owner_scope(),
-    )
-    .await?
+    if let Some(old) =
+        store::find_active_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
     {
         tracing::info!(
             job_id = old.id,
@@ -253,9 +245,8 @@ async fn create_new_job_start(
         "spider source messages completed"
     );
 
-    let billing = charge_transfer_if_needed(&plan, bundle.messages.len()).await?;
     // 创建主任务并对齐子项；创建完成后释放 source-target 锁，实际执行由 job_id 锁保护。
-    let job = store::create_job(&plan, &bundle, billing).await?;
+    let job = store::create_job(&plan, &bundle).await?;
     tracing::info!(
         job_id = job.id,
         request_chat_id = plan.request_chat_id,
@@ -298,49 +289,11 @@ async fn create_new_job_start(
     }
 }
 
-/// 普通用户在任务创建前扣积分；admin 与免费任务直接返回 free 计费摘要。
-async fn charge_transfer_if_needed(
-    plan: &TransferPlan,
-    item_count: usize,
-) -> anyhow::Result<store::CreateJobBilling> {
-    let cost_points = plan.billing.cost_for_items(item_count);
-    let billing = store::CreateJobBilling::new(plan.actor.role, cost_points);
-    if billing.charged_points <= 0 {
-        return Ok(billing);
-    }
-
-    let idempotency_key = format!(
-        "transfer:{}:{}",
-        plan.request_chat_id, plan.request_message_id
-    );
-    let result = store::change_points(store::PointsChange {
-        telegram_user_id: plan.actor.user_id,
-        delta: -billing.charged_points,
-        reason: "transfer_charge".to_owned(),
-        job_id: None,
-        request_chat_id: Some(plan.request_chat_id),
-        request_message_id: Some(plan.request_message_id),
-        idempotency_key: Some(idempotency_key),
-        created_by: Some(plan.actor.user_id),
-    })
-    .await?;
-    tracing::info!(
-        request_chat_id = plan.request_chat_id,
-        request_message_id = plan.request_message_id,
-        owner_user_id = plan.actor.user_id,
-        charged_points = billing.charged_points,
-        balance_after = result.account.points_balance,
-        idempotent_replay = result.idempotent_replay,
-        "transfer points charged"
-    );
-    Ok(billing)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::config::{ActorRole, BillingConfig, ClientRole, RequestActor, TransferClientIds};
+    use crate::config::{ClientRole, RequestActor, TransferClientIds};
     use crate::db;
     use rand::RngExt;
     use sea_orm::ActiveModelTrait;
@@ -521,9 +474,6 @@ mod tests {
             done_items: sea_orm::ActiveValue::Set(0),
             failed_items: sea_orm::ActiveValue::Set(0),
             retry_count: sea_orm::ActiveValue::Set(0),
-            cost_points: sea_orm::ActiveValue::Set(0),
-            charged_points: sea_orm::ActiveValue::Set(0),
-            billing_status: sea_orm::ActiveValue::Set("free".to_owned()),
             last_error: sea_orm::ActiveValue::Set(None),
             created_at: sea_orm::ActiveValue::Set(now),
             updated_at: sea_orm::ActiveValue::Set(now),
@@ -558,19 +508,11 @@ mod tests {
             actor: RequestActor {
                 request_chat_id,
                 user_id: owner_user_id,
-                role: ActorRole::User,
             },
             source_link,
             source_kind: SourceKind::Link,
             preferred_source_client_role: ClientRole::Bot,
             allow_user_fallback: false,
-            billing: BillingConfig {
-                enabled: false,
-                base_cost_points: 0,
-                item_cost_points: 0,
-                initial_user_points: 0,
-                announcement_text: None,
-            },
             source_message_chat_id: None,
             source_message_id: None,
             target_chat_id,

@@ -5,13 +5,12 @@ pub mod crypto;
 pub mod db;
 pub mod logs;
 pub mod tgbot;
-pub mod utils;
 
 use clap::Parser;
 use std::process::exit;
 use std::sync::Arc;
 
-use crate::config::{AccessControlConfig, BotConfig, ClientRole, TargetsConfig};
+use crate::config::{BotConfig, ClientRole, TargetsConfig};
 use crate::db::{ensure_runtime_schema, get_db};
 
 pub const TOKIO_WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -24,9 +23,7 @@ pub const TOKIO_WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub(crate) struct SeededRuntimeState {
     pub(crate) transfer_config: crate::config::TransferConfig,
-    pub(crate) billing_config: crate::config::BillingConfig,
     pub(crate) targets_config: TargetsConfig,
-    pub(crate) access_control_config: AccessControlConfig,
 }
 
 /// 启动期真实使用的数据库初始化链。
@@ -42,9 +39,7 @@ pub(crate) async fn bootstrap_runtime_database_state_on(
     db: &sea_orm::DatabaseConnection,
     database_url_for_log: &str,
     transfer_config_default: &crate::config::TransferConfig,
-    billing_config_default: &crate::config::BillingConfig,
     targets_config_default: &TargetsConfig,
-    access_control_default: &AccessControlConfig,
 ) -> anyhow::Result<SeededRuntimeState> {
     let dialect = match db.get_database_backend() {
         sea_orm::DatabaseBackend::Sqlite => "sqlite",
@@ -65,32 +60,20 @@ pub(crate) async fn bootstrap_runtime_database_state_on(
     let transfer_config =
         crate::tgbot::transfer::ensure_transfer_runtime_config_on(db, transfer_config_default)
             .await?;
-    let billing_config =
-        crate::tgbot::transfer::ensure_billing_runtime_config_on(db, billing_config_default)
-            .await?;
     let targets_config =
         crate::tgbot::transfer::ensure_targets_runtime_config_on(db, targets_config_default)
-            .await?;
-    let access_control_config =
-        crate::tgbot::transfer::ensure_access_control_runtime_config_on(db, access_control_default)
             .await?;
 
     tracing::info!(
         database_backend = dialect,
         runtime_job_concurrency = transfer_config.job_concurrency,
-        runtime_billing_enabled = billing_config.enabled,
         runtime_target_default_chat_id = targets_config.default_chat_id,
-        runtime_admin_user_count = access_control_config.admin_user_ids.len(),
-        runtime_allowed_user_count = access_control_config.allowed_user_ids.len(),
-        runtime_allowed_target_chat_count = access_control_config.allowed_target_chat_ids.len(),
         "runtime database state loaded"
     );
 
     Ok(SeededRuntimeState {
         transfer_config,
-        billing_config,
         targets_config,
-        access_control_config,
     })
 }
 
@@ -101,30 +84,14 @@ pub(crate) async fn bootstrap_runtime_database_state(
     config: &BotConfig,
 ) -> anyhow::Result<SeededRuntimeState> {
     let transfer_config_default = config.transfer_config.clone();
-    let billing_config_default = config.billing.clone();
-    let targets_config_default = crate::config::TargetsConfig::from_runtime_target_state(
-        &config.target_map,
-        &config.target_aliases,
-    );
-    let access_control_default = crate::config::AccessControlConfig {
-        bootstrap_admin_user_ids: config.bootstrap_admin_user_ids.clone(),
-        admin_user_ids: Vec::new(),
-        allowed_user_ids: config.allowed_user_ids.clone(),
-        allow_all_private_users: config.allow_all_private_users,
-        banned_user_ids: config.banned_user_ids.clone(),
-        allowed_request_chat_ids: config.allowed_request_chat_ids.clone(),
-        allowed_target_chat_ids: config.allowed_target_chat_ids.clone(),
-    };
-
+    let targets_config_default = config.targets.clone();
     crate::db::init_database_url(config.storage.database_url.clone()).await?;
     let db = get_db().await?;
     bootstrap_runtime_database_state_on(
         db,
         &config.storage.database_url,
         &transfer_config_default,
-        &billing_config_default,
         &targets_config_default,
-        &access_control_default,
     )
     .await
 }
@@ -162,30 +129,20 @@ pub async fn run() -> anyhow::Result<()> {
             return Err(err);
         }
     };
-    let targets_config_default = crate::config::TargetsConfig::from_runtime_target_state(
-        &config.target_map,
-        &config.target_aliases,
-    );
-    let access_control_default = crate::config::AccessControlConfig {
-        bootstrap_admin_user_ids: config.bootstrap_admin_user_ids.clone(),
-        admin_user_ids: Vec::new(),
-        allowed_user_ids: config.allowed_user_ids.clone(),
-        allow_all_private_users: config.allow_all_private_users,
-        banned_user_ids: config.banned_user_ids.clone(),
-        allowed_request_chat_ids: config.allowed_request_chat_ids.clone(),
-        allowed_target_chat_ids: config.allowed_target_chat_ids.clone(),
-    };
-    let login_mode = match &config.login_info {
+    let targets_config_default = config.targets.clone();
+    let login_mode = match &config
+        .runtime_client(crate::config::ClientRole::Bot)?
+        .login_info
+    {
         crate::config::LoginInfo::Phone(_) => "phone",
         crate::config::LoginInfo::Token(_) => "token",
         crate::config::LoginInfo::Ocr => "ocr",
     };
     tracing::info!(
         login_mode,
-        admin_count = config.admin_ids.len(),
-        target_count = config.target_map.len(),
-        interaction_client = config.workflow.interaction_client.as_str(),
-        configured_download_client = config.workflow.download_client.as_str(),
+        owner_user_id = config.owner_user_id,
+        target_default_chat_id = config.targets.default_chat_id,
+        target_alias_count = config.targets.aliases.len(),
         upload_client = config.workflow.upload_client.as_str(),
         job_concurrency = config.transfer_config.job_concurrency,
         file_delete_delay_minutes = config.transfer_config.file_delete_delay_minutes,
@@ -193,40 +150,10 @@ pub async fn run() -> anyhow::Result<()> {
         "runtime config loaded"
     );
     let transfer_config_default = config.transfer_config.clone();
-    let billing_config_default = config.billing.clone();
     let seeded_runtime = bootstrap_runtime_database_state(&config).await?;
     config.transfer_config = seeded_runtime.transfer_config.clone();
-    config.billing = seeded_runtime.billing_config.clone();
     let targets_config = seeded_runtime.targets_config.clone();
-    let access_control = seeded_runtime.access_control_config.clone();
-    let access_control_runtime = crate::config::AccessControlConfig {
-        bootstrap_admin_user_ids: access_control_default.bootstrap_admin_user_ids.clone(),
-        admin_user_ids: access_control.admin_user_ids.clone(),
-        allowed_user_ids: access_control.allowed_user_ids.clone(),
-        allow_all_private_users: access_control.allow_all_private_users,
-        banned_user_ids: access_control.banned_user_ids.clone(),
-        allowed_request_chat_ids: access_control.allowed_request_chat_ids.clone(),
-        allowed_target_chat_ids: access_control.allowed_target_chat_ids.clone(),
-    };
-    config.target_map = targets_config.to_target_map();
-    config.target_aliases = targets_config.aliases.clone();
-    config.admin_user_ids = {
-        let mut ids = std::collections::BTreeSet::new();
-        for id in &access_control_default.bootstrap_admin_user_ids {
-            ids.insert(*id);
-        }
-        for id in &access_control.admin_user_ids {
-            ids.insert(*id);
-        }
-        ids.into_iter().collect()
-    };
-    config.bootstrap_admin_user_ids = access_control_default.bootstrap_admin_user_ids.clone();
-    config.admin_ids = config.admin_user_ids.clone();
-    config.allowed_user_ids = access_control.allowed_user_ids.clone();
-    config.allow_all_private_users = access_control.allow_all_private_users;
-    config.banned_user_ids = access_control.banned_user_ids.clone();
-    config.allowed_request_chat_ids = access_control.allowed_request_chat_ids.clone();
-    config.allowed_target_chat_ids = access_control.allowed_target_chat_ids.clone();
+    config.targets = targets_config.clone();
     tracing::info!(
         job_concurrency = config.transfer_config.job_concurrency,
         file_delete_delay_minutes = config.transfer_config.file_delete_delay_minutes,
@@ -234,29 +161,13 @@ pub async fn run() -> anyhow::Result<()> {
         progress_edit_interval_seconds = config.transfer_config.progress_edit_interval_seconds,
         downloads_default_page_size = config.transfer_config.downloads_default_page_size,
         menu_input_timeout_seconds = config.transfer_config.menu_input_timeout_seconds,
-        billing_enabled = config.billing.enabled,
-        billing_base_cost_points = config.billing.base_cost_points,
-        billing_item_cost_points = config.billing.item_cost_points,
-        billing_initial_user_points = config.billing.initial_user_points,
         target_default_chat_id = targets_config.default_chat_id,
-        target_route_count = targets_config.by_request_chat_id.len(),
         target_alias_count = targets_config.aliases.len(),
-        admin_user_count = config.admin_user_ids.len(),
-        allowed_user_count = config.allowed_user_ids.len(),
-        allow_all_private_users = config.allow_all_private_users,
-        banned_user_count = config.banned_user_ids.len(),
-        allowed_request_chat_count = config.allowed_request_chat_ids.len(),
-        allowed_target_chat_count = config.allowed_target_chat_ids.len(),
         "runtime transfer config loaded from database"
     );
 
     let app_context = crate::app_context::app_context();
-    app_context
-        .send_capabilities
-        .set_reply_markup_enabled(config.supports_reply_markup());
-    app_context
-        .home_announcement
-        .set_announcement_text(config.billing.announcement_text.clone());
+    app_context.send_capabilities.set_reply_markup_enabled(true);
     tracing::info!(
         enabled = app_context.send_capabilities.reply_markup_enabled(),
         "tdlib reply markup capability configured"
@@ -277,12 +188,8 @@ pub async fn run() -> anyhow::Result<()> {
         crate::tgbot::transfer::RuntimeInitBundle {
             transfer_config: config.transfer_config.clone(),
             transfer_default_config: transfer_config_default,
-            billing_config: config.billing.clone(),
-            billing_default_config: billing_config_default,
             targets_config: targets_config.clone(),
             targets_default_config: targets_config_default,
-            access_control_config: access_control_runtime,
-            access_control_default_config: access_control_default,
             tdlib_files_directories,
         },
     );

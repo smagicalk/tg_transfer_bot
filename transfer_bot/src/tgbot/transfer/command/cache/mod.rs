@@ -2,7 +2,7 @@
 // 只读查看 file_cache 的汇总和明细，不执行清理。
 
 use crate::tgbot::send;
-use crate::tgbot::transfer::store;
+use crate::tgbot::transfer::{card, store};
 
 mod keyboard;
 mod render;
@@ -16,6 +16,66 @@ use render::{compute_cache_page_count, format_cache_page_text, format_cache_summ
 use types::{CacheArgs, CacheView, parse_cache_args};
 
 use crate::tgbot::send::send_interaction_error_card;
+
+use super::common::{CommandStyle, cache_command as build_cache_command};
+
+/// `cache` 帮助页和目录页共用的用途描述。
+pub(in crate::tgbot::transfer::command) fn cache_help_purpose() -> &'static str {
+    "只读查看 file_cache 状态。"
+}
+
+/// `cache` 帮助页和目录页共用的一句话摘要。
+pub(in crate::tgbot::transfer::command) fn cache_help_summary() -> &'static str {
+    "查看 file_cache 概览和最近缓存记录；只读，不执行清理。"
+}
+
+/// `cache` 菜单页和帮助详情页共用的开场说明。
+pub(in crate::tgbot::transfer::command) fn cache_intro_lines() -> Vec<String> {
+    vec!["默认展示状态概览；page 模式展示最近更新的缓存记录，不执行删除。".to_owned()]
+}
+
+/// `/help cache` 共用的详细说明正文。
+///
+/// 缓存页只展示 file_cache 状态，不负责删除动作；正文留在 cache 模块维护，避免 help 模块重复理解缓存视图。
+pub(in crate::tgbot::transfer::command) fn build_cache_help_detail_text() -> String {
+    let mut lines = vec![
+        "cache".to_owned(),
+        format!("用途：{}", cache_help_purpose()),
+    ];
+    lines.extend(
+        cache_intro_lines()
+            .into_iter()
+            .map(|line| format!("说明：{}", line)),
+    );
+    lines.extend([
+        card::DIVIDER.to_owned(),
+        card::section("命令"),
+        build_cache_command(None, None, None, CommandStyle::Long),
+        build_cache_command(Some("page"), None, None, CommandStyle::Long),
+        String::new(),
+        card::section("示例"),
+        build_cache_command(None, None, None, CommandStyle::Long),
+        build_cache_command(Some("page"), Some(10), Some(1), CommandStyle::Long),
+    ]);
+    lines.join("\n")
+}
+
+/// `cache` 帮助页入口按钮行。
+pub(in crate::tgbot::transfer::command) fn build_cache_help_entry_rows()
+-> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![vec![
+        send::build_callback_button(
+            "打开缓存页",
+            &build_cache_summary_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        send::build_callback_button(
+            "运行健康",
+            &super::build_health_button_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]]
+}
 
 /// 判断 callback payload 是否属于 `/cache`。
 pub(super) fn is_cache_callback_data(data: &str) -> bool {

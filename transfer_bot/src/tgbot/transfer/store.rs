@@ -3,9 +3,6 @@
 // - file_cache 引用计数与删除队列管理
 // - 启动恢复任务扫描
 
-mod access_control_runtime_config;
-mod account;
-mod billing_runtime_config;
 mod file_cache;
 mod item;
 mod job;
@@ -19,28 +16,6 @@ mod targets_runtime_config;
 mod tests;
 
 #[cfg(test)]
-pub(crate) use access_control_runtime_config::ensure_access_control_runtime_config;
-pub(crate) use access_control_runtime_config::ensure_access_control_runtime_config_on;
-pub(crate) use access_control_runtime_config::save_access_control_runtime_config;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use access_control_runtime_config::{
-    load_access_control_runtime_config, load_access_control_runtime_config_on,
-};
-pub(in crate::tgbot::transfer) use account::{
-    PointLedgerEntry, PointLedgerPage, PointsChange, UserAccountSnapshot, change_points,
-    ensure_user_account, get_user_account, list_point_ledger_page,
-};
-#[cfg(test)]
-pub(crate) use billing_runtime_config::ensure_billing_runtime_config;
-pub(crate) use billing_runtime_config::ensure_billing_runtime_config_on;
-pub(crate) use billing_runtime_config::save_billing_runtime_config;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use billing_runtime_config::{
-    load_billing_runtime_config, load_billing_runtime_config_on,
-};
-#[cfg(test)]
 pub(super) use file_cache::{acquire_file_ref, release_job_file_refs};
 pub(super) use file_cache::{
     claim_file_cache_for_delete, delete_file_cache, list_due_file_cache,
@@ -53,10 +28,10 @@ pub(super) use item::{
 #[cfg(test)]
 pub(super) use job::finish_uploaded_job;
 pub(super) use job::{
-    CreateJobBilling, cancel_job_now, create_job, find_job_by_request, finish_job,
-    finish_job_with_item_statuses, finish_uploaded_job_with_item_statuses, get_job_status,
-    list_cancelling_jobs, list_recoverable_jobs, mark_job_running, pause_job_with_owner_scope,
-    request_cancel_job_with_owner_scope, update_result_message_link, wake_job_with_owner_scope,
+    cancel_job_now, create_job, find_job_by_request, finish_job, finish_job_with_item_statuses,
+    finish_uploaded_job_with_item_statuses, get_job_status, list_cancelling_jobs,
+    list_recoverable_jobs, mark_job_running, pause_job, request_cancel_job,
+    update_result_message_link, wake_job,
 };
 pub(super) use observability::{
     list_file_cache_status_summaries, list_recent_file_cache_snapshots,
@@ -64,8 +39,8 @@ pub(super) use observability::{
 };
 pub(super) use progress::{
     find_active_job_by_source_target, find_active_job_id_by_source_target,
-    find_success_job_by_source_target, get_job_progress_snapshot_for_actor,
-    get_job_progress_snapshot_with_context, list_recent_job_snapshots_for_actor,
+    find_success_job_by_source_target, get_job_progress_snapshot_with_context,
+    list_recent_job_snapshots,
 };
 pub(super) use result::{
     ResultMessageRecord, list_result_messages_by_job, replace_result_messages_on_conn,

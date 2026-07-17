@@ -426,7 +426,7 @@ fn prepare_reply_markup(
 
 /// 构造 reply keyboard JSON。
 ///
-/// 当前只需要 Telegram 原生选群按钮，其他 reply keyboard 类型先不开放，避免无意支持
+/// 当前只需要 Telegram 原生选聊按钮，其他 reply keyboard 类型先不开放，避免无意支持
 /// 电话、位置等敏感输入。
 fn build_show_keyboard_value(
     keyboard: tdlib_rs::types::ReplyMarkupShowKeyboard,
@@ -834,17 +834,17 @@ mod tests {
         );
     }
 
-    // 私聊 bot 的原生选群按钮需要 replyMarkupShowKeyboard，而不是 inline keyboard。
+    // 私聊 bot 的原生选聊按钮需要 replyMarkupShowKeyboard，而不是 inline keyboard。
     #[test]
     fn test_request_chat_keyboard_send_message_request_can_serialize() {
         let formatted_text = tdlib_rs::types::FormattedText {
-            text: "请选择目标群".to_owned(),
+            text: "请选择目标聊天".to_owned(),
             entities: vec![],
         };
         let keyboard = tdlib_rs::types::ReplyMarkupShowKeyboard {
             rows: vec![
                 vec![tdlib_rs::types::KeyboardButton {
-                    text: "选择群组".to_owned(),
+                    text: "选择聊天".to_owned(),
                     icon_custom_emoji_id: 0,
                     style: tdlib_rs::enums::ButtonStyle::Primary,
                     r#type: tdlib_rs::enums::KeyboardButtonType::RequestChat(
@@ -876,7 +876,7 @@ mod tests {
             resize_keyboard: true,
             one_time: true,
             is_personal: true,
-            input_field_placeholder: "选择目标群组".to_owned(),
+            input_field_placeholder: "选择目标聊天".to_owned(),
         };
 
         let request = build_send_message_request(
@@ -904,7 +904,7 @@ mod tests {
         );
     }
 
-    // 选群结束或取消后必须能发送 replyMarkupRemoveKeyboard，避免客户端残留旧的选群键盘。
+    // 选聊结束或取消后必须能发送 replyMarkupRemoveKeyboard，避免客户端残留旧的选聊键盘。
     #[test]
     fn test_remove_keyboard_send_message_request_can_serialize() {
         let formatted_text = tdlib_rs::types::FormattedText {

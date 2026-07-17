@@ -8,9 +8,6 @@ use sea_orm::TransactionTrait;
 
 use crate::db;
 
-use super::super::account::{
-    partial_refund_points, refund_job_points_if_needed_on_conn, refund_job_points_on_conn,
-};
 use super::super::file_cache::release_job_file_refs_on_conn;
 use super::super::item::set_item_status_on_conn;
 use super::super::{
@@ -197,13 +194,6 @@ async fn finish_job_with_allowed_statuses(
         }
         replace_result_messages_on_conn(&txn, job.id, &summary.result_messages).await?;
         release_job_file_refs_on_conn(&txn, job.id, summary.delay_minutes).await?;
-        if final_status == JOB_STATUS_FAILED {
-            refund_job_points_if_needed_on_conn(&txn, &job, "transfer_refund_failed").await?;
-        } else if final_status == JOB_STATUS_PARTIAL {
-            let refund_points =
-                partial_refund_points(job.charged_points, job.total_items, summary.fail_count);
-            refund_job_points_on_conn(&txn, &job, refund_points, "transfer_refund_partial").await?;
-        }
         txn.commit().await?;
         return Ok(true);
     }

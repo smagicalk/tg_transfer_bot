@@ -5,209 +5,13 @@ use crate::db;
 use sea_orm::EntityTrait;
 
 use super::super::card;
-use super::super::command::{
-    build_downloads_status_button_data, build_menu_acl_button_data,
-    build_menu_admin_hub_button_data, build_menu_billing_button_data,
-    build_menu_config_button_data, build_menu_home_button_data, build_menu_targets_button_data,
-};
+use super::super::command::build_downloads_status_button_data;
 use super::super::types::SourceKind;
 use super::super::{spider, store};
 use super::TransferOutcome;
 use super::control::{apply_job_control, finish_skipped_by_control};
 use super::guard::acquire_job_guard;
 use super::runner::run_job_inner;
-
-/// 启动后给 bootstrap admin 的初始化引导。
-///
-/// 数据库是当前运行态真值源；如果目标配置仍为空，普通管理员虽然能进命令页，
-/// 但还不能顺畅开始转存，因此启动时给 bootstrap admin 一个明确的初始化入口。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct StartupSetupGuide {
-    bootstrap_admin_user_ids: Vec<i64>,
-    targets_missing: bool,
-    acl_still_empty: bool,
-    billing_is_default: bool,
-    transfer_is_default: bool,
-}
-
-impl StartupSetupGuide {
-    fn should_send(&self) -> bool {
-        !self.bootstrap_admin_user_ids.is_empty() && (self.targets_missing || self.acl_still_empty)
-    }
-}
-
-/// 在指定上下文上构造“初始化引导”页面。
-///
-/// 菜单首页和受限页面在数据库运行态尚未初始化完成时会复用这张卡片，避免用户跳到
-/// 转存/下载/任务等页面后才发现目标和 ACL 还没配好。
-pub(in crate::tgbot::transfer) fn startup_setup_guide_page_on(
-    app: &crate::app_context::AppContext,
-) -> Option<(String, Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>)> {
-    let guide = detect_startup_setup_guide(
-        &super::super::targets_runtime_config_on(app),
-        &super::super::access_control_runtime_config_on(app),
-        &super::super::billing_runtime_config_on(app),
-        &super::super::billing_runtime_default_config_on(app),
-        &super::super::runtime_config_on(app),
-        &super::super::runtime_default_config_on(app),
-    );
-    guide.should_send().then(|| {
-        (
-            format_startup_setup_guide_text(&guide),
-            build_startup_setup_guide_button_rows(),
-        )
-    })
-}
-
-/// 在指定上下文上按需向 bootstrap admin 发送初始化引导。
-pub(in crate::tgbot::transfer) async fn maybe_send_startup_setup_guide_on(
-    app: &crate::app_context::AppContext,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    let Some((text, rows)) = startup_setup_guide_page_on(app) else {
-        return Ok(());
-    };
-
-    let guide = detect_startup_setup_guide(
-        &super::super::targets_runtime_config_on(app),
-        &super::super::access_control_runtime_config_on(app),
-        &super::super::billing_runtime_config_on(app),
-        &super::super::billing_runtime_default_config_on(app),
-        &super::super::runtime_config_on(app),
-        &super::super::runtime_default_config_on(app),
-    );
-
-    let recipients = guide
-        .bootstrap_admin_user_ids
-        .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
-    for chat_id in recipients {
-        let panel = crate::tgbot::send::ReplyPanel::card(text.clone()).rows(rows.clone());
-        if let Err(err) = panel.send(chat_id, client_id).await {
-            tracing::warn!(chat_id, error = %err, "send startup setup guide failed");
-        }
-    }
-    Ok(())
-}
-
-/// 根据当前运行态判断是否仍处于“首启未配置”状态。
-fn detect_startup_setup_guide(
-    targets: &crate::config::TargetsConfig,
-    access_control: &crate::config::AccessControlConfig,
-    billing: &crate::config::BillingConfig,
-    billing_default: &crate::config::BillingConfig,
-    transfer: &crate::config::TransferConfig,
-    transfer_default: &crate::config::TransferConfig,
-) -> StartupSetupGuide {
-    StartupSetupGuide {
-        bootstrap_admin_user_ids: access_control.bootstrap_admin_user_ids.clone(),
-        targets_missing: targets.is_empty(),
-        acl_still_empty: access_control.admin_user_ids.is_empty()
-            && access_control.allowed_user_ids.is_empty()
-            && !access_control.allow_all_private_users
-            && access_control.banned_user_ids.is_empty()
-            && access_control.allowed_request_chat_ids.is_empty()
-            && access_control.allowed_target_chat_ids.is_empty(),
-        billing_is_default: billing.enabled == billing_default.enabled
-            && billing.base_cost_points == billing_default.base_cost_points
-            && billing.item_cost_points == billing_default.item_cost_points
-            && billing.initial_user_points == billing_default.initial_user_points
-            && billing.announcement_text == billing_default.announcement_text,
-        transfer_is_default: transfer.job_concurrency == transfer_default.job_concurrency
-            && transfer.file_delete_delay_minutes == transfer_default.file_delete_delay_minutes
-            && transfer.file_gc_interval_seconds == transfer_default.file_gc_interval_seconds
-            && transfer.progress_edit_interval_seconds
-                == transfer_default.progress_edit_interval_seconds
-            && transfer.downloads_default_page_size == transfer_default.downloads_default_page_size
-            && transfer.menu_input_timeout_seconds == transfer_default.menu_input_timeout_seconds,
-    }
-}
-
-/// 初始化引导按钮。
-fn build_startup_setup_guide_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
-        vec![
-            crate::tgbot::send::build_callback_button(
-                "目标配置",
-                &build_menu_targets_button_data(),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            crate::tgbot::send::build_callback_button(
-                "访问控制",
-                &build_menu_acl_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            crate::tgbot::send::build_callback_button(
-                "计费配置",
-                &build_menu_billing_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            crate::tgbot::send::build_callback_button(
-                "运行配置",
-                &build_menu_config_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            crate::tgbot::send::build_callback_button(
-                "管理页",
-                &build_menu_admin_hub_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            crate::tgbot::send::build_callback_button(
-                "菜单",
-                &build_menu_home_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-    ]
-}
-
-/// 首启引导卡片。
-fn format_startup_setup_guide_text(guide: &StartupSetupGuide) -> String {
-    [
-        "初始化引导".to_owned(),
-        format!("状态：{}", card::code("setup-needed")),
-        card::DIVIDER.to_owned(),
-        card::section("当前状态"),
-        if guide.targets_missing {
-            card::note("还没有默认目标、请求路由或目标别名，当前数据库尚未完成目标初始化。")
-        } else {
-            card::field("targets", "configured")
-        },
-        if guide.acl_still_empty {
-            card::note("当前只有文件里的 bootstrap admin 能进入管理页；普通用户入口和其他名单还没有写入数据库。")
-        } else {
-            card::field("acl", "configured")
-        },
-        if guide.billing_is_default {
-            card::note("计费配置仍使用数据库默认值，可按需调整。")
-        } else {
-            card::field("billing", "customized")
-        },
-        if guide.transfer_is_default {
-            card::note("运行配置仍使用数据库默认值，可按需调整。")
-        } else {
-            card::field("config", "customized")
-        },
-        String::new(),
-        card::section("建议顺序"),
-        "1. 先配置目标：至少写一个默认目标或目标别名。".to_owned(),
-        "2. 再配置访问控制：决定谁能用、哪些目标 chat 允许写入。".to_owned(),
-        "3. 最后检查计费和运行参数。".to_owned(),
-        String::new(),
-        card::section("命令"),
-        card::command_line("目标配置", "/targets show"),
-        card::command_line("访问控制", "/acl show"),
-        card::command_line("计费配置", "/billing show"),
-        card::command_line("运行配置", "/config show"),
-        card::command_line("交互菜单", "/menu"),
-    ]
-    .join("\n")
-}
 
 /// 启动时恢复数据库里未完成任务。
 pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
@@ -521,12 +325,9 @@ fn format_recovery_startup_text(summary: &RecoveryStartupSummary) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        RecoveryStartupSummary, StartupSetupGuide, build_recovery_startup_button_rows,
-        build_startup_setup_guide_button_rows, detect_startup_setup_guide,
-        format_recovery_startup_text, format_startup_setup_guide_text,
+        RecoveryStartupSummary, build_recovery_startup_button_rows, format_recovery_startup_text,
     };
 
-    use crate::config;
     use crate::db;
     use crate::tgbot::transfer::store;
     use rand::RngExt;
@@ -591,111 +392,6 @@ mod tests {
         assert!(labels.iter().all(|label| !label.starts_with("复制")));
     }
 
-    // 首启引导应只在目标配置和 ACL 仍是空库默认状态时触发。
-    #[test]
-    fn test_detect_startup_setup_guide_for_empty_runtime_state() {
-        let guide = detect_startup_setup_guide(
-            &config::TargetsConfig::default(),
-            &config::AccessControlConfig {
-                bootstrap_admin_user_ids: vec![1],
-                ..Default::default()
-            },
-            &config::BillingConfig::default(),
-            &config::BillingConfig::default(),
-            &config::TransferConfig::default(),
-            &config::TransferConfig::default(),
-        );
-
-        assert!(guide.targets_missing);
-        assert!(guide.acl_still_empty);
-        assert!(guide.should_send());
-    }
-
-    // 即便目标已配置，只要 ACL 仍是空库默认状态，引导仍应继续提醒 bootstrap admin 完成放权。
-    #[test]
-    fn test_detect_startup_setup_guide_keeps_prompt_when_acl_is_still_empty() {
-        let guide = detect_startup_setup_guide(
-            &config::TargetsConfig {
-                default_chat_id: -100123,
-                ..Default::default()
-            },
-            &config::AccessControlConfig {
-                bootstrap_admin_user_ids: vec![1],
-                ..Default::default()
-            },
-            &config::BillingConfig::default(),
-            &config::BillingConfig::default(),
-            &config::TransferConfig::default(),
-            &config::TransferConfig::default(),
-        );
-
-        assert!(!guide.targets_missing);
-        assert!(guide.acl_still_empty);
-        assert!(guide.should_send());
-    }
-
-    // 目标与 ACL 都已经进入数据库运行态后，首启引导不应再重复发送。
-    #[test]
-    fn test_detect_startup_setup_guide_stops_after_targets_and_acl_are_configured() {
-        let guide = detect_startup_setup_guide(
-            &config::TargetsConfig {
-                default_chat_id: -100123,
-                ..Default::default()
-            },
-            &config::AccessControlConfig {
-                bootstrap_admin_user_ids: vec![1],
-                allowed_user_ids: vec![2],
-                ..Default::default()
-            },
-            &config::BillingConfig::default(),
-            &config::BillingConfig::default(),
-            &config::TransferConfig::default(),
-            &config::TransferConfig::default(),
-        );
-
-        assert!(!guide.targets_missing);
-        assert!(!guide.acl_still_empty);
-        assert!(!guide.should_send());
-    }
-
-    // 初始化引导应明确提示当前缺什么，并给出目标/ACL/计费/运行配置入口。
-    #[test]
-    fn test_format_startup_setup_guide_text() {
-        let text = format_startup_setup_guide_text(&StartupSetupGuide {
-            bootstrap_admin_user_ids: vec![1],
-            targets_missing: true,
-            acl_still_empty: true,
-            billing_is_default: true,
-            transfer_is_default: true,
-        });
-
-        assert!(text.contains("初始化引导"));
-        assert!(text.contains("状态：‹setup-needed›"));
-        assert!(text.contains("还没有默认目标"));
-        assert!(text.contains("bootstrap admin"));
-        assert!(text.contains("目标配置：‹/targets show›"));
-        assert!(text.contains("运行配置：‹/config show›"));
-    }
-
-    // 初始化引导按钮应全部走 callback 导航，不要求用户先手敲命令。
-    #[test]
-    fn test_build_startup_setup_guide_button_rows() {
-        let rows = build_startup_setup_guide_button_rows();
-        let labels = rows
-            .iter()
-            .flatten()
-            .map(|button| button.text.as_str())
-            .collect::<Vec<_>>();
-
-        assert_eq!(rows[0][0].text, "目标配置");
-        assert_eq!(rows[0][1].text, "访问控制");
-        assert_eq!(rows[1][0].text, "计费配置");
-        assert_eq!(rows[1][1].text, "运行配置");
-        assert_eq!(rows[2][0].text, "管理页");
-        assert_eq!(rows[2][1].text, "菜单");
-        assert!(labels.iter().all(|label| !label.starts_with("复制")));
-    }
-
     // 启动恢复摘要应按 request_chat_id 聚合，并限制示例 job 数量，避免单 chat 摘要无限变长。
     #[test]
     fn test_recovery_startup_summaries_group_by_chat_and_limit_samples() {
@@ -726,9 +422,6 @@ mod tests {
                 done_items: 0,
                 failed_items: 0,
                 retry_count: 0,
-                cost_points: 0,
-                charged_points: 0,
-                billing_status: "free".to_owned(),
                 last_error: None,
                 created_at: now,
                 updated_at: now,
@@ -756,9 +449,6 @@ mod tests {
             done_items: 0,
             failed_items: 0,
             retry_count: 0,
-            cost_points: 0,
-            charged_points: 0,
-            billing_status: "free".to_owned(),
             last_error: None,
             created_at: now,
             updated_at: now,
@@ -858,9 +548,6 @@ mod tests {
             done_items: sea_orm::ActiveValue::Set(0),
             failed_items: sea_orm::ActiveValue::Set(0),
             retry_count: sea_orm::ActiveValue::Set(0),
-            cost_points: sea_orm::ActiveValue::Set(0),
-            charged_points: sea_orm::ActiveValue::Set(0),
-            billing_status: sea_orm::ActiveValue::Set("free".to_owned()),
             last_error: sea_orm::ActiveValue::Set(None),
             created_at: sea_orm::ActiveValue::Set(now),
             updated_at: sea_orm::ActiveValue::Set(now),

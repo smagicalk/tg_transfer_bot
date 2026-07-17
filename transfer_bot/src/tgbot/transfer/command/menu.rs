@@ -5,8 +5,13 @@ use std::sync::Arc;
 
 use crate::config::BotConfig;
 use crate::tgbot::send;
+use crate::tgbot::transfer::card;
 
 use super::super::store;
+use super::common::{
+    CommandStyle, cache_command, config_show_command, downloads_command, health_command,
+    lookup_command, targets_show_command,
+};
 use super::config_cmd;
 use crate::tgbot::send::send_interaction_error_card;
 
@@ -20,11 +25,192 @@ use input::MenuInputKind;
 use keyboard::build_menu_buttons_on;
 use text::{
     MenuHomeSummary, build_menu_home_text, build_menu_no_pending_input_text,
-    build_menu_status_text, build_menu_text, build_permission_denied_menu_text,
-    build_step_prompt_text, build_user_account_menu_text,
+    build_menu_status_text, build_menu_text, build_step_prompt_text,
 };
 
 pub(super) use input::AdminInputAction;
+
+/// hub 入口的共享元数据。
+///
+/// `menu/text.rs` 用它渲染命令区，`menu/keyboard/hubs.rs` 用它生成按钮，
+/// 这样按钮标题、顺序和命令模板就不会再维护两份。
+#[derive(Debug, Clone)]
+struct HubEntrySpec {
+    text: &'static str,
+    command_preview: String,
+    style: tdlib_rs::enums::ButtonStyle,
+    action: HubEntryAction,
+}
+
+/// hub 入口对应的按钮动作。
+///
+/// 命令预览和按钮行为可能不同；按钮优先使用 callback，文本模式展示可直接发送的命令。
+#[derive(Debug, Clone, Copy)]
+enum HubEntryAction {
+    DownloadsFilter { filter: &'static str, limit: u64 },
+    MenuPage(MenuPage),
+    QuickLookupDefault,
+    HealthHome,
+    CacheHome,
+}
+
+/// 任务 hub 的共享入口定义。
+fn tasks_hub_specs() -> Vec<Vec<HubEntrySpec>> {
+    vec![
+        vec![
+            HubEntrySpec {
+                text: "最近任务",
+                command_preview: downloads_command(None, None, None, CommandStyle::Long),
+                style: tdlib_rs::enums::ButtonStyle::Primary,
+                action: HubEntryAction::DownloadsFilter {
+                    filter: "all",
+                    limit: 8,
+                },
+            },
+            HubEntrySpec {
+                text: "运行中",
+                command_preview: downloads_command(Some("run"), None, None, CommandStyle::Long),
+                style: tdlib_rs::enums::ButtonStyle::Default,
+                action: HubEntryAction::DownloadsFilter {
+                    filter: "run",
+                    limit: 8,
+                },
+            },
+            HubEntrySpec {
+                text: "已暂停",
+                command_preview: downloads_command(Some("pause"), None, None, CommandStyle::Long),
+                style: tdlib_rs::enums::ButtonStyle::Default,
+                action: HubEntryAction::DownloadsFilter {
+                    filter: "pause",
+                    limit: 8,
+                },
+            },
+        ],
+        vec![
+            HubEntrySpec {
+                text: "失败任务",
+                command_preview: downloads_command(Some("fail"), None, None, CommandStyle::Long),
+                style: tdlib_rs::enums::ButtonStyle::Default,
+                action: HubEntryAction::DownloadsFilter {
+                    filter: "fail",
+                    limit: 8,
+                },
+            },
+            HubEntrySpec {
+                text: "下载列表",
+                command_preview: downloads_command(None, None, None, CommandStyle::Long),
+                style: tdlib_rs::enums::ButtonStyle::Default,
+                action: HubEntryAction::MenuPage(MenuPage::Downloads),
+            },
+            HubEntrySpec {
+                text: "任务控制",
+                command_preview: "/job status <job_id>".to_owned(),
+                style: tdlib_rs::enums::ButtonStyle::Default,
+                action: HubEntryAction::MenuPage(MenuPage::Jobs),
+            },
+        ],
+        vec![
+            HubEntrySpec {
+                text: "快速查询",
+                command_preview: "/lookup <link>".to_owned(),
+                style: tdlib_rs::enums::ButtonStyle::Primary,
+                action: HubEntryAction::QuickLookupDefault,
+            },
+            HubEntrySpec {
+                text: "查询页",
+                command_preview: lookup_command("<link>", 0, CommandStyle::Long)
+                    .replace(" 0", " <target_chat_id>"),
+                style: tdlib_rs::enums::ButtonStyle::Default,
+                action: HubEntryAction::MenuPage(MenuPage::Lookup),
+            },
+        ],
+    ]
+}
+
+/// 管理 hub 的共享入口定义。
+fn admin_hub_specs() -> Vec<Vec<HubEntrySpec>> {
+    vec![
+        vec![
+            HubEntrySpec {
+                text: "运行配置",
+                command_preview: config_show_command(CommandStyle::Long),
+                style: tdlib_rs::enums::ButtonStyle::Primary,
+                action: HubEntryAction::MenuPage(MenuPage::Config),
+            },
+            HubEntrySpec {
+                text: "运行健康",
+                command_preview: health_command(CommandStyle::Long),
+                style: tdlib_rs::enums::ButtonStyle::Default,
+                action: HubEntryAction::HealthHome,
+            },
+        ],
+        vec![
+            HubEntrySpec {
+                text: "目标配置",
+                command_preview: targets_show_command(CommandStyle::Long),
+                style: tdlib_rs::enums::ButtonStyle::Primary,
+                action: HubEntryAction::MenuPage(MenuPage::Targets),
+            },
+            HubEntrySpec {
+                text: "文件缓存",
+                command_preview: cache_command(None, None, None, CommandStyle::Long),
+                style: tdlib_rs::enums::ButtonStyle::Default,
+                action: HubEntryAction::CacheHome,
+            },
+        ],
+    ]
+}
+
+/// `menu` 帮助页和目录页共用的用途描述。
+pub(in crate::tgbot::transfer::command) fn menu_help_purpose() -> &'static str {
+    "打开转存菜单。"
+}
+
+/// `menu` 帮助页和目录页共用的一句话摘要。
+pub(in crate::tgbot::transfer::command) fn menu_help_summary() -> &'static str {
+    "打开转存菜单；bot token 模式显示按钮，运行配置与目标配置也支持输入流。"
+}
+
+/// `menu` 帮助详情页共用的开场说明。
+pub(in crate::tgbot::transfer::command) fn menu_help_intro_lines() -> Vec<String> {
+    vec![
+        "bot token 模式使用 inline keyboard；手机号/OCR 用户号模式会自动降级为文本命令菜单。"
+            .to_owned(),
+        "单所有者菜单提供转存、任务、管理和帮助入口。".to_owned(),
+    ]
+}
+
+/// `/help menu` 共用的详细说明正文。
+///
+/// 菜单页的能力说明和输入流说明放在菜单模块自身维护，避免 help 模块重复理解菜单向导细节。
+pub(in crate::tgbot::transfer::command) fn build_menu_help_detail_text() -> String {
+    let mut lines = vec!["menu".to_owned(), format!("用途：{}", menu_help_purpose())];
+    lines.extend(
+        menu_help_intro_lines()
+            .into_iter()
+            .map(|line| format!("说明：{}", line)),
+    );
+    lines.extend([
+        card::DIVIDER.to_owned(),
+        "命令：".to_owned(),
+        super::common::menu_command(CommandStyle::Long),
+        String::new(),
+        "可做操作：".to_owned(),
+        "转存：按钮引导输入源链接、目标和确认；默认目标可选，不设则使用当前私聊。".to_owned(),
+        "查询：按钮引导输入源链接和目标，并查询全部历史结果。".to_owned(),
+        "下载：覆盖全部筛选参数，并可进入分页列表。".to_owned(),
+        "任务：从列表进入详情后可暂停、恢复、停止、刷新。".to_owned(),
+        "配置：config / targets 支持按钮 + 输入流混合操作。".to_owned(),
+        "配置：targets 支持先点现有项详情；config 支持先点字段详情。".to_owned(),
+        "帮助：覆盖所有 help topic，可原地切换详情页。".to_owned(),
+        String::new(),
+        "管理输入：".to_owned(),
+        "进入输入流后，会发送 ForceReply；回复参数即可，发送其他命令时命令优先。".to_owned(),
+        "取消输入：".to_owned(),
+        card::code("/cancel"),
+    ]);
+    lines.join("\n")
+}
 
 /// 判断 callback payload 是否属于 `/menu`。
 pub(super) fn is_menu_callback_data(data: &str) -> bool {
@@ -76,11 +262,6 @@ pub(super) fn build_menu_quick_lookup_default_callback_data() -> String {
     callback::quick_lookup_default_callback_data()
 }
 
-/// 生成菜单“用户流水输入”回调，供帮助页等外部模块复用。
-pub(super) fn build_menu_point_ledger_input_button_data() -> String {
-    callback::point_ledger_user_input_callback_data()
-}
-
 /// 生成菜单任务页里“输入 job_id”按钮的回调数据，供帮助页复用。
 pub(super) fn build_menu_job_status_input_button_data() -> String {
     callback::job_id_input_callback_data(input::MenuJobAction::Status)
@@ -106,24 +287,9 @@ pub(super) fn build_menu_config_callback_data() -> String {
     callback::menu_page_callback_data(MenuPage::Config)
 }
 
-/// 生成菜单管理页 callback 数据。
-pub(super) fn build_menu_admin_hub_callback_data() -> String {
-    callback::menu_page_callback_data(MenuPage::AdminHub)
-}
-
 /// 生成菜单目标配置页 callback 数据。
 pub(super) fn build_menu_targets_callback_data() -> String {
     callback::menu_page_callback_data(MenuPage::Targets)
-}
-
-/// 生成菜单访问控制页 callback 数据。
-pub(super) fn build_menu_acl_callback_data() -> String {
-    callback::menu_page_callback_data(MenuPage::Acl)
-}
-
-/// 生成菜单计费配置页 callback 数据。
-pub(super) fn build_menu_billing_callback_data() -> String {
-    callback::menu_page_callback_data(MenuPage::Billing)
 }
 
 /// 启动管理配置单步输入。
@@ -149,6 +315,7 @@ pub(super) async fn start_admin_input_callback(
 /// 启动带上下文的管理输入。
 ///
 /// 供运行时管理页把“已选中的现有项”挂到草稿上，例如先选 alias，再只输入新的 target_chat_id。
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn start_admin_input_callback_with_context(
     callback_query_id: i64,
     chat_id: i64,
@@ -178,57 +345,13 @@ pub(super) async fn start_admin_input_callback_with_context(
     .await
 }
 
-pub(in crate::tgbot::transfer::command) async fn start_points_adjust_input_callback(
-    callback_query_id: i64,
-    chat_id: i64,
-    message_id: i64,
-    sender_user_id: i64,
-    action: AdminInputAction,
-    target_user_id: i64,
-    actor: crate::config::RequestActor,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    input::points_adjust_input_callback_query(
-        callback_query_id,
-        chat_id,
-        message_id,
-        sender_user_id,
-        action,
-        target_user_id,
-        actor,
-        client_id,
-    )
-    .await
-}
-
 /// 在指定上下文上执行 `/menu` 命令。
 pub async fn menu_command_on(
     app: &crate::app_context::AppContext,
     _text: Vec<&str>,
     actor: crate::config::RequestActor,
     client_id: i32,
-    supports_reply_markup: bool,
 ) -> anyhow::Result<()> {
-    if !supports_reply_markup {
-        tracing::info!(
-            request_chat_id = actor.request_chat_id,
-            "menu command uses text fallback because current login mode cannot show reply markup"
-        );
-        return send::ReplyPanel::card(build_user_account_menu_text())
-            .send(actor.request_chat_id, client_id)
-            .await;
-    }
-
-    if actor.is_admin()
-        && let Some((text, rows)) =
-            crate::tgbot::transfer::workflow::startup_setup_guide_page_on(app)
-    {
-        return send::ReplyPanel::card(text)
-            .rows(rows)
-            .send(actor.request_chat_id, client_id)
-            .await;
-    }
-
     send_menu_page_on(app, MenuPage::Home, actor, client_id).await
 }
 
@@ -271,33 +394,6 @@ pub async fn menu_callback_query_on(
     };
 
     let route = route_menu_callback_action(action);
-
-    if actor.is_admin()
-        && !matches!(
-            route,
-            MenuCallbackRoute::Page(MenuPage::Home)
-                | MenuCallbackRoute::Page(MenuPage::Targets)
-                | MenuCallbackRoute::Page(MenuPage::Acl)
-                | MenuCallbackRoute::Page(MenuPage::Billing)
-                | MenuCallbackRoute::Page(MenuPage::Config)
-                | MenuCallbackRoute::Page(MenuPage::AdminHub)
-        )
-        && let Some((text, rows)) =
-            crate::tgbot::transfer::workflow::startup_setup_guide_page_on(app)
-    {
-        send::answer_callback_query(update.id, Some("请先完成初始化"), client_id).await?;
-        let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
-        return send::edit_interaction_card_or_error(
-            text,
-            update.chat_id,
-            update.message_id,
-            keyboard,
-            client_id,
-            "初始化引导刷新失败",
-            "初始化引导已生成，但原消息编辑失败；请复制错误或重新发送 /menu。",
-        )
-        .await;
-    }
 
     match route {
         MenuCallbackRoute::Page(page) => {
@@ -380,18 +476,6 @@ pub async fn menu_callback_query_on(
             }
             MenuRequestAction::TargetManual => {
                 input::target_manual_callback_query(
-                    app,
-                    update.id,
-                    update.chat_id,
-                    update.message_id,
-                    update.sender_user_id,
-                    client_id,
-                )
-                .await
-            }
-            MenuRequestAction::TargetRequestChat => {
-                input::target_request_chat_callback_query(
-                    app,
                     update.id,
                     update.chat_id,
                     update.message_id,
@@ -402,13 +486,11 @@ pub async fn menu_callback_query_on(
             }
             MenuRequestAction::TargetAlias(target_chat_id) => {
                 input::target_alias_callback_query(
-                    app,
                     update.id,
                     update.chat_id,
                     update.message_id,
                     update.sender_user_id,
                     target_chat_id,
-                    config,
                     client_id,
                 )
                 .await
@@ -449,17 +531,6 @@ pub async fn menu_callback_query_on(
                 )
                 .await
             }
-            MenuRequestAction::PointLedgerUserInput => {
-                input::point_ledger_user_input_callback_query(
-                    update.id,
-                    update.chat_id,
-                    update.message_id,
-                    update.sender_user_id,
-                    actor,
-                    client_id,
-                )
-                .await
-            }
             MenuRequestAction::CancelInput => {
                 input::cancel_input_callback_query(
                     update.id,
@@ -494,13 +565,11 @@ impl MenuRequestAction {
                 | Self::QuickLookupDefault
                 | Self::TargetDefault
                 | Self::TargetManual
-                | Self::TargetRequestChat
                 | Self::TargetAlias(_)
                 | Self::TargetConfirm
                 | Self::TargetBack
                 | Self::JobIdInput(_)
                 | Self::AdminInput(_)
-                | Self::PointLedgerUserInput
                 | Self::ContinueInput
                 | Self::CancelInput
         )
@@ -622,13 +691,17 @@ async fn start_input_prompt(
         chat_id,
         message_id,
         client_id,
-        "1/3",
+        kind.source_step_label(),
         "等待源链接",
         "请直接回复源链接，或点击取消结束当前向导。",
     )
     .await;
     send::send_card_message_with_force_reply_returning(
-        build_step_prompt_text("1/3", kind.source_title(), kind.source_detail()),
+        build_step_prompt_text(
+            kind.source_step_label(),
+            kind.source_title(),
+            kind.source_detail(),
+        ),
         chat_id,
         "输入源链接，或发送 /cancel",
         client_id,
@@ -689,7 +762,7 @@ pub(super) async fn start_transfer_input_from_command(
     input::start_menu_input(chat_id, sender_user_id, MenuInputKind::Transfer).await?;
     send::send_card_message_with_force_reply_returning(
         build_step_prompt_text(
-            "1/3",
+            MenuInputKind::Transfer.source_step_label(),
             MenuInputKind::Transfer.source_title(),
             MenuInputKind::Transfer.source_detail(),
         ),
@@ -758,60 +831,19 @@ pub(in crate::tgbot) async fn handle_menu_text_input_on(
     input::handle_menu_input_on(app, text, config, key, request_message_id, actor, client_id).await
 }
 
-/// 在指定上下文上处理 Telegram 原生选群结果。
-pub(in crate::tgbot) async fn handle_menu_shared_chat_input_on(
-    app: &crate::app_context::AppContext,
-    shared: &tdlib_rs::types::MessageChatShared,
-    config: Arc<BotConfig>,
-    request_chat_id: i64,
-    sender_user_id: i64,
-    client_id: i32,
-) -> anyhow::Result<bool> {
-    input::handle_shared_chat_input_on(
-        app,
-        shared,
-        config,
-        request_chat_id,
-        sender_user_id,
-        client_id,
-    )
-    .await
-}
-
 /// 丢弃当前聊天里的菜单输入草稿。
 pub async fn discard_menu_input(request_chat_id: i64, sender_user_id: i64) -> anyhow::Result<bool> {
     input::cancel_menu_input(request_chat_id, sender_user_id).await
 }
 
-/// 当前用户发送新命令时丢弃菜单输入草稿，并在必要时清理 reply keyboard。
-///
-/// 命令优先级高于输入向导；如果旧向导停在原生选群阶段，只丢草稿会让客户端继续显示
-/// “选择群组”键盘，所以这里把清理动作放在命令真正执行前完成。
+/// 当前用户发送新命令时丢弃菜单输入草稿。
 pub async fn discard_menu_input_for_command(
     request_chat_id: i64,
     sender_user_id: i64,
     client_id: i32,
 ) -> anyhow::Result<bool> {
-    let Some(cancelled) =
-        input::cancel_menu_input_with_state(request_chat_id, sender_user_id).await?
-    else {
-        return Ok(false);
-    };
-
-    if cancelled.needs_reply_keyboard_cleanup {
-        send::send_card_message_with_remove_keyboard(
-            build_menu_status_text(
-                "已切换命令",
-                "keyboard-cleared",
-                "已收起之前的选群键盘，继续执行当前命令。",
-            ),
-            request_chat_id,
-            client_id,
-        )
-        .await?;
-    }
-
-    Ok(true)
+    let _ = client_id;
+    input::cancel_menu_input(request_chat_id, sender_user_id).await
 }
 
 /// 取消当前聊天里的菜单输入草稿，并给用户明确反馈。
@@ -820,22 +852,15 @@ pub async fn cancel_menu_input(
     sender_user_id: i64,
     client_id: i32,
 ) -> anyhow::Result<bool> {
-    let Some(cancelled) =
-        input::cancel_menu_input_with_state(request_chat_id, sender_user_id).await?
-    else {
+    if !input::cancel_menu_input(request_chat_id, sender_user_id).await? {
         return Ok(false);
-    };
+    }
 
     let text = build_menu_status_text(
         "已取消",
         "cancelled",
         "当前菜单输入已取消，可重新打开 /menu。",
     );
-
-    if cancelled.needs_reply_keyboard_cleanup {
-        send::send_card_message_with_remove_keyboard(text, request_chat_id, client_id).await?;
-        return Ok(true);
-    }
 
     send::ReplyPanel::card(text)
         .row(vec![send::build_callback_button(
@@ -868,46 +893,19 @@ async fn build_menu_page_on(
     page: MenuPage,
     actor: crate::config::RequestActor,
 ) -> anyhow::Result<(String, Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>)> {
-    if actor.is_admin()
-        && page != MenuPage::Targets
-        && page != MenuPage::Acl
-        && page != MenuPage::Billing
-        && page != MenuPage::Config
-        && let Some(page) = crate::tgbot::transfer::workflow::startup_setup_guide_page_on(app)
-    {
-        return Ok(page);
-    }
-
     let (recent_jobs, health, draft_summary) = if page == MenuPage::Home {
-        let recent_jobs = store::list_recent_job_snapshots_for_actor(app, actor, 5).await?;
-        let health = if actor.is_admin() {
-            Some(store::list_transfer_health_snapshot(app).await?)
-        } else {
-            None
-        };
+        let recent_jobs = store::list_recent_job_snapshots(app, 5).await?;
+        let health = Some(store::list_transfer_health_snapshot(app).await?);
         let draft_summary =
             input::current_draft_summary(actor.request_chat_id, actor.user_id).await?;
         (recent_jobs, health, draft_summary)
     } else {
         (Vec::new(), None, None)
     };
-    let text = if page == MenuPage::Config && actor.is_admin() {
+    let text = if page == MenuPage::Config {
         config_cmd::format_current_transfer_config_text_on(app, "当前可调配置")
-    } else if page == MenuPage::Targets && actor.is_admin() {
+    } else if page == MenuPage::Targets {
         super::targets::format_targets_text_on(app, "当前目标配置")
-    } else if page == MenuPage::Acl && actor.is_admin() {
-        super::acl::format_acl_text_on(app, "当前访问控制")
-    } else if page == MenuPage::Billing && actor.is_admin() {
-        super::billing::format_billing_text_on(app, "当前计费配置")
-    } else if page == MenuPage::Config {
-        build_permission_denied_menu_text(
-            "运行配置",
-            "没有权限查看运行配置，配置页仅管理员可查看。",
-        )
-    } else if page == MenuPage::AdminHub && !actor.is_admin() {
-        build_permission_denied_menu_text("管理", "没有权限查看管理页，管理页仅管理员可查看。")
-    } else if matches!(page, MenuPage::Targets | MenuPage::Acl | MenuPage::Billing) {
-        build_permission_denied_menu_text(page.title(), "该页面仅管理员可查看。")
     } else if page == MenuPage::Home {
         build_menu_home_text(&MenuHomeSummary {
             active_jobs: health.as_ref().map_or(0, |health| health.active_jobs),
@@ -921,21 +919,13 @@ async fn build_menu_page_on(
                 .map_or(0, |health| health.file_cache_failed_rows),
             recent_jobs: recent_jobs.len(),
             pending_input: draft_summary.as_ref().map(|draft| draft.title),
-            announcement_text: app.home_announcement.announcement_text(),
-            is_admin: actor.is_admin(),
         })
     } else {
         build_menu_text(page)
     };
     Ok((
         text,
-        build_menu_buttons_on(
-            app,
-            page,
-            &recent_jobs,
-            actor.is_admin(),
-            draft_summary.as_ref(),
-        ),
+        build_menu_buttons_on(app, page, &recent_jobs, draft_summary.as_ref()),
     ))
 }
 
@@ -982,7 +972,6 @@ mod tests {
         let actor = crate::config::RequestActor {
             request_chat_id: 991,
             user_id: 992,
-            role: crate::config::ActorRole::Admin,
         };
         let app_context = crate::app_context::app_context();
         crate::tgbot::transfer::update_targets_runtime_config_on(
@@ -992,15 +981,6 @@ mod tests {
                 ..Default::default()
             },
         );
-        crate::tgbot::transfer::update_access_control_runtime_config_on(
-            app_context.as_ref(),
-            crate::config::AccessControlConfig {
-                bootstrap_admin_user_ids: vec![actor.user_id],
-                admin_user_ids: vec![actor.user_id],
-                ..Default::default()
-            },
-        );
-
         input::start_menu_input(
             actor.request_chat_id,
             actor.user_id,
@@ -1016,78 +996,34 @@ mod tests {
         Ok(())
     }
 
-    // 数据库 targets/acl 尚未初始化完成时，admin 首页应直接显示初始化引导，而不是普通菜单。
+    // targets 是可选配置；即使没有默认目标/路由/别名，admin 首页也应正常进入菜单。
     #[tokio::test]
-    async fn test_build_menu_page_home_redirects_to_startup_setup_when_uninitialized()
-    -> anyhow::Result<()> {
+    async fn test_build_menu_page_home_renders_when_targets_are_empty() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
         let actor = crate::config::RequestActor {
             request_chat_id: 1991,
             user_id: 1992,
-            role: crate::config::ActorRole::Admin,
         };
         let app_context = crate::app_context::app_context();
         crate::tgbot::transfer::update_targets_runtime_config_on(
             app_context.as_ref(),
             crate::config::TargetsConfig::default(),
         );
-        crate::tgbot::transfer::update_access_control_runtime_config_on(
-            app_context.as_ref(),
-            crate::config::AccessControlConfig {
-                bootstrap_admin_user_ids: vec![actor.user_id],
-                ..Default::default()
-            },
-        );
-
         let (text, rows) = build_menu_page_on(app_context.as_ref(), MenuPage::Home, actor).await?;
 
-        assert!(text.contains("初始化引导"));
+        assert!(text.contains("转存菜单"));
+        assert!(text.contains("运行摘要"));
+        assert!(!text.contains("初始化引导"));
         assert!(
             rows.iter()
                 .flatten()
-                .any(|button| button.text == "目标配置")
+                .any(|button| button.text == "快速转存")
         );
-        assert!(!text.contains("运行摘要"));
-        Ok(())
-    }
-
-    // 普通用户即使手工构造 `m:cfg` callback，也不能看到运行配置正文。
-    #[tokio::test]
-    async fn test_user_config_menu_page_does_not_render_runtime_config() -> anyhow::Result<()> {
-        let actor = crate::config::RequestActor {
-            request_chat_id: 100,
-            user_id: 100,
-            role: crate::config::ActorRole::User,
-        };
-
-        let app_context = crate::app_context::app_context();
-        let (text, rows) =
-            build_menu_page_on(app_context.as_ref(), MenuPage::Config, actor).await?;
-
-        assert!(text.contains("没有权限"));
-        assert!(!text.contains("job_concurrency"));
-        assert!(rows.iter().flatten().any(|button| button.text == "首页"));
-        assert!(rows.iter().flatten().any(|button| button.text == "帮助"));
-        Ok(())
-    }
-
-    // 普通用户即使手工构造管理页 callback，也不能看到管理页正文。
-    #[tokio::test]
-    async fn test_user_admin_hub_page_does_not_render_admin_content() -> anyhow::Result<()> {
-        let actor = crate::config::RequestActor {
-            request_chat_id: 100,
-            user_id: 100,
-            role: crate::config::ActorRole::User,
-        };
-
-        let app_context = crate::app_context::app_context();
-        let (text, rows) =
-            build_menu_page_on(app_context.as_ref(), MenuPage::AdminHub, actor).await?;
-
-        assert!(text.contains("没有权限"));
-        assert!(!text.contains("文件缓存"));
-        assert!(rows.iter().flatten().any(|button| button.text == "首页"));
-        assert!(rows.iter().flatten().any(|button| button.text == "帮助"));
+        assert!(
+            rows.iter()
+                .flatten()
+                .any(|button| button.text == "指定目标")
+        );
         Ok(())
     }
 
@@ -1108,7 +1044,6 @@ mod tests {
         let actor = crate::config::RequestActor {
             request_chat_id: 100,
             user_id: 200,
-            role: crate::config::ActorRole::Admin,
         };
 
         assert!(menu_input_callback_allowed(100, 200, actor));
@@ -1122,7 +1057,6 @@ mod tests {
         let actor = crate::config::RequestActor {
             request_chat_id: 100,
             user_id: 200,
-            role: crate::config::ActorRole::Admin,
         };
 
         assert_eq!(
@@ -1159,7 +1093,6 @@ mod tests {
         let actor = crate::config::RequestActor {
             request_chat_id: 100,
             user_id: 200,
-            role: crate::config::ActorRole::Admin,
         };
 
         assert_eq!(
