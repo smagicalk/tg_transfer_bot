@@ -1,169 +1,272 @@
-// `/menu` ForceReply 输入状态。
-// 这里只保存“正在填写命令”的临时草稿，真实任务状态仍全部落数据库。
+// `/menu` ForceReply 输入流程。
+// 本文件只保留普通输入事件处理；按钮、草稿状态和目标选择视图分别放到子模块。
 
-use std::collections::HashMap;
-use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+mod admin;
+mod callbacks_simple;
+mod callbacks_target;
+mod flow;
+mod flow_callbacks;
+mod simple;
+mod state;
+mod target;
 
 use crate::config::BotConfig;
 use crate::tgbot::send;
 
-use super::super::{lookup, transfer_cmd};
-use super::text::build_transfer_prompt_text;
+use self::admin::{
+    AdminCommandKind, admin_command_kind, parse_admin_input_payload, run_existing_config_command,
+    run_existing_targets_command,
+};
+use self::flow_callbacks::{FlowRequestContext, continue_flow_input_on, handle_flow_input};
+use self::simple::{
+    expired_input_detail_on, is_cancel_text, parse_job_id_input, run_existing_job_command,
+    send_cancelled_notice,
+};
+use super::text::{build_menu_recovery_text, build_step_prompt_text};
+pub(super) use callbacks_simple::{
+    admin_input_callback_query, admin_input_callback_query_with_context,
+    cancel_input_callback_query, job_id_input_callback_query,
+};
+pub(super) use callbacks_target::{
+    target_alias_callback_query, target_back_callback_query, target_confirm_callback_query,
+    target_default_callback_query, target_manual_callback_query, target_source_back_callback_query,
+};
+pub(in crate::tgbot::transfer::command) use state::AdminInputAction;
+use state::{
+    DraftTakeResult, MenuInputDraft, MenuInputStep, admin_input_prompt_meta, peek_current_draft,
+    put_draft, take_current_draft,
+};
+pub(super) use state::{MenuInputKind, MenuJobAction, cancel_menu_input, start_menu_input};
 
-/// 菜单输入草稿超时时间。
-const INPUT_TTL: Duration = Duration::from_secs(10 * 60);
+use self::target::{TargetPromptContext, send_target_choice_prompt};
 
-/// 输入草稿索引。
+/// 当前输入草稿的首页摘要。
+#[derive(Debug, Clone)]
+pub(super) struct MenuDraftSummary {
+    /// 首页按钮标题。
+    pub(super) title: &'static str,
+}
+
+/// “继续输入”按钮读取当前草稿后的纯决策。
 ///
-/// 同一个管理员可能在多个管理 chat 中操作，因此用 `(chat_id, user_id)` 做隔离。
-type DraftKey = (i64, i64);
-
-/// 全局输入草稿表。
-static MENU_INPUT_DRAFTS: LazyLock<std::sync::Mutex<HashMap<DraftKey, MenuInputDraft>>> =
-    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
-
-/// 菜单输入流程。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MenuInputKind {
-    Transfer,
-    TransferDefault,
-    Lookup,
-    LookupDefault,
-}
-
-impl MenuInputKind {
-    /// 是否只需要源链接，目标 chat 交给配置默认值解析。
-    fn uses_default_target(self) -> bool {
-        matches!(self, Self::TransferDefault | Self::LookupDefault)
-    }
-
-    /// 归一化到实际命令类型。
-    fn command_kind(self) -> Self {
-        match self {
-            Self::Transfer | Self::TransferDefault => Self::Transfer,
-            Self::Lookup | Self::LookupDefault => Self::Lookup,
-        }
-    }
-
-    /// 当前流程的短命令名。
-    fn command_name(self) -> &'static str {
-        match self.command_kind() {
-            Self::Transfer => "/t",
-            Self::Lookup => "/lk",
-            Self::TransferDefault | Self::LookupDefault => unreachable!("kind is normalized"),
-        }
-    }
-
-    /// 源链接输入标题。
-    pub(super) fn source_title(self) -> &'static str {
-        match self {
-            Self::Transfer => "转存源链接",
-            Self::TransferDefault => "快速转存",
-            Self::Lookup => "查询源链接",
-            Self::LookupDefault => "快速查询",
-        }
-    }
-
-    /// 源链接输入说明。
-    pub(super) fn source_detail(self) -> &'static str {
-        match self {
-            Self::Transfer => "请回复要转存的 Telegram 消息或相册链接。",
-            Self::TransferDefault => "请回复源链接，目标 chat 将使用配置默认值。",
-            Self::Lookup => "请回复要查询的 Telegram 消息或相册链接。",
-            Self::LookupDefault => "请回复源链接，目标 chat 将使用配置默认值。",
-        }
-    }
-
-    /// 日志中使用的输入流程名，避免直接打印 Debug 后未来重命名影响排查关键词。
-    fn log_name(self) -> &'static str {
-        match self {
-            Self::Transfer => "transfer",
-            Self::TransferDefault => "transfer_default",
-            Self::Lookup => "lookup",
-            Self::LookupDefault => "lookup_default",
-        }
-    }
-}
-
-/// 菜单输入阶段。
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum MenuInputStep {
-    SourceLink {
-        kind: MenuInputKind,
-    },
-    TargetChat {
-        kind: MenuInputKind,
-        source_link: String,
-    },
-}
-
-/// 菜单输入草稿。
+/// 入口层只根据这个结果决定发送哪类提示，避免“无草稿 / 过期 / 活跃草稿”分支散落在多个地方。
 #[derive(Debug, Clone)]
-struct MenuInputDraft {
-    step: MenuInputStep,
-    updated_at: Instant,
-}
-
-/// 取草稿的结果。
-#[derive(Debug, Clone)]
-enum DraftTakeResult {
+enum ContinueInputDecision {
     None,
-    Active(MenuInputDraft),
     Expired,
+    Active(MenuInputDraft),
 }
 
-/// 开始一个菜单输入流程。
-pub(super) fn start_menu_input(chat_id: i64, user_id: i64, kind: MenuInputKind) {
-    let mut drafts = MENU_INPUT_DRAFTS
-        .lock()
-        .expect("menu input draft mutex poisoned");
-    purge_expired_locked(&mut drafts);
-    drafts.insert(
-        (chat_id, user_id),
-        MenuInputDraft {
-            step: MenuInputStep::SourceLink { kind },
-            updated_at: Instant::now(),
-        },
-    );
-    tracing::debug!(
-        chat_id,
-        user_id,
-        input_kind = kind.log_name(),
-        "menu input draft started"
-    );
-}
-
-/// 取消一个菜单输入流程。
-pub(super) fn cancel_menu_input(chat_id: i64, user_id: i64) -> bool {
-    let mut drafts = MENU_INPUT_DRAFTS
-        .lock()
-        .expect("menu input draft mutex poisoned");
-    let removed = drafts.remove(&(chat_id, user_id)).is_some();
-    if removed {
-        tracing::debug!(chat_id, user_id, "menu input draft cancelled");
+/// 把状态层的草稿读取结果映射为继续输入流程决策。
+fn continue_input_decision(result: DraftTakeResult) -> ContinueInputDecision {
+    match result {
+        DraftTakeResult::None => ContinueInputDecision::None,
+        DraftTakeResult::Expired => ContinueInputDecision::Expired,
+        DraftTakeResult::Active(draft) => ContinueInputDecision::Active(draft),
     }
-    removed
+}
+
+/// 构造“继续输入时已过期”的恢复文案。
+fn build_continue_input_expired_text_on(app: &crate::app_context::AppContext) -> String {
+    build_menu_recovery_text("输入已过期", "expired", &expired_input_detail_on(app))
+}
+
+/// 构造输入失败后的重试说明。
+///
+/// 失败原因和下一步格式分开展示，避免用户只看到“失败”但不知道应该继续回复什么。
+fn build_input_retry_detail(reason: &str, next_detail: &str) -> String {
+    format!("{reason}\n\n{next_detail}")
+}
+
+/// 解析单个别名输入。
+///
+/// 这里明确不接受空白分隔的多词别名，保持和 `/targets set-alias <alias> <target>` 的命令格式一致。
+fn parse_single_alias_input(input: &str) -> Option<String> {
+    let mut parts = input.split_whitespace();
+    let alias = parts.next()?.trim();
+    if alias.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(alias.to_owned())
+}
+
+/// 管理输入当前阶段标签。
+fn admin_input_step_label(
+    action: AdminInputAction,
+    context_text: Option<&str>,
+    _context_i64: Option<i64>,
+) -> &'static str {
+    match action {
+        AdminInputAction::TargetsAliasName => "1/2",
+        AdminInputAction::TargetsSetAlias if context_text.is_some() => "2/2",
+        _ => "1/1",
+    }
+}
+
+#[cfg(test)]
+fn build_continue_input_expired_text() -> String {
+    let app_context = crate::app_context::app_context();
+    build_continue_input_expired_text_on(app_context.as_ref())
+}
+
+/// 从已知源消息直接启动目标选择流程。
+pub(super) async fn start_transfer_target_choice_with_source_on(
+    app: &crate::app_context::AppContext,
+    config: std::sync::Arc<BotConfig>,
+    chat_id: i64,
+    sender_user_id: i64,
+    kind: MenuInputKind,
+    source_link: String,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    state::put_target_choice_draft((chat_id, sender_user_id), kind, source_link.clone()).await?;
+    send_target_choice_prompt(
+        config.as_ref(),
+        TargetPromptContext {
+            app,
+            request_chat_id: chat_id,
+            sender_user_id,
+            client_id,
+        },
+        kind,
+        &source_link,
+    )
+    .await
+}
+
+/// 从纯链接文本直接启动目标选择流程。
+pub(super) async fn start_transfer_target_choice_from_link_on(
+    app: &crate::app_context::AppContext,
+    config: std::sync::Arc<BotConfig>,
+    chat_id: i64,
+    sender_user_id: i64,
+    source_link: String,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    start_transfer_target_choice_with_source_on(
+        app,
+        config,
+        chat_id,
+        sender_user_id,
+        MenuInputKind::Transfer,
+        source_link,
+        client_id,
+    )
+    .await
+}
+
+/// 读取当前输入草稿摘要，不消费草稿。
+pub(super) async fn current_draft_summary(
+    chat_id: i64,
+    user_id: i64,
+) -> anyhow::Result<Option<MenuDraftSummary>> {
+    match peek_current_draft((chat_id, user_id)).await? {
+        DraftTakeResult::Active(draft) => Ok(Some(MenuDraftSummary {
+            title: draft.continue_title(),
+        })),
+        DraftTakeResult::Expired | DraftTakeResult::None => Ok(None),
+    }
+}
+
+/// 在指定上下文上重新发送当前草稿所在阶段的提示。
+pub(super) async fn continue_current_input_on(
+    app: &crate::app_context::AppContext,
+    chat_id: i64,
+    user_id: i64,
+    config: std::sync::Arc<BotConfig>,
+    client_id: i32,
+) -> anyhow::Result<bool> {
+    let draft = match continue_input_decision(peek_current_draft((chat_id, user_id)).await?) {
+        ContinueInputDecision::Active(draft) => draft,
+        ContinueInputDecision::Expired => {
+            send::ReplyPanel::card(build_continue_input_expired_text_on(app))
+                .row(vec![send::build_callback_button(
+                    "返回菜单",
+                    &super::build_menu_home_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                )])
+                .send(chat_id, client_id)
+                .await?;
+            return Ok(true);
+        }
+        ContinueInputDecision::None => return Ok(false),
+    };
+
+    if continue_flow_input_on(app, &draft, config.as_ref(), chat_id, user_id, client_id).await? {
+        return Ok(true);
+    }
+
+    match draft.step {
+        MenuInputStep::JobId { action } => {
+            send::send_card_message_with_force_reply_returning(
+                build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
+                chat_id,
+                "输入 job_id，或发送 /cancel",
+                client_id,
+            )
+            .await?;
+        }
+        MenuInputStep::AdminInput {
+            action,
+            context_text,
+            context_i64,
+        } => {
+            let meta = admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+            send::send_card_message_with_force_reply_returning(
+                build_step_prompt_text(
+                    admin_input_step_label(action, context_text.as_deref(), context_i64),
+                    &meta.title,
+                    &meta.detail,
+                ),
+                chat_id,
+                &meta.placeholder,
+                client_id,
+            )
+            .await?;
+        }
+        MenuInputStep::SourceLink { .. }
+        | MenuInputStep::TargetChoice { .. }
+        | MenuInputStep::TargetChat { .. }
+        | MenuInputStep::Confirm { .. } => {
+            tracing::warn!(
+                chat_id,
+                user_id,
+                step = ?draft.step,
+                "continue input fell back to flow step unexpectedly"
+            );
+            return continue_flow_input_on(
+                app,
+                &draft,
+                config.as_ref(),
+                chat_id,
+                user_id,
+                client_id,
+            )
+            .await;
+        }
+    }
+    Ok(true)
 }
 
 /// 处理菜单输入。
 ///
 /// 返回 true 表示本条消息已被输入流程消费；返回 false 表示没有匹配草稿。
-pub(super) async fn handle_menu_input(
+pub(super) async fn handle_menu_input_on(
+    app: &crate::app_context::AppContext,
     text: &str,
     config: std::sync::Arc<BotConfig>,
-    request_chat_id: i64,
+    key: (i64, i64),
     request_message_id: i64,
-    sender_user_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<bool> {
+    let (request_chat_id, sender_user_id) = key;
     let input = text.trim();
     if input.is_empty() {
         return Ok(false);
     }
 
-    let key = (request_chat_id, sender_user_id);
-    let draft = match take_current_draft(key) {
+    let draft = match take_current_draft(key).await? {
         DraftTakeResult::Active(draft) => draft,
         DraftTakeResult::Expired => {
             tracing::debug!(
@@ -172,17 +275,14 @@ pub(super) async fn handle_menu_input(
                 request_message_id,
                 "menu input draft expired"
             );
-            send::ReplyPanel::card(build_transfer_prompt_text(
-                "输入已过期",
-                "上一次菜单输入已超过 10 分钟，请重新打开 /m。",
-            ))
-            .row(vec![send::build_copy_button(
-                "复制 /m",
-                "/m",
-                tdlib_rs::enums::ButtonStyle::Primary,
-            )])
-            .send(request_chat_id, client_id)
-            .await?;
+            send::ReplyPanel::card(build_continue_input_expired_text_on(app))
+                .row(vec![send::build_callback_button(
+                    "返回菜单",
+                    &super::build_menu_home_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                )])
+                .send(request_chat_id, client_id)
+                .await?;
             return Ok(true);
         }
         DraftTakeResult::None => {
@@ -196,314 +296,388 @@ pub(super) async fn handle_menu_input(
         }
     };
 
+    if is_cancel_text(input) {
+        tracing::debug!(
+            request_chat_id,
+            sender_user_id,
+            request_message_id,
+            "menu input cancelled by text"
+        );
+        send_cancelled_notice(request_chat_id, client_id).await?;
+        return Ok(true);
+    }
+
+    if let Some(consumed) = handle_flow_input(
+        app,
+        draft.clone(),
+        input,
+        FlowRequestContext {
+            key,
+            config: config.clone(),
+            request_chat_id,
+            request_message_id,
+            actor,
+            client_id,
+        },
+    )
+    .await?
+    {
+        return Ok(consumed);
+    }
+
     match draft.step {
-        MenuInputStep::SourceLink { kind } => {
+        MenuInputStep::JobId { action } => {
             tracing::debug!(
                 request_chat_id,
                 sender_user_id,
                 request_message_id,
-                input_kind = kind.log_name(),
-                "menu input source link received"
+                job_action = action.log_name(),
+                "menu input job id received"
             );
-            if !looks_like_telegram_link(input) {
-                put_draft(
-                    key,
-                    MenuInputDraft {
-                        step: MenuInputStep::SourceLink { kind },
-                        updated_at: Instant::now(),
-                    },
-                );
+            let Some(job_id) = parse_job_id_input(input) else {
+                put_draft(key, MenuInputDraft::job_id(action)).await?;
                 tracing::debug!(
                     request_chat_id,
                     sender_user_id,
                     request_message_id,
-                    input_kind = kind.log_name(),
-                    "menu input source link rejected"
+                    job_action = action.log_name(),
+                    "menu input job id rejected"
                 );
                 send::send_card_message_with_force_reply_returning(
-                    build_transfer_prompt_text(
-                        "源链接格式不正确",
-                        "请回复 t.me 消息链接，或发送 /cancel 取消。",
+                    build_step_prompt_text(
+                        "1/1",
+                        "job_id 格式不正确",
+                        "请回复纯数字 job_id，例如 42；或发送 /cancel 取消。",
                     ),
                     request_chat_id,
-                    "输入 https://t.me/... 链接",
-                    client_id,
-                )
-                .await?;
-                return Ok(true);
-            }
-
-            if kind.uses_default_target() {
-                let Some(target_chat_id) = resolve_default_target(&config, request_chat_id) else {
-                    put_draft(
-                        key,
-                        MenuInputDraft {
-                            step: MenuInputStep::TargetChat {
-                                kind: kind.command_kind(),
-                                source_link: input.to_owned(),
-                            },
-                            updated_at: Instant::now(),
-                        },
-                    );
-                    tracing::debug!(
-                        request_chat_id,
-                        sender_user_id,
-                        request_message_id,
-                        input_kind = kind.log_name(),
-                        "menu input default target missing, asking target chat"
-                    );
-                    send::send_card_message_with_force_reply_returning(
-                        build_transfer_prompt_text(
-                            "缺少默认目标",
-                            "配置里没有当前 chat 的默认目标，请回复目标 chat_id。",
-                        ),
-                        request_chat_id,
-                        "输入目标 chat_id",
-                        client_id,
-                    )
-                    .await?;
-                    return Ok(true);
-                };
-                let command_owned = vec![
-                    kind.command_name().to_owned(),
-                    input.to_owned(),
-                    target_chat_id.to_string(),
-                ];
-                tracing::debug!(
-                    request_chat_id,
-                    sender_user_id,
-                    request_message_id,
-                    target_chat_id,
-                    input_kind = kind.log_name(),
-                    "menu input resolved default target"
-                );
-                run_existing_command(
-                    kind,
-                    command_owned,
-                    config,
-                    request_chat_id,
-                    request_message_id,
-                    client_id,
-                )
-                .await?;
-                return Ok(true);
-            }
-
-            put_draft(
-                key,
-                MenuInputDraft {
-                    step: MenuInputStep::TargetChat {
-                        kind,
-                        source_link: input.to_owned(),
-                    },
-                    updated_at: Instant::now(),
-                },
-            );
-            tracing::debug!(
-                request_chat_id,
-                sender_user_id,
-                request_message_id,
-                input_kind = kind.log_name(),
-                "menu input asking target chat"
-            );
-            send::send_card_message_with_force_reply_returning(
-                build_transfer_prompt_text(
-                    "目标 chat",
-                    "请回复目标 chat_id；如果配置了默认目标，也可以回复 default。",
-                ),
-                request_chat_id,
-                "输入目标 chat_id 或 default",
-                client_id,
-            )
-            .await?;
-            Ok(true)
-        }
-        MenuInputStep::TargetChat { kind, source_link } => {
-            tracing::debug!(
-                request_chat_id,
-                sender_user_id,
-                request_message_id,
-                input_kind = kind.log_name(),
-                "menu input target chat received"
-            );
-            let target_arg = if input.eq_ignore_ascii_case("default") {
-                None
-            } else if input.parse::<i64>().is_ok() {
-                Some(input.to_owned())
-            } else {
-                put_draft(
-                    key,
-                    MenuInputDraft {
-                        step: MenuInputStep::TargetChat { kind, source_link },
-                        updated_at: Instant::now(),
-                    },
-                );
-                tracing::debug!(
-                    request_chat_id,
-                    sender_user_id,
-                    request_message_id,
-                    input_kind = kind.log_name(),
-                    "menu input target chat rejected"
-                );
-                send::send_card_message_with_force_reply_returning(
-                    build_transfer_prompt_text(
-                        "目标 chat 格式不正确",
-                        "请回复数字 chat_id，或回复 default 使用配置默认目标。",
-                    ),
-                    request_chat_id,
-                    "输入目标 chat_id 或 default",
+                    "输入数字 job_id，或发送 /cancel",
                     client_id,
                 )
                 .await?;
                 return Ok(true);
             };
 
-            let mut command_owned = vec![kind.command_name().to_owned(), source_link];
-            if let Some(target_arg) = target_arg {
-                command_owned.push(target_arg);
+            tracing::info!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                job_id,
+                job_action = action.log_name(),
+                "menu input dispatching job command"
+            );
+            if let Err(err) = run_existing_job_command(app, action, job_id, actor, client_id).await
+            {
+                put_draft(key, MenuInputDraft::job_id(action)).await?;
+                tracing::warn!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    job_id,
+                    job_action = action.log_name(),
+                    error = %err,
+                    "menu input job command failed, waiting for retry"
+                );
+                let detail = build_input_retry_detail(
+                    &format!("执行失败：{}。", err),
+                    action.input_detail(),
+                );
+                send::send_card_message_with_force_reply_returning(
+                    build_step_prompt_text("1/1", "任务操作未生效", &detail),
+                    request_chat_id,
+                    "重新输入 job_id，或发送 /cancel",
+                    client_id,
+                )
+                .await?;
             }
+            Ok(true)
+        }
+        MenuInputStep::AdminInput {
+            action,
+            context_text,
+            context_i64,
+        } => {
             tracing::debug!(
                 request_chat_id,
                 sender_user_id,
                 request_message_id,
-                input_kind = kind.log_name(),
-                target_is_default = command_owned.len() == 2,
-                "menu input completed, dispatching command"
+                admin_action = action.log_name(),
+                "menu input admin action received"
             );
-            run_existing_command(
-                kind,
-                command_owned,
-                config,
+            match action {
+                AdminInputAction::TargetsAliasName => {
+                    let Some(alias) = parse_single_alias_input(input) else {
+                        put_draft(
+                            key,
+                            MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
+                        )
+                        .await?;
+                        let meta =
+                            admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+                        let detail = build_input_retry_detail("alias 格式不正确。", &meta.detail);
+                        send::send_card_message_with_force_reply_returning(
+                            build_step_prompt_text("1/2", "输入格式不正确", &detail),
+                            request_chat_id,
+                            &meta.placeholder,
+                            client_id,
+                        )
+                        .await?;
+                        return Ok(true);
+                    };
+
+                    let next_action = AdminInputAction::TargetsSetAlias;
+                    put_draft(
+                        key,
+                        MenuInputDraft::admin_input(next_action, Some(alias.clone()), None),
+                    )
+                    .await?;
+                    let meta = admin_input_prompt_meta(next_action, Some(&alias), None);
+                    tracing::debug!(
+                        request_chat_id,
+                        sender_user_id,
+                        request_message_id,
+                        selected_alias = %alias,
+                        "menu input target alias first step accepted"
+                    );
+                    send::send_card_message_with_force_reply_returning(
+                        build_step_prompt_text("2/2", &meta.title, &meta.detail),
+                        request_chat_id,
+                        &meta.placeholder,
+                        client_id,
+                    )
+                    .await?;
+                    return Ok(true);
+                }
+                AdminInputAction::TargetsAliasSearch => {
+                    let Some(query) = parse_single_alias_input(input) else {
+                        put_draft(
+                            key,
+                            MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
+                        )
+                        .await?;
+                        let meta =
+                            admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+                        let detail =
+                            build_input_retry_detail("搜索关键字格式不正确。", &meta.detail);
+                        send::send_card_message_with_force_reply_returning(
+                            build_step_prompt_text("1/1", "输入格式不正确", &detail),
+                            request_chat_id,
+                            &meta.placeholder,
+                            client_id,
+                        )
+                        .await?;
+                        return Ok(true);
+                    };
+
+                    tracing::debug!(
+                        request_chat_id,
+                        sender_user_id,
+                        request_message_id,
+                        query = %query,
+                        "menu input target alias search accepted"
+                    );
+                    super::super::targets::send_alias_search_result_page_on(
+                        app,
+                        &query,
+                        1,
+                        request_chat_id,
+                        client_id,
+                    )
+                    .await?;
+                    return Ok(true);
+                }
+                _ => {}
+            }
+
+            let Some(command_owned) = parse_admin_input_payload(
+                action,
+                input,
+                None,
+                context_text.as_deref(),
+                context_i64,
+            ) else {
+                put_draft(
+                    key,
+                    MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
+                )
+                .await?;
+                tracing::debug!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    admin_action = action.log_name(),
+                    "menu input admin action rejected"
+                );
+                let meta = admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+                let detail = build_input_retry_detail("输入格式不正确。", &meta.detail);
+                send::send_card_message_with_force_reply_returning(
+                    build_step_prompt_text(
+                        admin_input_step_label(action, context_text.as_deref(), context_i64),
+                        "输入格式不正确",
+                        &detail,
+                    ),
+                    request_chat_id,
+                    &meta.placeholder,
+                    client_id,
+                )
+                .await?;
+                return Ok(true);
+            };
+
+            tracing::info!(
                 request_chat_id,
+                sender_user_id,
                 request_message_id,
-                client_id,
-            )
-            .await?;
+                admin_action = action.log_name(),
+                "menu input dispatching admin config command"
+            );
+            let result = match admin_command_kind(action) {
+                Some(AdminCommandKind::Targets) => {
+                    run_existing_targets_command(app, command_owned, request_chat_id, client_id)
+                        .await
+                }
+                Some(AdminCommandKind::Config) => {
+                    run_existing_config_command(app, command_owned, request_chat_id, client_id)
+                        .await
+                }
+                None => Err(anyhow::anyhow!(
+                    "unsupported admin input action: {}",
+                    action.log_name()
+                )),
+            };
+            if let Err(err) = result {
+                put_draft(
+                    key,
+                    MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
+                )
+                .await?;
+                tracing::warn!(
+                    request_chat_id,
+                    sender_user_id,
+                    request_message_id,
+                    admin_action = action.log_name(),
+                    error = %err,
+                    "menu input admin command failed, waiting for retry"
+                );
+                let meta = admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+                let detail =
+                    build_input_retry_detail(&format!("执行失败：{}。", err), &meta.detail);
+                send::send_card_message_with_force_reply_returning(
+                    build_step_prompt_text(
+                        admin_input_step_label(action, context_text.as_deref(), context_i64),
+                        "输入未生效",
+                        &detail,
+                    ),
+                    request_chat_id,
+                    &meta.placeholder,
+                    client_id,
+                )
+                .await?;
+            }
+            Ok(true)
+        }
+        MenuInputStep::SourceLink { .. }
+        | MenuInputStep::TargetChoice { .. }
+        | MenuInputStep::TargetChat { .. }
+        | MenuInputStep::Confirm { .. } => {
+            tracing::warn!(
+                request_chat_id,
+                sender_user_id,
+                request_message_id,
+                step = ?draft.step,
+                "menu text input fell through to flow step unexpectedly"
+            );
+            put_draft(key, draft).await?;
+            send::ReplyPanel::card(build_continue_input_expired_text_on(app))
+                .row(vec![send::build_callback_button(
+                    "返回菜单",
+                    &super::build_menu_home_callback_data(),
+                    tdlib_rs::enums::ButtonStyle::Primary,
+                )])
+                .send(request_chat_id, client_id)
+                .await?;
             Ok(true)
         }
     }
-}
-
-/// 调用已有命令入口，避免菜单输入流复制转存/查询业务逻辑。
-async fn run_existing_command(
-    kind: MenuInputKind,
-    command_owned: Vec<String>,
-    config: std::sync::Arc<BotConfig>,
-    request_chat_id: i64,
-    request_message_id: i64,
-    client_id: i32,
-) -> anyhow::Result<()> {
-    let command_refs = command_owned.iter().map(String::as_str).collect::<Vec<_>>();
-    match kind.command_kind() {
-        MenuInputKind::Transfer => {
-            transfer_cmd::transfer_command(
-                command_refs,
-                config,
-                request_chat_id,
-                request_message_id,
-                client_id,
-            )
-            .await
-        }
-        MenuInputKind::Lookup => {
-            lookup::lookup_command(command_refs, config, request_chat_id, client_id).await
-        }
-        MenuInputKind::TransferDefault | MenuInputKind::LookupDefault => {
-            unreachable!("kind is normalized")
-        }
-    }
-}
-
-/// 取出当前草稿；若草稿过期，则清理后返回 None。
-fn take_current_draft(key: DraftKey) -> DraftTakeResult {
-    let mut drafts = MENU_INPUT_DRAFTS
-        .lock()
-        .expect("menu input draft mutex poisoned");
-    let Some(draft) = drafts.remove(&key) else {
-        purge_expired_locked(&mut drafts);
-        return DraftTakeResult::None;
-    };
-    if Instant::now().duration_since(draft.updated_at) > INPUT_TTL {
-        purge_expired_locked(&mut drafts);
-        return DraftTakeResult::Expired;
-    }
-    purge_expired_locked(&mut drafts);
-    DraftTakeResult::Active(draft)
-}
-
-/// 写回草稿。
-fn put_draft(key: DraftKey, draft: MenuInputDraft) {
-    let mut drafts = MENU_INPUT_DRAFTS
-        .lock()
-        .expect("menu input draft mutex poisoned");
-    drafts.insert(key, draft);
-}
-
-/// 清理超时草稿。
-fn purge_expired_locked(drafts: &mut HashMap<DraftKey, MenuInputDraft>) {
-    let now = Instant::now();
-    drafts.retain(|_, draft| now.duration_since(draft.updated_at) <= INPUT_TTL);
-}
-
-/// 粗略判断是否是 Telegram 消息链接。
-///
-/// 真正合法性仍由 spider 层解析；这里仅避免明显错误输入推进到下一步。
-fn looks_like_telegram_link(input: &str) -> bool {
-    input.starts_with("https://t.me/")
-        || input.starts_with("http://t.me/")
-        || input.starts_with("t.me/")
-}
-
-/// 解析菜单“快速转存/查询”使用的默认目标。
-///
-/// 这里提前解析是为了在缺少默认目标时继续引导输入目标，而不是让复用的命令入口直接报错。
-fn resolve_default_target(config: &BotConfig, request_chat_id: i64) -> Option<i64> {
-    config
-        .target_map
-        .get(&request_chat_id)
-        .copied()
-        .or_else(|| config.target_map.get(&0).copied())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Telegram 链接预检查只做粗筛，最终解析仍由 spider 负责。
+    // “继续输入”按钮应先把状态层结果规整为纯决策，避免入口散落多个 match。
     #[test]
-    fn test_looks_like_telegram_link() {
-        assert!(looks_like_telegram_link("https://t.me/c/1/2"));
-        assert!(looks_like_telegram_link("t.me/c/1/2"));
-        assert!(!looks_like_telegram_link("https://example.com"));
+    fn test_continue_input_decision_maps_draft_results() {
+        assert!(matches!(
+            continue_input_decision(DraftTakeResult::None),
+            ContinueInputDecision::None
+        ));
+        assert!(matches!(
+            continue_input_decision(DraftTakeResult::Expired),
+            ContinueInputDecision::Expired
+        ));
+        assert!(matches!(
+            continue_input_decision(DraftTakeResult::Active(MenuInputDraft::job_id(
+                MenuJobAction::Pause
+            ))),
+            ContinueInputDecision::Active(MenuInputDraft {
+                step: MenuInputStep::JobId {
+                    action: MenuJobAction::Pause
+                }
+            })
+        ));
     }
 
-    // 草稿应按 chat + user 隔离，避免多个管理员互相覆盖输入。
+    // 继续输入的过期提示应是恢复态，而不是等待态。
     #[test]
-    fn test_start_and_cancel_menu_input() {
-        start_menu_input(1, 2, MenuInputKind::Transfer);
-        assert!(cancel_menu_input(1, 2));
-        assert!(!cancel_menu_input(1, 2));
+    fn test_build_continue_input_expired_text_uses_recovery_status() {
+        let text = build_continue_input_expired_text();
+
+        assert!(text.contains("输入已过期"));
+        assert!(text.contains("状态：‹expired›"));
+        assert!(text.contains("菜单：‹/menu›"));
     }
 
-    // 不同输入流程应使用对应的短命令，最终复用已有命令入口。
+    // continue 输入的流程草稿若意外落到本层，也应继续走流程提示，而不是 panic。
     #[test]
-    fn test_menu_input_kind_command_name() {
-        assert_eq!(MenuInputKind::Transfer.command_name(), "/t");
-        assert_eq!(MenuInputKind::TransferDefault.command_name(), "/t");
-        assert_eq!(MenuInputKind::Lookup.command_name(), "/lk");
-        assert_eq!(MenuInputKind::LookupDefault.command_name(), "/lk");
+    fn test_continue_input_flow_step_is_still_recoverable() {
+        let draft = MenuInputDraft::source_link(MenuInputKind::Transfer);
+
+        assert!(matches!(draft.step, MenuInputStep::SourceLink { .. }));
     }
 
-    // 快速转存应优先使用当前请求 chat 的默认目标，再使用全局兜底目标。
+    // 别名第一步只接受单个 token，和 `/targets set-alias <alias> <target>` 保持一致。
     #[test]
-    fn test_resolve_default_target() {
-        let mut config = BotConfig::default();
-        assert_eq!(resolve_default_target(&config, 1), None);
+    fn test_parse_single_alias_input() {
+        assert_eq!(
+            parse_single_alias_input("archive"),
+            Some("archive".to_owned())
+        );
+        assert_eq!(
+            parse_single_alias_input(" archive "),
+            Some("archive".to_owned())
+        );
+        assert_eq!(parse_single_alias_input("my archive"), None);
+        assert_eq!(parse_single_alias_input(""), None);
+    }
 
-        config.target_map.insert(0, -100);
-        assert_eq!(resolve_default_target(&config, 1), Some(-100));
+    // 输入失败提示必须同时包含失败原因和下一步格式，用户才能继续修正。
+    #[test]
+    fn test_build_input_retry_detail_contains_reason_and_next_step() {
+        let detail = build_input_retry_detail("输入格式不正确。", "请回复纯数字 job_id。");
 
-        config.target_map.insert(1, -200);
-        assert_eq!(resolve_default_target(&config, 1), Some(-200));
+        assert!(detail.contains("输入格式不正确"));
+        assert!(detail.contains("请回复纯数字 job_id"));
+    }
+
+    #[test]
+    fn test_admin_input_step_label_for_targets_two_step_flow() {
+        assert_eq!(
+            admin_input_step_label(AdminInputAction::TargetsAliasName, None, None),
+            "1/2"
+        );
+        assert_eq!(
+            admin_input_step_label(AdminInputAction::TargetsSetDefault, None, None),
+            "1/1"
+        );
     }
 }

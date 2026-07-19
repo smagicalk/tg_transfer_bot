@@ -7,11 +7,12 @@ mod keyboard;
 mod text;
 mod topic;
 
-#[cfg(test)]
-mod tests;
-
-use keyboard::{build_help_detail_buttons, build_help_index_buttons};
+use keyboard::{
+    build_help_detail_buttons, build_help_index_buttons, build_help_topic_navigation_rows,
+};
 use text::{build_help_detail_text, build_help_index_text};
+
+use crate::tgbot::send::send_interaction_error_card;
 
 /// 判断 callback payload 是否属于 `/help`。
 pub(super) fn is_help_callback_data(data: &str) -> bool {
@@ -23,11 +24,18 @@ pub(super) fn build_help_callback_data(topic: Option<&str>) -> String {
     keyboard::build_help_callback_data(topic)
 }
 
+/// 给 `/menu` 的帮助页复用 help topic 导航按钮。
+///
+/// `/menu` 只负责组织菜单页；topic 名称、顺序和 admin-only 可见性由 help 模块统一维护。
+pub(super) fn build_help_menu_topic_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    build_help_topic_navigation_rows()
+}
+
 /// `/help` 命令入口。
 /// 默认返回命令目录；带命令名时返回该命令的详细帮助。
 pub async fn help_command(
     text: Vec<&str>,
-    request_chat_id: i64,
+    actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let (help_text, rows) = build_help_page(text.get(1).copied())?;
@@ -35,14 +43,15 @@ pub async fn help_command(
     for row in rows {
         panel = panel.row(row);
     }
-    panel.send(request_chat_id, client_id).await
+    panel.send(actor.request_chat_id, client_id).await
 }
 
 /// `/help` inline keyboard 回调入口。
 ///
 /// help 页只做“原地切换文案”，不会修改任务状态，所以适合使用 callback。
 pub async fn help_callback_query(
-    update: tdlib_rs::enums::UpdateNewCallbackQuery,
+    update: tdlib_rs::types::UpdateNewCallbackQuery,
+    _actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
     let payload = match update.payload {
@@ -58,15 +67,41 @@ pub async fn help_callback_query(
         return Ok(());
     };
 
-    let (text, rows) = build_help_page(topic)?;
-    let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
     send::answer_callback_query(update.id, Some("已切换帮助"), client_id).await?;
-    send::edit_card_message_with_inline_keyboard(
+    let (text, rows) = match build_help_page(topic) {
+        Ok(page) => page,
+        Err(err) => {
+            send_help_callback_error(update.chat_id, client_id, &err).await?;
+            return Err(err);
+        }
+    };
+    let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
+    send::edit_interaction_card_or_error(
         text,
         update.chat_id,
         update.message_id,
         keyboard,
         client_id,
+        "帮助刷新失败",
+        "帮助页已生成，但原消息编辑失败；请复制错误或重新发送 /help。",
+    )
+    .await
+}
+
+/// 帮助按钮失败提示。
+///
+/// callback 已经先 ACK，失败时不能再 answer 同一个 callback，因此发送独立错误卡片。
+async fn send_help_callback_error(
+    request_chat_id: i64,
+    client_id: i32,
+    err: &anyhow::Error,
+) -> anyhow::Result<()> {
+    send_interaction_error_card(
+        request_chat_id,
+        client_id,
+        "帮助刷新失败",
+        "帮助页未更新，请检查日志或复制错误信息。",
+        err,
     )
     .await
 }
@@ -75,6 +110,11 @@ pub async fn help_callback_query(
 fn build_help_page(
     command_name: Option<&str>,
 ) -> anyhow::Result<(String, Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>)> {
+    let command_name = match command_name {
+        Some(command_name) => Some(topic::normalize_help_topic(command_name)?),
+        None => None,
+    };
+
     match command_name {
         None => Ok((build_help_index_text(), build_help_index_buttons())),
         Some(command_name) => Ok((

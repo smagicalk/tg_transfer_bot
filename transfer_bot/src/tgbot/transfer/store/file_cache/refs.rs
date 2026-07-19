@@ -1,10 +1,11 @@
 // file_cache 引用计数管理。
-// 这里使用 SQL 原子表达式，避免并发任务完成时发生 active_refs 读后写覆盖。
+// 这里优先使用 SeaORM / SeaQuery 的表达式构造原子更新，避免并发任务完成时发生
+// active_refs 读后写覆盖，同时尽量减少数据库方言分支。
 
 use std::collections::HashMap;
 
-use sea_orm::sea_query::Expr;
-use sea_orm::{ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Statement};
+use sea_orm::sea_query::{Expr, OnConflict};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, ExprTrait, QueryFilter, TryInsertResult};
 
 use crate::db;
 
@@ -38,14 +39,16 @@ where
     C: ConnectionTrait,
 {
     let items = list_items_by_job_on_conn(conn, job_id).await?;
-    let mut refs: HashMap<String, i32> = HashMap::new();
+    let mut refs: HashMap<(String, String), i32> = HashMap::new();
     let mut released_item_ids = Vec::new();
     for item in items {
         if item.file_ref_released || is_text_file_key(&item.file_key) {
             continue;
         }
         released_item_ids.push(item.id);
-        *refs.entry(item.file_key).or_insert(0) += 1;
+        *refs
+            .entry((item.file_owner_client_role, item.file_key))
+            .or_insert(0) += 1;
     }
 
     if refs.is_empty() {
@@ -71,51 +74,48 @@ where
 /// 在指定连接/事务内按 file_key 批量扣减引用计数。
 pub(in crate::tgbot::transfer::store) async fn release_file_ref_counts_on_conn<C>(
     conn: &C,
-    refs: HashMap<String, i32>,
+    refs: HashMap<(String, String), i32>,
     delay_minutes: i64,
 ) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
 {
     let now = now_utc8();
-    let delete_after = now + chrono::Duration::minutes(delay_minutes.max(0));
+    let delete_after = now + chrono::Duration::minutes(std::cmp::max(delay_minutes, 0));
 
-    for (file_key, dec) in refs {
-        // 使用单条 UPDATE 表达式完成扣减，避免并发完成任务时读后写覆盖 active_refs。
-        conn.execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            r#"
-                UPDATE file_cache
-                SET
-                    active_refs = CASE
-                        WHEN active_refs > ? THEN active_refs - ?
-                        ELSE 0
-                    END,
-                    last_ref_zero_at = CASE
-                        WHEN active_refs <= ? THEN ?
-                        ELSE NULL
-                    END,
-                    delete_after = CASE
-                        WHEN active_refs <= ? THEN ?
-                        ELSE NULL
-                    END,
-                    updated_at = ?,
-                    last_used_at = ?
-                WHERE file_key = ?
-                "#,
-            vec![
-                dec.into(),
-                dec.into(),
-                dec.into(),
-                now.into(),
-                dec.into(),
-                delete_after.into(),
-                now.into(),
-                now.into(),
-                file_key.into(),
-            ],
-        ))
-        .await?;
+    for ((owner_client_role, file_key), dec) in refs {
+        // 单条 UPDATE 表达式内完成扣减与归零后的删除计划写入，避免并发任务读后写覆盖。
+        db::file_cache::Entity::update_many()
+            .col_expr(
+                db::file_cache::Column::ActiveRefs,
+                Expr::case(
+                    Expr::col(db::file_cache::Column::ActiveRefs).gt(dec),
+                    Expr::col(db::file_cache::Column::ActiveRefs).sub(dec),
+                )
+                .finally(0)
+                .into(),
+            )
+            .col_expr(
+                db::file_cache::Column::LastRefZeroAt,
+                Expr::case(Expr::col(db::file_cache::Column::ActiveRefs).lte(dec), now)
+                    .finally(Expr::null())
+                    .into(),
+            )
+            .col_expr(
+                db::file_cache::Column::DeleteAfter,
+                Expr::case(
+                    Expr::col(db::file_cache::Column::ActiveRefs).lte(dec),
+                    delete_after,
+                )
+                .finally(Expr::null())
+                .into(),
+            )
+            .col_expr(db::file_cache::Column::UpdatedAt, Expr::value(now))
+            .col_expr(db::file_cache::Column::LastUsedAt, Expr::value(now))
+            .filter(db::file_cache::Column::OwnerClientRole.eq(owner_client_role))
+            .filter(db::file_cache::Column::FileKey.eq(file_key))
+            .exec(conn)
+            .await?;
     }
 
     Ok(())
@@ -128,7 +128,7 @@ where
 pub(in crate::tgbot::transfer) async fn acquire_file_ref(file_key: &str) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
     for _ in 0..FILE_CACHE_DELETING_RETRY_LIMIT {
-        if try_acquire_file_ref_on_conn(db_conn, file_key).await? {
+        if try_acquire_file_ref_on_conn(db_conn, "user", file_key).await? {
             return Ok(());
         }
 
@@ -147,60 +147,67 @@ pub(in crate::tgbot::transfer) async fn acquire_file_ref(file_key: &str) -> anyh
 /// 返回 false 表示该 file_key 正被 GC 标记为 deleting，调用方应回滚并稍后重试。
 pub(in crate::tgbot::transfer::store) async fn try_acquire_file_ref_on_conn<C>(
     conn: &C,
+    owner_client_role: &str,
     file_key: &str,
 ) -> anyhow::Result<bool>
 where
     C: ConnectionTrait,
 {
     let now = now_utc8();
-    let rs = conn
-        .execute_raw(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            r#"
-            INSERT INTO file_cache (
-                file_key,
-                status,
-                size_bytes,
-                td_file_id,
-                local_path,
-                last_error,
-                active_refs,
-                last_ref_zero_at,
-                delete_after,
-                created_at,
-                updated_at,
-                last_used_at
-            )
-            VALUES (?, ?, NULL, NULL, NULL, NULL, 1, NULL, NULL, ?, ?, ?)
-            ON CONFLICT(file_key) DO UPDATE SET
-                active_refs = file_cache.active_refs + 1,
-                last_ref_zero_at = NULL,
-                delete_after = NULL,
-                updated_at = excluded.updated_at,
-                last_used_at = excluded.last_used_at,
-                last_error = CASE
-                    WHEN file_cache.status = ? THEN NULL
-                    ELSE file_cache.last_error
-                END,
-                status = CASE
-                    WHEN file_cache.status = ? THEN ?
-                    ELSE file_cache.status
-                END
-            WHERE file_cache.status <> ?
-            "#,
-            vec![
-                file_key.to_owned().into(),
-                FILE_CACHE_STATUS_PENDING.into(),
-                now.into(),
-                now.into(),
-                now.into(),
-                FILE_CACHE_STATUS_DELETE_FAILED.into(),
-                FILE_CACHE_STATUS_DELETE_FAILED.into(),
-                FILE_CACHE_STATUS_PENDING.into(),
-                FILE_CACHE_STATUS_DELETING.into(),
-            ],
-        ))
-        .await?;
+    let result = db::file_cache::Entity::insert(db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set(owner_client_role.to_owned()),
+        file_key: sea_orm::ActiveValue::Set(file_key.to_owned()),
+        status: sea_orm::ActiveValue::Set(FILE_CACHE_STATUS_PENDING.to_owned()),
+        size_bytes: sea_orm::ActiveValue::Set(None),
+        td_file_id: sea_orm::ActiveValue::Set(None),
+        local_path: sea_orm::ActiveValue::Set(None),
+        last_error: sea_orm::ActiveValue::Set(None),
+        active_refs: sea_orm::ActiveValue::Set(1),
+        last_ref_zero_at: sea_orm::ActiveValue::Set(None),
+        delete_after: sea_orm::ActiveValue::Set(None),
+        created_at: sea_orm::ActiveValue::Set(now),
+        updated_at: sea_orm::ActiveValue::Set(now),
+        last_used_at: sea_orm::ActiveValue::Set(now),
+    })
+    .on_conflict(
+        OnConflict::columns([
+            db::file_cache::Column::OwnerClientRole,
+            db::file_cache::Column::FileKey,
+        ])
+        .values([
+            (
+                db::file_cache::Column::ActiveRefs,
+                Expr::col(db::file_cache::Column::ActiveRefs).add(1),
+            ),
+            (db::file_cache::Column::LastRefZeroAt, Expr::null()),
+            (db::file_cache::Column::DeleteAfter, Expr::null()),
+            (db::file_cache::Column::UpdatedAt, Expr::value(now)),
+            (db::file_cache::Column::LastUsedAt, Expr::value(now)),
+            (
+                db::file_cache::Column::LastError,
+                Expr::case(
+                    Expr::col(db::file_cache::Column::Status).eq(FILE_CACHE_STATUS_DELETE_FAILED),
+                    Expr::null(),
+                )
+                .finally(Expr::col(db::file_cache::Column::LastError))
+                .into(),
+            ),
+            (
+                db::file_cache::Column::Status,
+                Expr::case(
+                    Expr::col(db::file_cache::Column::Status).eq(FILE_CACHE_STATUS_DELETE_FAILED),
+                    FILE_CACHE_STATUS_PENDING,
+                )
+                .finally(Expr::col(db::file_cache::Column::Status))
+                .into(),
+            ),
+        ])
+        .action_and_where(Expr::col(db::file_cache::Column::Status).ne(FILE_CACHE_STATUS_DELETING))
+        .to_owned(),
+    )
+    .try_insert()
+    .exec_without_returning(conn)
+    .await?;
 
-    Ok(rs.rows_affected() > 0)
+    Ok(matches!(result, TryInsertResult::Inserted(rows) if rows > 0))
 }

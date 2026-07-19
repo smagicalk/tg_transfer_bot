@@ -1,8 +1,12 @@
 // `/downloads` 的 inline keyboard 和 callback 数据。
 // 回调数据保持短格式，避免 Telegram callback payload 过长。
 
-use super::super::common::{CommandStyle, downloads_command as build_command};
-use super::super::job::build_job_status_callback_data;
+use super::super::common::{build_refresh_return_menu_row, downloads_command as build_command};
+use super::super::job::{
+    build_job_pause_callback_data, build_job_resume_callback_data, build_job_status_callback_data,
+    build_job_stop_callback_data,
+};
+use super::super::menu::{build_menu_home_callback_data, build_menu_tasks_hub_callback_data};
 use super::types::{DownloadsArgs, DownloadsFilter};
 use crate::tgbot::send;
 use crate::tgbot::transfer::store;
@@ -15,14 +19,18 @@ pub(super) fn build_downloads_page_command(
     filter: DownloadsFilter,
     limit: u64,
     page: u64,
-    style: CommandStyle,
 ) -> String {
     let filter = if filter == DownloadsFilter::All {
         None
     } else {
         Some(filter.command_value())
     };
-    build_command(filter, Some(limit), Some(page), style)
+    build_command(
+        filter,
+        Some(limit),
+        Some(page),
+        super::super::common::CommandStyle::Long,
+    )
 }
 
 /// 下载列表按钮动作。
@@ -110,67 +118,64 @@ pub(super) fn parse_downloads_callback_data(
 /// 构建下载列表分页键盘。
 ///
 /// 规则：
-/// - 可翻页按钮使用 callback，点击后原地刷新
-/// - 当前页任务使用 callback，点击后直接进入单任务详情
-/// - 当前页按钮使用 copy-text，方便直接复制当前页命令
-/// - 不能继续翻页时退化为 copy-text，避免触发“消息未修改”
+/// - 主操作区优先放任务详情、控制和筛选
+/// - “刷新 / 任务中心 / 菜单”固定为单独一行
+/// - 复制类按钮固定单独一行
+/// - 分页固定单独一行，放在最末尾
+/// - 当前页/当前筛选/边界页同样允许点击刷新；发送层会把“消息未修改”当成幂等成功处理
 pub(super) fn build_downloads_keyboard(
     args: &DownloadsArgs,
     total_pages: u64,
     page_items: &[store::JobProgressSnapshot],
 ) -> tdlib_rs::types::ReplyMarkupInlineKeyboard {
-    let current_command =
-        build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short);
-    let first_page = 1u64;
     let prev_page = args.page.saturating_sub(1).max(1);
     let next_page = (args.page + 1).min(total_pages);
-    let last_page = total_pages.max(1);
 
-    let mut rows = vec![vec![
-        build_navigation_button("首页", args, first_page, current_command.clone()),
-        build_navigation_button("上页", args, prev_page, current_command.clone()),
-        build_copy_button(
-            &format!("{}/{}", args.page, total_pages),
-            &build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        build_navigation_button(
-            "下页",
-            args,
-            next_page,
-            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
-        ),
-        build_navigation_button(
-            "末页",
-            args,
-            last_page,
-            build_downloads_page_command(args.filter, args.limit, args.page, CommandStyle::Short),
-        ),
-    ]];
+    let mut rows = Vec::new();
 
     rows.extend(build_job_detail_buttons(page_items));
+    rows.extend(build_filter_button_rows(args));
 
-    rows.push(vec![
+    rows.push(build_refresh_return_menu_row(
         build_callback_button(
             "刷新",
             &build_downloads_refresh_callback_data(args),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
-        send::build_copy_button(
-            "复制当前命令",
-            &current_command,
+        build_callback_button(
+            "任务中心",
+            &build_menu_tasks_hub_callback_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-    ]);
-    rows.extend(build_filter_button_rows(args));
+        build_callback_button(
+            "菜单",
+            &build_menu_home_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ));
+    let mut navigation_row = Vec::new();
+    if args.page > 1 {
+        navigation_row.push(build_navigation_button("首页", args, 1));
+        navigation_row.push(build_navigation_button("上页", args, prev_page));
+    }
+    navigation_row.push(build_callback_button(
+        &format!("{}/{}", args.page, total_pages),
+        &build_downloads_refresh_callback_data(args),
+        tdlib_rs::enums::ButtonStyle::Primary,
+    ));
+    if args.page < total_pages {
+        navigation_row.push(build_navigation_button("下页", args, next_page));
+        navigation_row.push(build_navigation_button("末页", args, total_pages));
+    }
+    rows.push(navigation_row);
 
     tdlib_rs::types::ReplyMarkupInlineKeyboard { rows }
 }
 
-/// 构建当前页任务详情按钮。
+/// 构建当前页任务快捷操作按钮。
 ///
-/// 每个按钮只携带 job_id，让用户从下载列表直接跳到对应任务卡片。
-/// 按两列排版可以减少一页任务较多时的键盘高度。
+/// 每个任务独占一行：左侧始终是详情，右侧根据状态给出暂停、恢复、停止确认等操作。
+/// “停止”只打开确认页，真正停止必须在确认页再次点击，避免列表误触。
 fn build_job_detail_buttons(
     page_items: &[store::JobProgressSnapshot],
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
@@ -186,22 +191,65 @@ fn build_job_detail_buttons(
             } else {
                 tdlib_rs::enums::ButtonStyle::Default
             };
+            let job_id = snapshot.job.id;
 
-            send::build_callback_button(
-                &format!("详情 #{}", snapshot.job.id),
-                &build_job_status_callback_data(snapshot.job.id),
+            let mut row = vec![send::build_callback_button(
+                &format!("详情 #{}", job_id),
+                &build_job_status_callback_data(job_id),
                 style,
-            )
+            )];
+            row.extend(build_inline_job_control_buttons(job_id, status));
+            row
         })
         .collect::<Vec<_>>()
-        .chunks(2)
-        .map(<[_]>::to_vec)
-        .collect::<Vec<_>>()
+}
+
+/// 构建列表页中的任务控制按钮。
+///
+/// 控制按钮仍复用 `/job` callback；停止按钮会先进入确认页，因此这里不直接修改任务状态。
+fn build_inline_job_control_buttons(
+    job_id: i64,
+    status: &str,
+) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    if matches!(
+        status,
+        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING
+    ) {
+        return vec![
+            send::build_callback_button(
+                "暂停",
+                &build_job_pause_callback_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "停止",
+                &build_job_stop_callback_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Danger,
+            ),
+        ];
+    }
+
+    if status == store::JOB_STATUS_PAUSED {
+        return vec![
+            send::build_callback_button(
+                "恢复",
+                &build_job_resume_callback_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Primary,
+            ),
+            send::build_callback_button(
+                "停止",
+                &build_job_stop_callback_data(job_id),
+                tdlib_rs::enums::ButtonStyle::Danger,
+            ),
+        ];
+    }
+
+    Vec::new()
 }
 
 /// 构建常用筛选按钮行。
 ///
-/// 拆成两行是为了把任务控制相关状态也露出来，同时避免单行按钮过密。
+/// 每行最多 3 个按钮，移动端比 5-6 个按钮挤在一行更稳定，也方便后续扩展状态。
 fn build_filter_button_rows(
     args: &DownloadsArgs,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
@@ -209,9 +257,18 @@ fn build_filter_button_rows(
         [
             ("全部", DownloadsFilter::All),
             ("运行", DownloadsFilter::Running),
+            ("等待", DownloadsFilter::Waiting),
+        ]
+        .as_slice(),
+        [
             ("下载", DownloadsFilter::Downloading),
             ("上传", DownloadsFilter::Uploading),
+            ("就绪", DownloadsFilter::Ready),
+        ]
+        .as_slice(),
+        [
             ("完成", DownloadsFilter::Finished),
+            ("成功", DownloadsFilter::Success),
             ("失败", DownloadsFilter::Failed),
         ]
         .as_slice(),
@@ -219,7 +276,6 @@ fn build_filter_button_rows(
             ("暂停", DownloadsFilter::Paused),
             ("停止中", DownloadsFilter::Cancelling),
             ("已停止", DownloadsFilter::Cancelled),
-            ("就绪", DownloadsFilter::Ready),
         ]
         .as_slice(),
     ]
@@ -240,48 +296,38 @@ fn build_filter_button(
     filter: DownloadsFilter,
     args: &DownloadsArgs,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    if filter == args.filter {
-        return send::build_copy_button(
-            label,
-            &build_downloads_page_command(filter, args.limit, 1, CommandStyle::Short),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        );
-    }
-
+    let callback_data = if filter == args.filter {
+        build_downloads_refresh_callback_data(args)
+    } else {
+        build_downloads_filter_callback_data(filter, args.limit)
+    };
     build_callback_button(
         label,
-        &build_downloads_filter_callback_data(filter, args.limit),
-        tdlib_rs::enums::ButtonStyle::Default,
+        &callback_data,
+        if filter == args.filter {
+            tdlib_rs::enums::ButtonStyle::Primary
+        } else {
+            tdlib_rs::enums::ButtonStyle::Default
+        },
     )
 }
 
 /// 构建一个导航按钮。
 ///
-/// 若目标页与当前页相同，则退化为复制当前命令按钮，避免无效编辑。
+/// 若目标页与当前页相同，则点击后会触发同页刷新；发送层会把无变化编辑视为幂等成功。
 fn build_navigation_button(
     text: &str,
     args: &DownloadsArgs,
     target_page: u64,
-    fallback_command: String,
 ) -> tdlib_rs::types::InlineKeyboardButton {
-    if target_page == args.page {
-        return send::build_copy_button(
-            text,
-            &fallback_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        );
-    }
-
-    tdlib_rs::types::InlineKeyboardButton {
-        text: text.to_owned(),
-        icon_custom_emoji_id: 0,
-        style: tdlib_rs::enums::ButtonStyle::Default,
-        r#type: tdlib_rs::enums::InlineKeyboardButtonType::Callback(
-            tdlib_rs::types::InlineKeyboardButtonTypeCallback {
-                data: build_downloads_page_callback_data(args.filter, args.limit, target_page),
-            },
-        ),
-    }
+    let callback_data = if target_page == args.page {
+        build_downloads_refresh_callback_data(args)
+    } else {
+        build_downloads_page_callback_data(args.filter, args.limit, target_page)
+    };
+    // TDLib JSON 协议里的 callback data 是 bytes，必须走统一入口做 base64 编码。
+    // 手动塞入业务 payload 会触发 `Wrong padding length`。
+    send::build_callback_button(text, &callback_data, tdlib_rs::enums::ButtonStyle::Default)
 }
 
 /// 构建一个 callback 按钮。
@@ -291,13 +337,4 @@ fn build_callback_button(
     style: tdlib_rs::enums::ButtonStyle,
 ) -> tdlib_rs::types::InlineKeyboardButton {
     send::build_callback_button(text, data, style)
-}
-
-/// 构建一个复制文本按钮。
-fn build_copy_button(
-    text: &str,
-    value: &str,
-    style: tdlib_rs::enums::ButtonStyle,
-) -> tdlib_rs::types::InlineKeyboardButton {
-    send::build_copy_button(text, value, style)
 }

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::progress::{edit_transfer_progress_for_outcome, update_transfer_progress_message};
-use super::runtime::acquire_transfer_slot;
 use super::{types, workflow};
 
 mod result;
@@ -18,10 +17,11 @@ use result::{send_recovery_outcome, send_transfer_outcome};
 /// - 后台周期性编辑这条回复，展示当前下载/上传进度
 /// - 真正执行与最终结果通知放到后台
 pub(in crate::tgbot::transfer) fn spawn_transfer_job(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: types::TransferPlan,
     notify_chat_id: i64,
     progress_message_id: Option<i64>,
-    client_id: i32,
+    client_ids: crate::config::TransferClientIds,
 ) {
     tokio::spawn(async move {
         let source_link = plan.source_link.clone();
@@ -42,25 +42,27 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
                 progress_message_id = message_id,
                 "transfer progress updater started"
             );
+            let app_context = app_context.clone();
             tokio::spawn(async move {
                 update_transfer_progress_message(
+                    app_context,
                     progress_plan,
                     notify_chat_id,
                     message_id,
-                    client_id,
+                    client_ids.interaction,
                     progress_done,
                 )
                 .await;
             })
         });
-        let _permit = acquire_transfer_slot().await;
+        let _permit = app_context.transfer_runtime.acquire_transfer_slot().await;
         tracing::info!(
             notify_chat_id,
             target_chat_id,
             "transfer background task acquired concurrency slot"
         );
 
-        let result = workflow::transfer(plan, client_id).await;
+        let result = workflow::transfer(app_context.clone(), plan, client_ids).await;
         let mut should_send_separate_result = progress_message_id.is_none();
         // 最终结果必须最后写入进度消息；先停止轮询任务，避免后台进度刷新覆盖“完成/失败”文本。
         progress_done.store(true, Ordering::SeqCst);
@@ -82,7 +84,7 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
                 &result,
                 notify_chat_id,
                 message_id,
-                client_id,
+                client_ids.interaction,
             )
             .await
         {
@@ -120,7 +122,7 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
             target_chat_id,
             result,
             notify_chat_id,
-            client_id,
+            client_ids.interaction,
         )
         .await;
 
@@ -146,8 +148,9 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
 /// 派发启动恢复任务。
 /// 恢复结果会主动发回原请求 chat，避免“恢复了但用户完全感知不到”。
 pub(in crate::tgbot::transfer) fn spawn_recovery_job(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: crate::db::transfer_job::Model,
-    client_id: i32,
+    client_ids: crate::config::TransferClientIds,
 ) {
     tokio::spawn(async move {
         let notify_chat_id = job.request_chat_id;
@@ -160,7 +163,7 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
             target_chat_id,
             "recovery job queued"
         );
-        let _permit = acquire_transfer_slot().await;
+        let _permit = app_context.transfer_runtime.acquire_transfer_slot().await;
         tracing::info!(
             job_id,
             notify_chat_id,
@@ -168,7 +171,7 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
             "recovery job acquired concurrency slot"
         );
 
-        let result = workflow::resume_one_job(job, client_id).await;
+        let result = workflow::resume_one_job(app_context.clone(), job, client_ids).await;
         // result 会被发送函数消费；先保存错误摘要，避免为了日志克隆完整结果。
         let result_error = result.as_ref().err().map(|err| format!("{:#}", err));
         let send_result = send_recovery_outcome(
@@ -177,7 +180,7 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
             target_chat_id,
             result,
             notify_chat_id,
-            client_id,
+            client_ids.interaction,
         )
         .await;
 

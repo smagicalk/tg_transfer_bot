@@ -2,8 +2,9 @@
 // 这里集中构造数据库记录和 TDLib 消息，测试用例只关注具体行为断言。
 
 use super::super::*;
+use crate::ClientRole;
 use crate::db;
-use migration::MigratorTrait;
+use crate::tgbot::transfer::types::TransferBundle;
 use rand::RngExt;
 use rand::distr::SampleString;
 use sea_orm::ActiveModelTrait;
@@ -11,7 +12,18 @@ use sea_orm::ActiveModelTrait;
 /// 测试前确保表结构存在。
 pub(super) async fn prepare_test_schema() -> anyhow::Result<&'static sea_orm::DatabaseConnection> {
     let db_conn = db::get_db().await?;
-    migration::Migrator::up(db_conn, None).await?;
+    db::ensure_test_schema_current(db_conn).await?;
+    Ok(db_conn)
+}
+
+/// 重建一个空测试库。
+///
+/// `ensure_*_runtime_config` 的语义是“库里没有运行态时才 seed 默认值”，
+/// 因此对应测试必须显式清空旧行，不能只依赖 `prepare_test_schema()` 的结构自检。
+pub(super) async fn rebuild_empty_test_schema()
+-> anyhow::Result<&'static sea_orm::DatabaseConnection> {
+    let db_conn = db::get_db().await?;
+    db::rebuild_test_schema(db_conn).await?;
     Ok(db_conn)
 }
 
@@ -19,14 +31,19 @@ pub(super) async fn prepare_test_schema() -> anyhow::Result<&'static sea_orm::Da
 pub(super) async fn insert_job(status: &str) -> anyhow::Result<db::transfer_job::Model> {
     let db_conn = prepare_test_schema().await?;
     let now = now_utc8();
+    let request_chat_id = rand::rng().random_range(1..=1000000);
     db::transfer_job::ActiveModel {
-        request_chat_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
+        request_chat_id: sea_orm::ActiveValue::Set(request_chat_id),
         request_message_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
+        owner_user_id: sea_orm::ActiveValue::Set(request_chat_id),
         source_link: sea_orm::ActiveValue::Set(format!(
             "https://t.me/c/{}/{}",
             rand::rng().random_range(1..=1000000),
             rand::rng().random_range(1..=1000000)
         )),
+        source_kind: sea_orm::ActiveValue::Set("link".to_owned()),
+        source_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
+        allow_user_fallback: sea_orm::ActiveValue::Set(false),
         source_chat_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         source_message_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         source_album_id: sea_orm::ActiveValue::Set(0),
@@ -59,6 +76,7 @@ pub(super) async fn insert_item_with_file_ref(job_id: i64) -> anyhow::Result<(i6
     );
 
     db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
         status: sea_orm::ActiveValue::Set("ready".to_owned()),
         size_bytes: sea_orm::ActiveValue::Set(Some(1024)),
@@ -80,6 +98,7 @@ pub(super) async fn insert_item_with_file_ref(job_id: i64) -> anyhow::Result<(i6
         source_chat_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         source_message_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
+        file_owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         status: sea_orm::ActiveValue::Set(JOB_STATUS_PENDING.to_owned()),
         retry_count: sea_orm::ActiveValue::Set(0),
         error_message: sea_orm::ActiveValue::Set(None),
@@ -102,6 +121,7 @@ pub(super) async fn insert_item_for_file_key(job_id: i64, file_key: &str) -> any
         source_chat_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         source_message_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         file_key: sea_orm::ActiveValue::Set(file_key.to_owned()),
+        file_owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         status: sea_orm::ActiveValue::Set(JOB_STATUS_PENDING.to_owned()),
         retry_count: sea_orm::ActiveValue::Set(0),
         error_message: sea_orm::ActiveValue::Set(None),
@@ -112,6 +132,52 @@ pub(super) async fn insert_item_for_file_key(job_id: i64, file_key: &str) -> any
     .insert(db_conn)
     .await?;
     Ok(item.id)
+}
+
+/// 测试默认使用 user 侧文件缓存主键。
+///
+/// 业务代码会按真实源 client 写入 `owner_client_role`，历史测试沿用 user 默认值即可。
+pub(super) fn user_cache_id(file_key: impl Into<String>) -> (String, String) {
+    cache_id("user", file_key)
+}
+
+/// 构造指定 client role 的 file_cache 复合主键。
+///
+/// bot/user 两个 TDLib client 即使看到同一个 Telegram unique_id，也有不同的本地 file id/path，
+/// 因此数据库用 `(owner_client_role, file_key)` 隔离缓存记录。
+pub(super) fn cache_id(owner_client_role: &str, file_key: impl Into<String>) -> (String, String) {
+    (owner_client_role.to_owned(), file_key.into())
+}
+
+/// 把测试消息包装成默认 user 源 bundle。
+///
+/// `ensure_items_for_bundle` 需要知道文件归属哪个 TDLib client，测试里默认模拟 user 下载。
+pub(super) fn user_bundle(messages: Vec<tdlib_rs::types::Message>) -> TransferBundle {
+    role_bundle(ClientRole::User, messages)
+}
+
+/// 把测试消息包装成 bot 源 bundle。
+///
+/// 用于模拟 bot-first 成功读取源消息，或 bot 失败后与 user bundle 做引用迁移对比。
+pub(super) fn bot_bundle(messages: Vec<tdlib_rs::types::Message>) -> TransferBundle {
+    role_bundle(ClientRole::Bot, messages)
+}
+
+/// 把测试消息包装成指定源 client 的 bundle。
+fn role_bundle(
+    source_client_role: ClientRole,
+    messages: Vec<tdlib_rs::types::Message>,
+) -> TransferBundle {
+    let first = messages
+        .first()
+        .expect("test bundle must contain at least one message");
+    TransferBundle {
+        source_client_role,
+        source_chat_id: first.chat_id,
+        source_message_id: first.id,
+        source_album_id: first.media_album_id,
+        messages,
+    }
 }
 
 /// 构造带文档文件的 TDLib 消息，用于测试 ensure_items_for_bundle 的引用计数。

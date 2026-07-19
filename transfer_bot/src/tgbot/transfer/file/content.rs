@@ -12,6 +12,29 @@ pub(in crate::tgbot::transfer) async fn prepare_upload_content(
     client_id: i32,
 ) -> anyhow::Result<PreparedUpload> {
     match &message.content {
+        tdlib_rs::enums::MessageContent::MessageAnimation(animation) => {
+            let (prepared_file, local_input) =
+                prepare_media_file(&animation.animation.animation, client_id).await?;
+            let content = tdlib_rs::enums::InputMessageContent::InputMessageAnimation(
+                tdlib_rs::types::InputMessageAnimation {
+                    animation: local_input,
+                    thumbnail: None,
+                    added_sticker_file_ids: vec![],
+                    duration: animation.animation.duration,
+                    width: animation.animation.width,
+                    height: animation.animation.height,
+                    caption: to_optional_caption(&animation.caption),
+                    show_caption_above_media: false,
+                    has_spoiler: animation.has_spoiler,
+                },
+            );
+
+            Ok(PreparedUpload {
+                input_content: content,
+                kind: UploadKind::Animation,
+                cache_meta: Some(prepared_file),
+            })
+        }
         tdlib_rs::enums::MessageContent::MessagePhoto(photo) => {
             let best = photo
                 .photo

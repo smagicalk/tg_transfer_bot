@@ -9,21 +9,27 @@ use std::time::Duration;
 use crate::tgbot::transfer::store;
 
 /// 文件删除队列后台循环（持续运行）。
-pub(in crate::tgbot::transfer) async fn run_file_gc_loop(client_id: i32) {
+pub(in crate::tgbot::transfer) async fn run_file_gc_loop(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
+    client_ids: crate::config::TransferClientIds,
+) {
     loop {
-        if let Err(err) = run_file_gc_once(client_id).await {
+        if let Err(err) = run_file_gc_once(app_context.clone(), client_ids).await {
             tracing::error!("file gc round failed: {:#}", err);
         }
-        // 每轮 sleep 前重新读取运行时配置，保证 `/cfg set file_gc_interval_seconds`
+        // 每轮 sleep 前重新读取运行时配置，保证 `/config set file_gc_interval_seconds`
         // 对已经启动的 GC 循环也能生效。
-        let interval = cleanup_interval_seconds();
+        let interval = cleanup_interval_seconds(&app_context);
         tokio::time::sleep(Duration::from_secs(interval)).await;
     }
 }
 
 /// 执行一轮文件删除队列消费。
-pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyhow::Result<()> {
-    let retry_delay_seconds = cleanup_interval_seconds();
+pub(in crate::tgbot::transfer) async fn run_file_gc_once(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
+    client_ids: crate::config::TransferClientIds,
+) -> anyhow::Result<()> {
+    let retry_delay_seconds = cleanup_interval_seconds(&app_context);
     let due_rows = store::list_due_file_cache(store::now_utc8(), 100).await?;
     if due_rows.is_empty() {
         return Ok(());
@@ -32,15 +38,19 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyh
 
     for row in due_rows {
         // 删除前先原子认领，避免扫描到期记录后又被新任务重新引用。
-        let Some(row) =
-            store::claim_file_cache_for_delete(&row.file_key, store::now_utc8()).await?
+        let Some(row) = store::claim_file_cache_for_delete(
+            &row.owner_client_role,
+            &row.file_key,
+            store::now_utc8(),
+        )
+        .await?
         else {
             continue;
         };
 
         let mut cleanup_confirmed = row.local_path.as_deref().is_none_or(str::is_empty);
         if let Some(path) = row.local_path.as_deref().filter(|path| !path.is_empty()) {
-            match safe_local_file_path(path) {
+            match safe_local_file_path(app_context.as_ref(), &row.owner_client_role, path) {
                 Ok(Some(path)) => match tokio::fs::remove_file(&path).await {
                     Ok(_) => {
                         cleanup_confirmed = true;
@@ -52,6 +62,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyh
                     Err(err) => {
                         mark_delete_failed_retry_later(
                             &row.file_key,
+                            &row.owner_client_role,
                             format!("remove local file failed: {}", err),
                             retry_delay_seconds,
                         )
@@ -72,6 +83,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyh
                     if row.td_file_id.is_none() {
                         mark_delete_failed_retry_later(
                             &row.file_key,
+                            &row.owner_client_role,
                             format!("unsafe local path refused: {}", err),
                             retry_delay_seconds,
                         )
@@ -84,6 +96,16 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyh
 
         // 如果保存了 td_file_id，再尝试通知 TDLib 清理缓存（失败不阻断）。
         if let Some(file_id) = row.td_file_id {
+            let Some(client_id) = client_id_for_owner(client_ids, &row.owner_client_role) else {
+                mark_delete_failed_retry_later(
+                    &row.file_key,
+                    &row.owner_client_role,
+                    format!("owner client isn't ready: {}", row.owner_client_role),
+                    retry_delay_seconds,
+                )
+                .await?;
+                continue;
+            };
             match tdlib_rs::functions::delete_file(file_id, client_id).await {
                 Ok(_) => {
                     cleanup_confirmed = true;
@@ -98,6 +120,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyh
                     if !cleanup_confirmed {
                         mark_delete_failed_retry_later(
                             &row.file_key,
+                            &row.owner_client_role,
                             format!("tdlib delete_file failed: {:?}", err),
                             retry_delay_seconds,
                         )
@@ -108,7 +131,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyh
             }
         }
 
-        store::delete_file_cache(&row.file_key).await?;
+        store::delete_file_cache(&row.owner_client_role, &row.file_key).await?;
         tracing::info!(
             file_key = %row.file_key,
             td_file_id = row.td_file_id,
@@ -122,18 +145,21 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(client_id: i32) -> anyh
 /// 把删除失败项延后到下一轮之后重试，避免配置了很短 GC 间隔时刷屏热循环。
 async fn mark_delete_failed_retry_later(
     file_key: &str,
+    owner_client_role: &str,
     err: String,
     retry_delay_seconds: u64,
 ) -> anyhow::Result<()> {
     let retry_after = store::now_utc8()
         + chrono::Duration::seconds(retry_delay_seconds.min(i64::MAX as u64) as i64);
-    store::mark_file_cache_delete_failed(file_key, err, retry_after).await
+    store::mark_file_cache_delete_failed(owner_client_role, file_key, err, retry_after).await
 }
 
 /// 删除队列扫描间隔（秒）：
 /// 从 config.json 读取 `transfer_config.file_gc_interval_seconds`。
-fn cleanup_interval_seconds() -> u64 {
-    super::super::runtime_config()
+fn cleanup_interval_seconds(app_context: &crate::app_context::AppContext) -> u64 {
+    app_context
+        .transfer_runtime
+        .runtime_config()
         .file_gc_interval_seconds
         .max(1)
 }
@@ -143,12 +169,27 @@ fn cleanup_interval_seconds() -> u64 {
 /// 只允许删除位于 `tdlib_config.files_directory` 下的文件；如果配置为空或路径越界，
 /// 调用方必须拒绝 `remove_file`。这里做的是不依赖文件存在性的词法规范化，
 /// 这样文件已经被 TDLib 或人工删掉时也能得到稳定判断。
-fn safe_local_file_path(local_path: &str) -> anyhow::Result<Option<PathBuf>> {
-    let Some(tdlib_root) = super::super::tdlib_files_directory() else {
+fn safe_local_file_path(
+    app_context: &crate::app_context::AppContext,
+    owner_client_role: &str,
+    local_path: &str,
+) -> anyhow::Result<Option<PathBuf>> {
+    let role = crate::tgbot::transfer::types::client_role_from_str(owner_client_role)
+        .ok_or_else(|| anyhow::anyhow!("invalid owner_client_role: {}", owner_client_role))?;
+    let Some(tdlib_root) = app_context.transfer_runtime.tdlib_files_directory_for(role) else {
         anyhow::bail!("tdlib files_directory is empty");
     };
     let cwd = std::env::current_dir()?;
     resolve_safe_local_file_path(local_path, &tdlib_root, &cwd)
+}
+
+/// 根据文件 owner role 找到对应 TDLib client id。
+fn client_id_for_owner(
+    client_ids: crate::config::TransferClientIds,
+    owner_client_role: &str,
+) -> Option<i32> {
+    crate::tgbot::transfer::types::client_role_from_str(owner_client_role)
+        .and_then(|role| client_ids.get(role).ok())
 }
 
 /// 带 cwd 参数的路径校验纯函数，便于测试覆盖相对路径和 `..` 越界。

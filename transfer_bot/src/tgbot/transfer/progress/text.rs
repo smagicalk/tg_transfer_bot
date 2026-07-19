@@ -65,29 +65,25 @@ pub(super) fn format_transfer_progress_text(
     lines.push(card::section("命令"));
     lines.push(card::command_line(
         "详情",
-        build_job_command("st", snapshot.job.id, CommandStyle::Short),
+        build_job_command("status", snapshot.job.id, CommandStyle::Long),
     ));
     lines.push(card::command_line(
         "查询",
-        build_lookup_command(
-            source_link,
-            snapshot.job.target_chat_id,
-            CommandStyle::Short,
-        ),
+        build_lookup_command(source_link, snapshot.job.target_chat_id, CommandStyle::Long),
     ));
     match snapshot.job.status.as_str() {
         store::JOB_STATUS_PAUSED => {
             lines.push(card::command_line(
                 "恢复",
-                build_job_command("r", snapshot.job.id, CommandStyle::Short),
+                build_job_command("resume", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "停止",
-                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+                build_job_command("stop", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("pause"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("pause"), None, None, CommandStyle::Long),
             ));
         }
         store::JOB_STATUS_CANCELLING
@@ -95,21 +91,21 @@ pub(super) fn format_transfer_progress_text(
         | store::JOB_STATUS_CANCELLED => {
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("cancel"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("cancel"), None, None, CommandStyle::Long),
             ));
         }
         _ => {
             lines.push(card::command_line(
                 "暂停",
-                build_job_command("p", snapshot.job.id, CommandStyle::Short),
+                build_job_command("pause", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "停止",
-                build_job_command("s", snapshot.job.id, CommandStyle::Short),
+                build_job_command("stop", snapshot.job.id, CommandStyle::Long),
             ));
             lines.push(card::command_line(
                 "列表",
-                build_downloads_command(Some("run"), None, None, CommandStyle::Short),
+                build_downloads_command(Some("run"), None, None, CommandStyle::Long),
             ));
         }
     }
@@ -119,92 +115,60 @@ pub(super) fn format_transfer_progress_text(
     lines.join("\n")
 }
 
-/// 构造完成或复用历史结果的最终文本。
-pub(super) fn format_transfer_final_text(
+/// 构造完成或复用历史结果的最终文本，并支持多个结果入口。
+pub(super) fn format_transfer_final_text_with_results(
     title: &str,
     source_link: &str,
     target_chat_id: i64,
     job_id: Option<i64>,
-    result_link: &str,
+    result_messages: &[store::ResultMessageRecord],
 ) -> String {
-    let mut lines = vec![
-        title.to_owned(),
-        card::summary_line("success", job_id, target_chat_id),
-        card::DIVIDER.to_owned(),
-        card::result_block(result_link),
-        card::section("命令"),
-        card::command_line(
-            "查询",
-            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
-        ),
-        card::command_line(
-            "重转",
-            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
-        ),
-        card::command_line(
-            "列表",
-            build_downloads_command(Some("done"), None, None, CommandStyle::Short),
-        ),
-        String::new(),
-    ];
-    lines.extend(card::source_block(source_link));
-    lines.join("\n")
+    crate::tgbot::transfer::outcome::format_result_card_text(
+        title,
+        source_link,
+        target_chat_id,
+        job_id,
+        result_messages,
+    )
 }
 
 /// 构造暂停、停止、运行中这类控制态文本。
 pub(super) fn format_transfer_control_text(
     title: &str,
+    status: &str,
     source_link: &str,
     target_chat_id: i64,
     job_id: i64,
     detail: &str,
 ) -> String {
-    let mut lines = vec![
-        title.to_owned(),
-        card::summary_line("control", Some(job_id), target_chat_id),
-        card::DIVIDER.to_owned(),
-        card::section("说明"),
-        card::note(detail),
-        card::section("命令"),
-        card::command_line("详情", build_job_command("st", job_id, CommandStyle::Short)),
-        card::command_line("暂停", build_job_command("p", job_id, CommandStyle::Short)),
-        card::command_line("恢复", build_job_command("r", job_id, CommandStyle::Short)),
-        card::command_line("停止", build_job_command("s", job_id, CommandStyle::Short)),
-        String::new(),
-    ];
-    lines.extend(card::source_block(source_link));
-    lines.join("\n")
+    crate::tgbot::transfer::outcome::format_status_card_text(
+        title,
+        status,
+        source_link,
+        target_chat_id,
+        job_id,
+        detail,
+    )
 }
 
 /// 构造失败结果文本。
 pub(super) fn format_transfer_error_text(
+    title: &str,
     source_link: &str,
     target_chat_id: i64,
     error: &str,
 ) -> String {
-    let mut lines = vec![
-        "转存失败".to_owned(),
-        card::summary_line("failed", None, target_chat_id),
-        card::DIVIDER.to_owned(),
-        card::section("错误"),
-        card::pre_code(error),
-        card::section("命令"),
-        card::command_line(
-            "重试",
-            build_transfer_command(source_link, target_chat_id, CommandStyle::Short),
-        ),
-        card::command_line(
-            "查询",
-            build_lookup_command(source_link, target_chat_id, CommandStyle::Short),
-        ),
-        card::command_line(
-            "列表",
-            build_downloads_command(Some("fail"), None, None, CommandStyle::Short),
-        ),
-        String::new(),
-    ];
-    lines.extend(card::source_block(source_link));
-    lines.join("\n")
+    let retry_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Long);
+    let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Long);
+    crate::tgbot::transfer::outcome::format_failure_card_text(
+        title,
+        source_link,
+        target_chat_id,
+        None,
+        &retry_command,
+        &lookup_command,
+        &anyhow::anyhow!(error.to_owned()),
+    )
 }
 
 /// 渲染真实下载进度。

@@ -12,7 +12,7 @@ use sea_orm::TransactionTrait;
 use sea_orm::sea_query::Expr;
 
 use crate::db;
-use crate::tgbot::transfer::types::TransferBundle;
+use crate::tgbot::transfer::types::{TransferBundle, client_role_as_str};
 
 use super::super::file;
 use super::file_cache::{release_file_ref_counts_on_conn, try_acquire_file_ref_on_conn};
@@ -27,7 +27,7 @@ use super::{
 /// - 新建媒体条目会增加 file_cache 引用计数
 pub(in crate::tgbot::transfer) async fn ensure_items_for_bundle(
     job_id: i64,
-    messages: &[tdlib_rs::types::Message],
+    bundle: &TransferBundle,
 ) -> anyhow::Result<Vec<db::transfer_item::Model>> {
     let db_conn = db::get_db().await?;
     let old_items = db::transfer_item::Entity::find()
@@ -40,17 +40,23 @@ pub(in crate::tgbot::transfer) async fn ensure_items_for_bundle(
         old_map.insert((item.source_chat_id, item.source_message_id), item);
     }
 
-    let mut result = Vec::with_capacity(messages.len());
-    for msg in messages {
+    let mut result = Vec::with_capacity(bundle.messages.len());
+    for msg in &bundle.messages {
         let key = (msg.chat_id, msg.id);
         if let Some(old) = old_map.get(&key) {
             result.push(old.clone());
             continue;
         }
 
-        let file_key = file::extract_file_key(msg)
-            .unwrap_or_else(|| format!("text:{}:{}", msg.chat_id, msg.id));
-        let model = insert_item_with_optional_file_ref(db_conn, job_id, msg, file_key).await?;
+        let file_key = file_key_for_message(msg);
+        let model = insert_item_with_optional_file_ref(
+            db_conn,
+            job_id,
+            msg,
+            file_key,
+            client_role_as_str(bundle.source_client_role),
+        )
+        .await?;
         result.push(model);
     }
 
@@ -81,10 +87,11 @@ pub(in crate::tgbot::transfer) async fn reconcile_items_for_bundle(
     for msg in &bundle.messages {
         let key = (msg.chat_id, msg.id);
         let file_key = file_key_for_message(msg);
+        let owner = client_role_as_str(bundle.source_client_role);
         if let Some(old) = old_map.remove(&key) {
-            reconcile_existing_item_on_conn(&txn, old, file_key, delay_minutes).await?;
+            reconcile_existing_item_on_conn(&txn, old, file_key, owner, delay_minutes).await?;
         } else {
-            insert_item_with_optional_file_ref_on_conn(&txn, job_id, msg, file_key).await?;
+            insert_item_with_optional_file_ref_on_conn(&txn, job_id, msg, file_key, owner).await?;
         }
     }
 
@@ -107,12 +114,19 @@ async fn insert_item_with_optional_file_ref(
     job_id: i64,
     msg: &tdlib_rs::types::Message,
     file_key: String,
+    file_owner_client_role: &str,
 ) -> anyhow::Result<db::transfer_item::Model> {
     for _ in 0..FILE_CACHE_DELETING_RETRY_LIMIT {
         let txn = db_conn.begin().await?;
 
-        let insert_result =
-            insert_item_with_optional_file_ref_on_conn(&txn, job_id, msg, file_key.clone()).await;
+        let insert_result = insert_item_with_optional_file_ref_on_conn(
+            &txn,
+            job_id,
+            msg,
+            file_key.clone(),
+            file_owner_client_role,
+        )
+        .await;
 
         match insert_result {
             Ok(model) => {
@@ -148,12 +162,13 @@ async fn insert_item_with_optional_file_ref_on_conn<C>(
     job_id: i64,
     msg: &tdlib_rs::types::Message,
     file_key: String,
+    file_owner_client_role: &str,
 ) -> anyhow::Result<db::transfer_item::Model>
 where
     C: ConnectionTrait,
 {
     let is_text = is_text_file_key(&file_key);
-    if !is_text && !try_acquire_file_ref_on_conn(conn, &file_key).await? {
+    if !is_text && !try_acquire_file_ref_on_conn(conn, file_owner_client_role, &file_key).await? {
         anyhow::bail!("file cache is being deleted, file_key={}", file_key);
     }
 
@@ -163,6 +178,7 @@ where
         source_chat_id: sea_orm::ActiveValue::Set(msg.chat_id),
         source_message_id: sea_orm::ActiveValue::Set(msg.id),
         file_key: sea_orm::ActiveValue::Set(file_key),
+        file_owner_client_role: sea_orm::ActiveValue::Set(file_owner_client_role.to_owned()),
         status: sea_orm::ActiveValue::Set(ITEM_STATUS_PENDING.to_owned()),
         retry_count: sea_orm::ActiveValue::Set(0),
         error_message: sea_orm::ActiveValue::Set(None),
@@ -183,31 +199,50 @@ async fn reconcile_existing_item_on_conn<C>(
     conn: &C,
     old: db::transfer_item::Model,
     new_file_key: String,
+    new_file_owner_client_role: &str,
     delay_minutes: i64,
 ) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
 {
     let new_is_text = is_text_file_key(&new_file_key);
-    let needs_new_ref = !new_is_text && (old.file_key != new_file_key || old.file_ref_released);
-    if needs_new_ref && !try_acquire_file_ref_on_conn(conn, &new_file_key).await? {
+    let owner_changed = old.file_owner_client_role != new_file_owner_client_role;
+    let needs_new_ref =
+        !new_is_text && (old.file_key != new_file_key || owner_changed || old.file_ref_released);
+    if needs_new_ref
+        && !try_acquire_file_ref_on_conn(conn, new_file_owner_client_role, &new_file_key).await?
+    {
         anyhow::bail!("file cache is being deleted, file_key={}", new_file_key);
     }
 
-    if old.file_key != new_file_key && !old.file_ref_released && !is_text_file_key(&old.file_key) {
-        release_one_file_ref_on_conn(conn, old.file_key.clone(), delay_minutes).await?;
+    if (old.file_key != new_file_key || owner_changed)
+        && !old.file_ref_released
+        && !is_text_file_key(&old.file_key)
+    {
+        release_one_file_ref_on_conn(
+            conn,
+            old.file_owner_client_role.clone(),
+            old.file_key.clone(),
+            delay_minutes,
+        )
+        .await?;
     }
 
-    let status = if old.file_key != new_file_key || old.status == ITEM_STATUS_OBSOLETE {
-        ITEM_STATUS_PENDING.to_owned()
-    } else {
-        old.status
-    };
+    let status =
+        if old.file_key != new_file_key || owner_changed || old.status == ITEM_STATUS_OBSOLETE {
+            ITEM_STATUS_PENDING.to_owned()
+        } else {
+            old.status
+        };
     let file_ref_released = new_is_text;
     db::transfer_item::Entity::update_many()
         .col_expr(
             db::transfer_item::Column::FileKey,
             Expr::value(new_file_key),
+        )
+        .col_expr(
+            db::transfer_item::Column::FileOwnerClientRole,
+            Expr::value(new_file_owner_client_role.to_owned()),
         )
         .col_expr(db::transfer_item::Column::Status, Expr::value(status))
         .col_expr(
@@ -238,7 +273,13 @@ where
     C: ConnectionTrait,
 {
     if !old.file_ref_released && !is_text_file_key(&old.file_key) {
-        release_one_file_ref_on_conn(conn, old.file_key.clone(), delay_minutes).await?;
+        release_one_file_ref_on_conn(
+            conn,
+            old.file_owner_client_role.clone(),
+            old.file_key.clone(),
+            delay_minutes,
+        )
+        .await?;
     }
 
     db::transfer_item::Entity::update_many()
@@ -287,6 +328,10 @@ where
             Expr::value(bundle.source_album_id),
         )
         .col_expr(
+            db::transfer_job::Column::SourceClientRole,
+            Expr::value(client_role_as_str(bundle.source_client_role)),
+        )
+        .col_expr(
             db::transfer_job::Column::TotalItems,
             Expr::value(bundle.messages.len() as i32),
         )
@@ -300,6 +345,7 @@ where
 /// 释放单个 file_key 的一次引用。
 async fn release_one_file_ref_on_conn<C>(
     conn: &C,
+    owner_client_role: String,
     file_key: String,
     delay_minutes: i64,
 ) -> anyhow::Result<()>
@@ -307,7 +353,7 @@ where
     C: ConnectionTrait,
 {
     let mut refs = HashMap::new();
-    refs.insert(file_key, 1);
+    refs.insert((owner_client_role, file_key), 1);
     release_file_ref_counts_on_conn(conn, refs, delay_minutes).await
 }
 

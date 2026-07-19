@@ -5,11 +5,11 @@
 
 use crate::db;
 
-use super::super::types::TransferPlan;
+use super::super::types::{SourceKind, TransferPlan};
 use super::super::{spider, store};
 use super::TransferOutcome;
 use super::control::apply_job_control;
-use super::guard::{JobGuard, acquire_job_guard, acquire_source_target_create_guard};
+use super::guard::{acquire_job_guard, acquire_source_target_create_guard};
 use super::result_link::refresh_stored_result_link;
 
 /// 转存入口完成创建阶段后的下一步动作。
@@ -22,14 +22,15 @@ pub(super) enum TransferStart {
     Run(
         db::transfer_job::Model,
         Vec<tdlib_rs::types::Message>,
-        JobGuard,
+        crate::app_context::TransferJobGuard,
     ),
 }
 
 /// 判断本次 `/transfer` 应复用、恢复还是创建新任务。
 pub(super) async fn build_transfer_start(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: TransferPlan,
-    client_id: i32,
+    client_ids: crate::config::TransferClientIds,
 ) -> anyhow::Result<TransferStart> {
     tracing::debug!(
         request_chat_id = plan.request_chat_id,
@@ -37,8 +38,12 @@ pub(super) async fn build_transfer_start(
         target_chat_id = plan.target_chat_id,
         "transfer start resolving"
     );
-    let _guard =
-        acquire_source_target_create_guard(plan.source_link.clone(), plan.target_chat_id).await;
+    let _guard = acquire_source_target_create_guard(
+        app_context.as_ref(),
+        plan.source_link.clone(),
+        plan.target_chat_id,
+    )
+    .await;
     tracing::debug!(
         request_chat_id = plan.request_chat_id,
         request_message_id = plan.request_message_id,
@@ -57,7 +62,7 @@ pub(super) async fn build_transfer_start(
             old.target_chat_id,
             old.result_message_id,
             &old.result_message_link,
-            client_id,
+            client_ids.upload,
         )
         .await?;
         tracing::info!(
@@ -101,10 +106,10 @@ pub(super) async fn build_transfer_start(
             request_message_id = plan.request_message_id,
             "matched idempotent transfer request"
         );
-        return request_job_start(old, client_id).await;
+        return request_job_start(old, client_ids.upload).await;
     }
 
-    create_new_job_start(plan, client_id).await
+    create_new_job_start(app_context, plan, client_ids).await
 }
 
 /// 将已存在的活跃任务转换为本次命令结果。
@@ -130,7 +135,7 @@ fn active_job_start(old: db::transfer_job::Model, plan: &TransferPlan) -> Transf
 /// 将同一请求已存在的任务转换为下一步动作。
 async fn request_job_start(
     old: db::transfer_job::Model,
-    client_id: i32,
+    upload_client_id: i32,
 ) -> anyhow::Result<TransferStart> {
     // 同一条命令重复投递时按已有任务状态返回确定结果：
     // - pending/running：恢复执行，避免上次后台任务已丢失。
@@ -163,7 +168,7 @@ async fn request_job_start(
             old.target_chat_id,
             old.result_message_id,
             link,
-            client_id,
+            upload_client_id,
         )
         .await?;
         Ok(TransferStart::Outcome(TransferOutcome::Reused {
@@ -176,7 +181,11 @@ async fn request_job_start(
 }
 
 /// 抓取源消息并创建新的转存任务。
-async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Result<TransferStart> {
+async fn create_new_job_start(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
+    plan: TransferPlan,
+    client_ids: crate::config::TransferClientIds,
+) -> anyhow::Result<TransferStart> {
     // 抓取源消息（单条或相册）。
     tracing::info!(
         request_chat_id = plan.request_chat_id,
@@ -184,7 +193,48 @@ async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Res
         target_chat_id = plan.target_chat_id,
         "spider source messages started"
     );
-    let bundle = spider::spider_message(plan.source_link.clone(), client_id).await?;
+    let bundle = match plan.source_kind {
+        SourceKind::Link => {
+            if plan.preferred_source_client_role == crate::config::ClientRole::Bot {
+                let bot_client_id = client_ids.get(crate::config::ClientRole::Bot)?;
+                if plan.allow_user_fallback {
+                    let user_client_id = client_ids.get(crate::config::ClientRole::User)?;
+                    spider::spider_link_bot_first(
+                        plan.source_link.clone(),
+                        bot_client_id,
+                        user_client_id,
+                    )
+                    .await?
+                } else {
+                    spider::spider_message(
+                        plan.source_link.clone(),
+                        bot_client_id,
+                        crate::config::ClientRole::Bot,
+                    )
+                    .await?
+                }
+            } else {
+                let client_id = client_ids.get(plan.preferred_source_client_role)?;
+                spider::spider_message(
+                    plan.source_link.clone(),
+                    client_id,
+                    plan.preferred_source_client_role,
+                )
+                .await?
+            }
+        }
+        SourceKind::BotMessage => {
+            let bot_client_id = client_ids.get(crate::config::ClientRole::Bot)?;
+            let source_chat_id = plan
+                .source_message_chat_id
+                .ok_or_else(|| anyhow::anyhow!("bot message source chat_id missing"))?;
+            let source_message_id = plan
+                .source_message_id
+                .ok_or_else(|| anyhow::anyhow!("bot message source message_id missing"))?;
+            spider::spider_bot_visible_message(source_chat_id, source_message_id, bot_client_id)
+                .await?
+        }
+    };
     tracing::info!(
         request_chat_id = plan.request_chat_id,
         request_message_id = plan.request_message_id,
@@ -209,16 +259,16 @@ async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Res
         "created transfer job"
     );
     // 新任务从创建子项前就持有 job 锁，避免 `/j stop` 在子项写入前误判“无执行器”。
-    match acquire_job_guard(job.id).await {
+    match acquire_job_guard(app_context.as_ref(), job.id).await {
         Some(job_guard) => {
-            if let Some(outcome) = apply_job_control(job.id).await? {
+            if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
                 tracing::info!(
                     job_id = job.id,
                     "transfer job control applied before item creation"
                 );
                 Ok(TransferStart::Outcome(outcome))
             } else {
-                let _ = store::ensure_items_for_bundle(job.id, &bundle.messages).await?;
+                let _ = store::ensure_items_for_bundle(job.id, &bundle).await?;
                 tracing::debug!(
                     job_id = job.id,
                     total_items = bundle.messages.len(),
@@ -236,5 +286,256 @@ async fn create_new_job_start(plan: TransferPlan, client_id: i32) -> anyhow::Res
                 job_id: job.id,
             }))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::config::{ClientRole, RequestActor, TransferClientIds};
+    use crate::db;
+    use rand::RngExt;
+    use sea_orm::ActiveModelTrait;
+    use sea_orm::EntityTrait;
+
+    fn test_app_context() -> std::sync::Arc<crate::app_context::AppContext> {
+        crate::app_context::app_context()
+    }
+
+    // 同源同目标的成功任务应优先复用历史结果，不再重新 spider。
+    #[tokio::test]
+    async fn test_build_transfer_start_reuses_success_job_without_spider() -> anyhow::Result<()> {
+        let _guard = db::TEST_DB_LOCK.lock().await;
+        let db_conn = prepare_test_schema().await?;
+        let source_link = unique_source_link();
+        let request_chat_id = unique_id();
+        let owner_user_id = unique_id();
+        let target_chat_id = unique_id();
+        let job = insert_job(
+            store::JOB_STATUS_SUCCESS,
+            owner_user_id,
+            request_chat_id + 1,
+            request_chat_id + 2,
+            &source_link,
+            target_chat_id,
+            Some("https://example.com/result/1"),
+        )
+        .await?;
+
+        let plan = build_test_plan(
+            request_chat_id,
+            owner_user_id,
+            source_link.clone(),
+            target_chat_id,
+            request_chat_id,
+            request_chat_id + 10,
+        );
+        let client_ids = test_client_ids();
+        let app_context = test_app_context();
+
+        let start = build_transfer_start(app_context, plan, client_ids).await?;
+
+        match start {
+            TransferStart::Outcome(TransferOutcome::Reused { job_id, link }) => {
+                assert_eq!(job_id, job.id);
+                assert_eq!(link, "https://example.com/result/1");
+            }
+            _ => panic!("unexpected transfer start"),
+        }
+
+        let job = db::transfer_job::Entity::find_by_id(job.id)
+            .one(db_conn)
+            .await?
+            .expect("job must exist");
+        assert_eq!(job.status, store::JOB_STATUS_SUCCESS);
+        Ok(())
+    }
+
+    // 同源同目标已有运行中任务时，新的不同请求应直接返回 running，而不是重复创建。
+    #[tokio::test]
+    async fn test_build_transfer_start_reports_running_for_duplicate_active_job()
+    -> anyhow::Result<()> {
+        let _guard = db::TEST_DB_LOCK.lock().await;
+        let source_link = unique_source_link();
+        let request_chat_id = unique_id();
+        let owner_user_id = unique_id();
+        let target_chat_id = unique_id();
+        let job = insert_job(
+            store::JOB_STATUS_RUNNING,
+            owner_user_id,
+            request_chat_id + 1,
+            request_chat_id + 2,
+            &source_link,
+            target_chat_id,
+            None,
+        )
+        .await?;
+
+        let plan = build_test_plan(
+            request_chat_id,
+            owner_user_id,
+            source_link,
+            target_chat_id,
+            request_chat_id,
+            request_chat_id + 10,
+        );
+        let client_ids = test_client_ids();
+        let app_context = test_app_context();
+
+        let start = build_transfer_start(app_context, plan, client_ids).await?;
+
+        match start {
+            TransferStart::Outcome(TransferOutcome::Running { job_id }) => {
+                assert_eq!(job_id, job.id);
+            }
+            _ => panic!("unexpected transfer start"),
+        }
+        Ok(())
+    }
+
+    // 同一条请求若已经进入取消态，重复投递应走 request 幂等分支，而不是重新建任务。
+    #[tokio::test]
+    async fn test_build_transfer_start_returns_cancelled_for_same_request_job() -> anyhow::Result<()>
+    {
+        let _guard = db::TEST_DB_LOCK.lock().await;
+        let source_link = unique_source_link();
+        let request_chat_id = unique_id();
+        let owner_user_id = unique_id();
+        let target_chat_id = unique_id();
+        let job = insert_job(
+            store::JOB_STATUS_CANCELLED,
+            owner_user_id,
+            request_chat_id,
+            request_chat_id + 1,
+            &source_link,
+            target_chat_id,
+            None,
+        )
+        .await?;
+
+        let plan = build_test_plan(
+            request_chat_id,
+            owner_user_id,
+            source_link,
+            target_chat_id,
+            request_chat_id,
+            request_chat_id + 1,
+        );
+        let client_ids = test_client_ids();
+        let app_context = test_app_context();
+
+        let start = build_transfer_start(app_context, plan, client_ids).await?;
+
+        match start {
+            TransferStart::Outcome(TransferOutcome::Cancelled { job_id }) => {
+                assert_eq!(job_id, job.id);
+            }
+            _ => panic!("unexpected transfer start"),
+        }
+        Ok(())
+    }
+
+    async fn prepare_test_schema() -> anyhow::Result<&'static sea_orm::DatabaseConnection> {
+        let db_conn = db::get_db().await?;
+        db::ensure_test_schema_current(db_conn).await?;
+        Ok(db_conn)
+    }
+
+    async fn insert_job(
+        status: &str,
+        owner_user_id: i64,
+        request_chat_id: i64,
+        request_message_id: i64,
+        source_link: &str,
+        target_chat_id: i64,
+        result_message_link: Option<&str>,
+    ) -> anyhow::Result<db::transfer_job::Model> {
+        let db_conn = prepare_test_schema().await?;
+        let now = store::now_utc8();
+        let mut active = db::transfer_job::ActiveModel {
+            request_chat_id: sea_orm::ActiveValue::Set(request_chat_id),
+            request_message_id: sea_orm::ActiveValue::Set(request_message_id),
+            owner_user_id: sea_orm::ActiveValue::Set(owner_user_id),
+            source_link: sea_orm::ActiveValue::Set(source_link.to_owned()),
+            source_kind: sea_orm::ActiveValue::Set("link".to_owned()),
+            source_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
+            allow_user_fallback: sea_orm::ActiveValue::Set(false),
+            source_chat_id: sea_orm::ActiveValue::Set(unique_id()),
+            source_message_id: sea_orm::ActiveValue::Set(unique_id()),
+            source_album_id: sea_orm::ActiveValue::Set(0),
+            target_chat_id: sea_orm::ActiveValue::Set(target_chat_id),
+            result_message_id: sea_orm::ActiveValue::Set(result_message_link.map(|_| unique_id())),
+            result_message_link: sea_orm::ActiveValue::Set(
+                result_message_link.map(|s| s.to_owned()),
+            ),
+            status: sea_orm::ActiveValue::Set(status.to_owned()),
+            total_items: sea_orm::ActiveValue::Set(1),
+            done_items: sea_orm::ActiveValue::Set(0),
+            failed_items: sea_orm::ActiveValue::Set(0),
+            retry_count: sea_orm::ActiveValue::Set(0),
+            last_error: sea_orm::ActiveValue::Set(None),
+            created_at: sea_orm::ActiveValue::Set(now),
+            updated_at: sea_orm::ActiveValue::Set(now),
+            finished_at: sea_orm::ActiveValue::Set(
+                if matches!(
+                    status,
+                    store::JOB_STATUS_SUCCESS | store::JOB_STATUS_CANCELLED
+                ) {
+                    Some(now)
+                } else {
+                    None
+                },
+            ),
+            ..Default::default()
+        };
+        if result_message_link.is_none() {
+            active.result_message_id = sea_orm::ActiveValue::Set(None);
+        }
+
+        active.insert(db_conn).await.map_err(Into::into)
+    }
+
+    fn build_test_plan(
+        request_chat_id: i64,
+        owner_user_id: i64,
+        source_link: String,
+        target_chat_id: i64,
+        plan_request_chat_id: i64,
+        plan_request_message_id: i64,
+    ) -> TransferPlan {
+        TransferPlan {
+            actor: RequestActor {
+                request_chat_id,
+                user_id: owner_user_id,
+            },
+            source_link,
+            source_kind: SourceKind::Link,
+            preferred_source_client_role: ClientRole::Bot,
+            allow_user_fallback: false,
+            source_message_chat_id: None,
+            source_message_id: None,
+            target_chat_id,
+            request_chat_id: plan_request_chat_id,
+            request_message_id: plan_request_message_id,
+        }
+    }
+
+    fn test_client_ids() -> TransferClientIds {
+        TransferClientIds {
+            interaction: 1,
+            download: 2,
+            upload: 3,
+            user: Some(4),
+            bot: Some(5),
+        }
+    }
+
+    fn unique_id() -> i64 {
+        rand::rng().random_range(1_000_000..=9_999_999)
+    }
+
+    fn unique_source_link() -> String {
+        format!("https://t.me/c/{}/{}", unique_id(), unique_id())
     }
 }

@@ -27,7 +27,7 @@ pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
     target_chat_id: i64,
 ) -> anyhow::Result<Option<SuccessfulJobResult>> {
     let db_conn = db::get_db().await?;
-    let row = db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .column(db::transfer_job::Column::TargetChatId)
@@ -36,7 +36,8 @@ pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
         .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
         .filter(db::transfer_job::Column::TargetChatId.eq(target_chat_id))
         .filter(db::transfer_job::Column::Status.eq(JOB_STATUS_SUCCESS))
-        .filter(db::transfer_job::Column::ResultMessageLink.is_not_null())
+        .filter(db::transfer_job::Column::ResultMessageLink.is_not_null());
+    let row = query
         .order_by_desc(db::transfer_job::Column::FinishedAt)
         .into_tuple::<(i64, i64, Option<i64>, Option<String>)>()
         .one(db_conn)
@@ -62,7 +63,7 @@ pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
     target_chat_id: i64,
 ) -> anyhow::Result<Option<db::transfer_job::Model>> {
     let db_conn = db::get_db().await?;
-    db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
         .filter(db::transfer_job::Column::TargetChatId.eq(target_chat_id))
         .filter(
@@ -72,7 +73,8 @@ pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_PAUSED))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCELLING))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCEL_FINALIZING)),
-        )
+        );
+    query
         .order_by_desc(db::transfer_job::Column::CreatedAt)
         .one(db_conn)
         .await
@@ -87,7 +89,7 @@ pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
     target_chat_id: i64,
 ) -> anyhow::Result<Option<i64>> {
     let db_conn = db::get_db().await?;
-    db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
@@ -99,7 +101,8 @@ pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_PAUSED))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCELLING))
                 .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCEL_FINALIZING)),
-        )
+        );
+    query
         .order_by_desc(db::transfer_job::Column::CreatedAt)
         .into_tuple::<i64>()
         .one(db_conn)
@@ -107,22 +110,22 @@ pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
         .map_err(Into::into)
 }
 
-/// 查询某个请求聊天最近的任务列表，并汇总每个任务的子项状态。
-/// 这是 `/downloads` 命令的基础数据源。
+/// 查询最近任务。
 pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
-    request_chat_id: i64,
+    app_context: &crate::app_context::AppContext,
     limit: u64,
 ) -> anyhow::Result<Vec<JobProgressSnapshot>> {
     let db_conn = db::get_db().await?;
-    let jobs = db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .column(db::transfer_job::Column::Status)
         .column(db::transfer_job::Column::TotalItems)
         .column(db::transfer_job::Column::TargetChatId)
+        .column(db::transfer_job::Column::LastError)
         .column(db::transfer_job::Column::CreatedAt)
-        .column(db::transfer_job::Column::UpdatedAt)
-        .filter(db::transfer_job::Column::RequestChatId.eq(request_chat_id))
+        .column(db::transfer_job::Column::UpdatedAt);
+    let jobs = query
         .order_by_desc(db::transfer_job::Column::CreatedAt)
         .limit(limit)
         .into_tuple::<(
@@ -130,6 +133,7 @@ pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
             String,
             i32,
             i64,
+            Option<String>,
             chrono::DateTime<chrono::FixedOffset>,
             chrono::DateTime<chrono::FixedOffset>,
         )>()
@@ -137,13 +141,16 @@ pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
         .await?
         .into_iter()
         .map(
-            |(id, status, total_items, target_chat_id, created_at, updated_at)| JobProgressJob {
-                id,
-                status,
-                total_items,
-                target_chat_id,
-                created_at,
-                updated_at,
+            |(id, status, total_items, target_chat_id, last_error, created_at, updated_at)| {
+                JobProgressJob {
+                    id,
+                    status,
+                    total_items,
+                    target_chat_id,
+                    last_error,
+                    created_at,
+                    updated_at,
+                }
             },
         )
         .collect::<Vec<_>>();
@@ -152,57 +159,35 @@ pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
         return Ok(vec![]);
     }
 
-    build_job_progress_snapshots(jobs).await
+    build_job_progress_snapshots(app_context, jobs).await
 }
 
 /// 查询单个任务的进度快照。
 ///
 /// `/transfer` 进度面板会按 job_id 轮询该快照，然后编辑同一条消息。
-pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot(
+pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_context(
+    app_context: &crate::app_context::AppContext,
     job_id: i64,
-) -> anyhow::Result<Option<JobProgressSnapshot>> {
-    get_job_progress_snapshot_with_request_chat(job_id, None).await
-}
-
-/// 查询当前请求聊天可见的单个任务进度快照。
-///
-/// `/job status` 是用户手动输入 job_id 的命令，必须同时校验 request_chat_id，
-/// 避免一个聊天通过猜测 job_id 看到其他聊天发起的任务详情。
-pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_for_request_chat(
-    job_id: i64,
-    request_chat_id: i64,
-) -> anyhow::Result<Option<JobProgressSnapshot>> {
-    get_job_progress_snapshot_with_request_chat(job_id, Some(request_chat_id)).await
-}
-
-/// 查询单个任务进度快照的内部实现。
-///
-/// `request_chat_id` 为空时用于进度面板内部轮询；非空时用于命令权限边界。
-async fn get_job_progress_snapshot_with_request_chat(
-    job_id: i64,
-    request_chat_id: Option<i64>,
 ) -> anyhow::Result<Option<JobProgressSnapshot>> {
     let db_conn = db::get_db().await?;
-    let mut query = db::transfer_job::Entity::find()
+    let query = db::transfer_job::Entity::find()
         .select_only()
         .column(db::transfer_job::Column::Id)
         .column(db::transfer_job::Column::Status)
         .column(db::transfer_job::Column::TotalItems)
         .column(db::transfer_job::Column::TargetChatId)
+        .column(db::transfer_job::Column::LastError)
         .column(db::transfer_job::Column::CreatedAt)
         .column(db::transfer_job::Column::UpdatedAt)
         .filter(db::transfer_job::Column::Id.eq(job_id));
 
-    if let Some(request_chat_id) = request_chat_id {
-        query = query.filter(db::transfer_job::Column::RequestChatId.eq(request_chat_id));
-    }
-
-    let Some((id, status, total_items, target_chat_id, created_at, updated_at)) = query
+    let Some((id, status, total_items, target_chat_id, last_error, created_at, updated_at)) = query
         .into_tuple::<(
             i64,
             String,
             i32,
             i64,
+            Option<String>,
             chrono::DateTime<chrono::FixedOffset>,
             chrono::DateTime<chrono::FixedOffset>,
         )>()
@@ -216,10 +201,11 @@ async fn get_job_progress_snapshot_with_request_chat(
         status,
         total_items,
         target_chat_id,
+        last_error,
         created_at,
         updated_at,
     };
-    Ok(build_job_progress_snapshots(vec![job])
+    Ok(build_job_progress_snapshots(app_context, vec![job])
         .await?
         .into_iter()
         .next())
@@ -230,6 +216,7 @@ async fn get_job_progress_snapshot_with_request_chat(
 /// 该函数集中处理子项状态统计和 TDLib 实时下载进度，避免 `/downloads`
 /// 与单任务进度面板各自实现一套统计逻辑。
 async fn build_job_progress_snapshots(
+    app_context: &crate::app_context::AppContext,
     jobs: Vec<JobProgressJob>,
 ) -> anyhow::Result<Vec<JobProgressSnapshot>> {
     let db_conn = db::get_db().await?;
@@ -237,36 +224,46 @@ async fn build_job_progress_snapshots(
     let items = db::transfer_item::Entity::find()
         .select_only()
         .column(db::transfer_item::Column::JobId)
+        .column(db::transfer_item::Column::FileOwnerClientRole)
         .column(db::transfer_item::Column::FileKey)
         .column(db::transfer_item::Column::Status)
         .filter(db::transfer_item::Column::JobId.is_in(job_ids))
-        .into_tuple::<(i64, String, String)>()
+        .into_tuple::<(i64, String, String, String)>()
         .all(db_conn)
         .await?;
-    let file_keys = items
+    let file_cache_keys = items
         .iter()
-        .map(|(_, file_key, _)| file_key.clone())
-        .filter(|file_key| !is_text_file_key(file_key))
+        .map(|(_, owner, file_key, _)| (owner.clone(), file_key.clone()))
+        .filter(|(_, file_key)| !is_text_file_key(file_key))
         .collect::<HashSet<_>>();
-    let file_cache_rows = if file_keys.is_empty() {
+    let file_cache_rows = if file_cache_keys.is_empty() {
         vec![]
     } else {
+        let mut condition = Condition::any();
+        for (owner, file_key) in &file_cache_keys {
+            condition = condition.add(
+                Condition::all()
+                    .add(db::file_cache::Column::OwnerClientRole.eq(owner.clone()))
+                    .add(db::file_cache::Column::FileKey.eq(file_key.clone())),
+            );
+        }
         db::file_cache::Entity::find()
             .select_only()
+            .column(db::file_cache::Column::OwnerClientRole)
             .column(db::file_cache::Column::FileKey)
             .column(db::file_cache::Column::Status)
             .column(db::file_cache::Column::TdFileId)
             .column(db::file_cache::Column::SizeBytes)
-            .filter(db::file_cache::Column::FileKey.is_in(file_keys))
-            .into_tuple::<(String, String, Option<i32>, Option<i64>)>()
+            .filter(condition)
+            .into_tuple::<(String, String, String, Option<i32>, Option<i64>)>()
             .all(db_conn)
             .await?
     };
     let file_cache_map = file_cache_rows
         .into_iter()
-        .map(|(file_key, status, td_file_id, size_bytes)| {
+        .map(|(owner, file_key, status, td_file_id, size_bytes)| {
             (
-                file_key,
+                (owner, file_key),
                 FileCacheProgressRow {
                     status,
                     td_file_id,
@@ -298,7 +295,7 @@ async fn build_job_progress_snapshots(
     }
 
     // 逐条累加子项状态。
-    for (job_id, file_key, status) in items {
+    for (job_id, owner, file_key, status) in items {
         let Some(snapshot) = count_map.get_mut(&job_id) else {
             continue;
         };
@@ -320,7 +317,7 @@ async fn build_job_progress_snapshots(
             continue;
         }
 
-        let Some(file_cache) = file_cache_map.get(&file_key) else {
+        let Some(file_cache) = file_cache_map.get(&(owner.clone(), file_key)) else {
             continue;
         };
         if file_cache.status != FILE_CACHE_STATUS_DOWNLOADING {
@@ -328,7 +325,10 @@ async fn build_job_progress_snapshots(
         }
 
         snapshot.active_download_files += 1;
-        let runtime_progress = file_cache.td_file_id.and_then(queue::get_download_progress);
+        let runtime_progress = file_cache.td_file_id.and_then(|td_file_id| {
+            progress_client_id_for_owner(app_context, &owner)
+                .and_then(|client_id| queue::get_download_progress(client_id, td_file_id))
+        });
         if let Some(progress) = runtime_progress {
             snapshot.active_downloaded_bytes += progress.downloaded_size.max(0);
             if let Some(total_size) = progress.total_size {
@@ -350,6 +350,21 @@ async fn build_job_progress_snapshots(
     let mut snapshots = count_map.into_values().collect::<Vec<_>>();
     snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.job.created_at));
     Ok(snapshots)
+}
+
+/// 根据 file_cache owner 找到当前运行期 TDLib client id。
+///
+/// 进度快照是非关键展示能力：如果转存后台还没 ready 或 owner 是历史异常值，
+/// 返回 None 后会回退到数据库中的预估大小，不影响任务执行。
+fn progress_client_id_for_owner(
+    app_context: &crate::app_context::AppContext,
+    owner_client_role: &str,
+) -> Option<i32> {
+    let role = super::super::types::client_role_from_str(owner_client_role)?;
+    app_context
+        .transfer_runtime
+        .transfer_client_ids()
+        .and_then(|client_ids| client_ids.get(role).ok())
 }
 
 /// 进度统计所需的 file_cache 字段。

@@ -11,13 +11,13 @@ async fn test_job_control_status_flow() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
     let job = insert_job(JOB_STATUS_RUNNING).await?;
 
-    let paused = pause_job(job.id, job.request_chat_id).await?;
+    let paused = pause_job(job.id).await?;
     assert_eq!(paused.status, JOB_STATUS_PAUSED);
 
-    let resumed = wake_job(job.id, job.request_chat_id).await?;
+    let resumed = wake_job(job.id).await?;
     assert_eq!(resumed.status, JOB_STATUS_PENDING);
 
-    let cancelling = request_cancel_job(job.id, job.request_chat_id).await?;
+    let cancelling = request_cancel_job(job.id).await?;
     assert_eq!(cancelling.status, JOB_STATUS_CANCELLING);
     Ok(())
 }
@@ -29,10 +29,10 @@ async fn test_wake_job_accepts_pending_and_running() -> anyhow::Result<()> {
     let pending = insert_job(JOB_STATUS_PENDING).await?;
     let running = insert_job(JOB_STATUS_RUNNING).await?;
 
-    let woke_pending = wake_job(pending.id, pending.request_chat_id).await?;
+    let woke_pending = wake_job(pending.id).await?;
     assert_eq!(woke_pending.status, JOB_STATUS_PENDING);
 
-    let woke_running = wake_job(running.id, running.request_chat_id).await?;
+    let woke_running = wake_job(running.id).await?;
     assert_eq!(woke_running.status, JOB_STATUS_RUNNING);
     Ok(())
 }
@@ -43,13 +43,9 @@ async fn test_finished_job_rejects_manual_control() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
     let job = insert_job(JOB_STATUS_SUCCESS).await?;
 
-    assert!(pause_job(job.id, job.request_chat_id).await.is_err());
-    assert!(wake_job(job.id, job.request_chat_id).await.is_err());
-    assert!(
-        request_cancel_job(job.id, job.request_chat_id)
-            .await
-            .is_err()
-    );
+    assert!(pause_job(job.id).await.is_err());
+    assert!(wake_job(job.id).await.is_err());
+    assert!(request_cancel_job(job.id).await.is_err());
     Ok(())
 }
 

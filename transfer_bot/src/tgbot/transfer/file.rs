@@ -11,5 +11,7 @@ mod types;
 mod tests;
 
 pub(super) use content::prepare_upload_content;
-pub(super) use download::{ensure_media_downloaded, extract_download_seed, extract_file_key};
+pub(super) use download::{
+    ensure_media_downloaded, extract_download_seed, extract_file_key, is_transferable_message,
+};
 pub(super) use types::{DownloadSeed, PreparedCacheMeta, PreparedUpload, UploadKind};

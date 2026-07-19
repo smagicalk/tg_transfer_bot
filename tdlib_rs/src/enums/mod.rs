@@ -2037,7 +2037,6 @@ pub use phone_number_code_type::PhoneNumberCodeType;
 
 mod update;
 pub use update::Update;
-pub use update::UpdateNewCallbackQuery;
 
 mod updates;
 pub use updates::Updates;

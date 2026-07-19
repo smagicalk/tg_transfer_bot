@@ -12,6 +12,10 @@ pub struct MessageSendOptions {
     pub disable_notification: bool,
     /// Pass true if the message is sent from the background
     pub from_background: bool,
+    /// Pass true if the content of the message must be protected from forwarding and saving; for bots only
+    pub protect_content: bool,
+    /// Pass true to allow the message to ignore regular broadcast limits for a small fee; for bots only
+    pub allow_paid_broadcast: bool,
     /// The number of Telegram Stars the user agreed to pay to send the messages
     pub paid_message_star_count: i64,
     /// Pass true if the user explicitly chosen a sticker or a custom emoji from an installed sticker set; applicable only to sendMessage and sendMessageAlbum

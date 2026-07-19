@@ -1,5 +1,5 @@
 // `/job` 参数解析。
-// 短命令和长命令共用英文参数，避免 Telegram 里输入过长。
+// 用户输入统一使用长动作参数；callback payload 仍保持短格式以压缩长度。
 
 /// 任务控制动作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +24,7 @@ pub(super) struct JobArgs {
 pub(super) enum JobCallbackAction {
     Pause,
     Resume,
+    StopConfirm,
     Stop,
     Status,
 }
@@ -51,10 +52,10 @@ pub(super) fn parse_job_args(text: &[&str]) -> anyhow::Result<JobArgs> {
         .parse::<i64>()?;
 
     let action = match action {
-        "pause" | "p" => JobAction::Pause,
-        "resume" | "r" => JobAction::Resume,
-        "stop" | "s" | "cancel" | "c" => JobAction::Stop,
-        "status" | "st" => JobAction::Status,
+        "pause" => JobAction::Pause,
+        "resume" => JobAction::Resume,
+        "stop" | "cancel" => JobAction::Stop,
+        "status" => JobAction::Status,
         other => anyhow::bail!("unknown job action: {}", other),
     };
 
@@ -73,6 +74,7 @@ pub(super) fn build_job_callback_data(action: JobCallbackAction, job_id: i64) ->
     let action = match action {
         JobCallbackAction::Pause => "p",
         JobCallbackAction::Resume => "r",
+        JobCallbackAction::StopConfirm => "sc",
         JobCallbackAction::Stop => "s",
         JobCallbackAction::Status => "st",
     };
@@ -86,6 +88,7 @@ pub(super) fn parse_job_callback_data(data: &str) -> Option<JobCallbackArgs> {
     let action = match parts.next()? {
         "p" => JobCallbackAction::Pause,
         "r" => JobCallbackAction::Resume,
+        "sc" => JobCallbackAction::StopConfirm,
         "s" => JobCallbackAction::Stop,
         "st" => JobCallbackAction::Status,
         _ => return None,
@@ -101,7 +104,7 @@ pub(super) fn parse_job_callback_data(data: &str) -> Option<JobCallbackArgs> {
 mod tests {
     use super::*;
 
-    // `/job` 和 `/j` 共用同一套英文动作参数。
+    // `/job` 只接受长动作参数；短格式只保留在 callback payload 内部。
     #[test]
     fn test_parse_job_args() {
         assert_eq!(
@@ -112,20 +115,6 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_job_args(&["/j", "r", "456"]).unwrap(),
-            JobArgs {
-                action: JobAction::Resume,
-                job_id: 456,
-            }
-        );
-        assert_eq!(
-            parse_job_args(&["/j", "s", "789"]).unwrap(),
-            JobArgs {
-                action: JobAction::Stop,
-                job_id: 789,
-            }
-        );
-        assert_eq!(
             parse_job_args(&["/job", "cancel", "321"]).unwrap(),
             JobArgs {
                 action: JobAction::Stop,
@@ -133,14 +122,14 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_job_args(&["/j", "c", "654"]).unwrap(),
+            parse_job_args(&["/job", "resume", "654"]).unwrap(),
             JobArgs {
-                action: JobAction::Stop,
+                action: JobAction::Resume,
                 job_id: 654,
             }
         );
         assert_eq!(
-            parse_job_args(&["/j", "st", "42"]).unwrap(),
+            parse_job_args(&["/job", "status", "42"]).unwrap(),
             JobArgs {
                 action: JobAction::Status,
                 job_id: 42,
@@ -153,9 +142,9 @@ mod tests {
                 job_id: 43,
             }
         );
-        assert!(parse_job_args(&["/j", "bad", "1"]).is_err());
-        assert!(parse_job_args(&["/j", "p"]).is_err());
-        assert!(parse_job_args(&["/j", "p", "abc"]).is_err());
+        assert!(parse_job_args(&["/job", "bad", "1"]).is_err());
+        assert!(parse_job_args(&["/job", "pause"]).is_err());
+        assert!(parse_job_args(&["/job", "pause", "abc"]).is_err());
     }
 
     // callback payload 使用短格式，避免 Telegram callback data 过长。
@@ -168,6 +157,25 @@ mod tests {
             parse_job_callback_data(&data),
             Some(JobCallbackArgs {
                 action: JobCallbackAction::Status,
+                job_id: 42,
+            })
+        );
+
+        let confirm_stop = build_job_callback_data(JobCallbackAction::StopConfirm, 42);
+        assert_eq!(confirm_stop, "j:sc:42");
+        assert_eq!(
+            parse_job_callback_data(&confirm_stop),
+            Some(JobCallbackArgs {
+                action: JobCallbackAction::StopConfirm,
+                job_id: 42,
+            })
+        );
+
+        // 历史消息上的旧停止按钮仍然能解析成真正停止，避免旧 callback 失效。
+        assert_eq!(
+            parse_job_callback_data("j:s:42"),
+            Some(JobCallbackArgs {
+                action: JobCallbackAction::Stop,
                 job_id: 42,
             })
         );

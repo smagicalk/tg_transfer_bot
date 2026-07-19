@@ -7,6 +7,7 @@ use serde_json::json;
 /// * `topic_id` - Topic in which the message will be sent; pass null if none
 /// * `reply_to` - Information about the message or story to be replied; pass null if none
 /// * `options` - Options to be used to send the message; pass null to use default options
+/// * `reply_markup` - Markup for replying to the message; pass null if none; for bots only
 /// * `input_message_content` - The content of the message to be sent
 /// * `client_id` - The client id to send the request to
 #[allow(clippy::too_many_arguments)]
@@ -15,6 +16,7 @@ pub async fn send_message(
     topic_id: Option<crate::enums::MessageTopic>,
     reply_to: Option<crate::enums::InputMessageReplyTo>,
     options: Option<crate::types::MessageSendOptions>,
+    reply_markup: Option<crate::enums::ReplyMarkup>,
     input_message_content: crate::enums::InputMessageContent,
     client_id: i32,
 ) -> Result<crate::enums::Message, crate::types::Error> {
@@ -24,6 +26,7 @@ pub async fn send_message(
     "topic_id": topic_id,
     "reply_to": reply_to,
     "options": options,
+    "reply_markup": reply_markup,
     "input_message_content": input_message_content,
     });
     let response = send_request(client_id, request).await;

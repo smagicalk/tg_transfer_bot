@@ -1,8 +1,7 @@
 [workspace]
 members = [
     "transfer_bot",
-    "tdlib_rs",
-    "migration"
+    "tdlib_rs"
 ]
 resolver = "2"
 

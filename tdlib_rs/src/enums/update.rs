@@ -1,6 +1,5 @@
 #[allow(clippy::all)]
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DisplayFromStr};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "@type")]
@@ -14,15 +13,6 @@ pub enum Update {
     /// A new message was received; can also be an outgoing message
     #[serde(rename(serialize = "updateNewMessage", deserialize = "updateNewMessage"))]
     NewMessage(crate::types::UpdateNewMessage),
-    /// A new incoming callback query to a bot was received.
-    ///
-    /// 当前生成的 `tdlib_rs` 缺少这个 update，所以在这里补一个最小定义，
-    /// 供机器人处理 inline keyboard 分页按钮使用。
-    #[serde(rename(
-        serialize = "updateNewCallbackQuery",
-        deserialize = "updateNewCallbackQuery"
-    ))]
-    NewCallbackQuery(UpdateNewCallbackQuery),
     /// A request to send a message has reached the Telegram server. This doesn't mean that the message will be sent successfully.
     /// This update is sent only if the option "use_quick_ack" is set to true. This update may be sent multiple times for the same message
     #[serde(rename(
@@ -844,29 +834,118 @@ pub enum Update {
         deserialize = "updateAutosaveSettings"
     ))]
     AutosaveSettings(crate::types::UpdateAutosaveSettings),
-}
-
-/// 机器人收到的按钮回调更新。
-///
-/// 这里只补当前分页功能所需的字段：
-/// - `id` 用于 `answerCallbackQuery`
-/// - `sender_user_id/chat_id/message_id` 用于权限校验与编辑原消息
-/// - `payload` 用于解析按钮携带的数据
-#[serde_as]
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct UpdateNewCallbackQuery {
-    /// 回调查询唯一 ID。
-    #[serde_as(as = "DisplayFromStr")]
-    pub id: i64,
-    /// 点击按钮的用户 ID。
-    pub sender_user_id: i64,
-    /// 按钮所在聊天 ID。
-    pub chat_id: i64,
-    /// 按钮所在消息 ID。
-    pub message_id: i64,
-    /// 聊天实例 ID。
-    #[serde_as(as = "DisplayFromStr")]
-    pub chat_instance: i64,
-    /// 按钮携带的回调数据。
-    pub payload: crate::enums::CallbackQueryPayload,
+    /// A business connection has changed; for bots only
+    #[serde(rename(
+        serialize = "updateBusinessConnection",
+        deserialize = "updateBusinessConnection"
+    ))]
+    BusinessConnection(crate::types::UpdateBusinessConnection),
+    /// A new message was added to a business account; for bots only
+    #[serde(rename(
+        serialize = "updateNewBusinessMessage",
+        deserialize = "updateNewBusinessMessage"
+    ))]
+    NewBusinessMessage(crate::types::UpdateNewBusinessMessage),
+    /// A message in a business account was edited; for bots only
+    #[serde(rename(
+        serialize = "updateBusinessMessageEdited",
+        deserialize = "updateBusinessMessageEdited"
+    ))]
+    BusinessMessageEdited(crate::types::UpdateBusinessMessageEdited),
+    /// Messages in a business account were deleted; for bots only
+    #[serde(rename(
+        serialize = "updateBusinessMessagesDeleted",
+        deserialize = "updateBusinessMessagesDeleted"
+    ))]
+    BusinessMessagesDeleted(crate::types::UpdateBusinessMessagesDeleted),
+    /// A new incoming inline query; for bots only
+    #[serde(rename(
+        serialize = "updateNewInlineQuery",
+        deserialize = "updateNewInlineQuery"
+    ))]
+    NewInlineQuery(crate::types::UpdateNewInlineQuery),
+    /// The user has chosen a result of an inline query; for bots only
+    #[serde(rename(
+        serialize = "updateNewChosenInlineResult",
+        deserialize = "updateNewChosenInlineResult"
+    ))]
+    NewChosenInlineResult(crate::types::UpdateNewChosenInlineResult),
+    /// A new incoming callback query; for bots only
+    #[serde(rename(
+        serialize = "updateNewCallbackQuery",
+        deserialize = "updateNewCallbackQuery"
+    ))]
+    NewCallbackQuery(crate::types::UpdateNewCallbackQuery),
+    /// A new incoming callback query from a message sent via a bot; for bots only
+    #[serde(rename(
+        serialize = "updateNewInlineCallbackQuery",
+        deserialize = "updateNewInlineCallbackQuery"
+    ))]
+    NewInlineCallbackQuery(crate::types::UpdateNewInlineCallbackQuery),
+    /// A new incoming callback query from a business message; for bots only
+    #[serde(rename(
+        serialize = "updateNewBusinessCallbackQuery",
+        deserialize = "updateNewBusinessCallbackQuery"
+    ))]
+    NewBusinessCallbackQuery(crate::types::UpdateNewBusinessCallbackQuery),
+    /// A new incoming shipping query; for bots only. Only for invoices with flexible price
+    #[serde(rename(
+        serialize = "updateNewShippingQuery",
+        deserialize = "updateNewShippingQuery"
+    ))]
+    NewShippingQuery(crate::types::UpdateNewShippingQuery),
+    /// A new incoming pre-checkout query; for bots only. Contains full information about a checkout
+    #[serde(rename(
+        serialize = "updateNewPreCheckoutQuery",
+        deserialize = "updateNewPreCheckoutQuery"
+    ))]
+    NewPreCheckoutQuery(crate::types::UpdateNewPreCheckoutQuery),
+    /// A new incoming event; for bots only
+    #[serde(rename(
+        serialize = "updateNewCustomEvent",
+        deserialize = "updateNewCustomEvent"
+    ))]
+    NewCustomEvent(crate::types::UpdateNewCustomEvent),
+    /// A new incoming query; for bots only
+    #[serde(rename(
+        serialize = "updateNewCustomQuery",
+        deserialize = "updateNewCustomQuery"
+    ))]
+    NewCustomQuery(crate::types::UpdateNewCustomQuery),
+    /// A poll was updated; for bots only
+    #[serde(rename(serialize = "updatePoll", deserialize = "updatePoll"))]
+    Poll(crate::types::UpdatePoll),
+    /// A user changed the answer to a poll; for bots only
+    #[serde(rename(serialize = "updatePollAnswer", deserialize = "updatePollAnswer"))]
+    PollAnswer(crate::types::UpdatePollAnswer),
+    /// User rights changed in a chat; for bots only
+    #[serde(rename(serialize = "updateChatMember", deserialize = "updateChatMember"))]
+    ChatMember(crate::types::UpdateChatMember),
+    /// A user sent a join request to a chat; for bots only
+    #[serde(rename(
+        serialize = "updateNewChatJoinRequest",
+        deserialize = "updateNewChatJoinRequest"
+    ))]
+    NewChatJoinRequest(crate::types::UpdateNewChatJoinRequest),
+    /// A chat boost has changed; for bots only
+    #[serde(rename(serialize = "updateChatBoost", deserialize = "updateChatBoost"))]
+    ChatBoost(crate::types::UpdateChatBoost),
+    /// User changed its reactions on a message with public reactions; for bots only
+    #[serde(rename(
+        serialize = "updateMessageReaction",
+        deserialize = "updateMessageReaction"
+    ))]
+    MessageReaction(crate::types::UpdateMessageReaction),
+    /// Reactions added to a message with anonymous reactions have changed; for bots only
+    #[serde(rename(
+        serialize = "updateMessageReactions",
+        deserialize = "updateMessageReactions"
+    ))]
+    MessageReactions(crate::types::UpdateMessageReactions),
+    /// Paid media were purchased by a user; for bots only
+    #[serde(rename(
+        serialize = "updatePaidMediaPurchased",
+        deserialize = "updatePaidMediaPurchased"
+    ))]
+    PaidMediaPurchased(crate::types::UpdatePaidMediaPurchased),
 }

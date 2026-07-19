@@ -20,6 +20,10 @@ pub struct Model {
     pub source_message_id: i64,
     /// 文件去重键（优先 `remote.unique_id`，无文件时可退化为文本键）。
     pub file_key: String,
+    /// 该文件归属的 TDLib client 角色。
+    ///
+    /// bot/user 下载同一 Telegram 文件时，`td_file_id` 和本地路径都可能不同，因此缓存必须按角色隔离。
+    pub file_owner_client_role: String,
     /// 子项状态：`pending/preparing/prepared/uploading/success/failed/cancelled` 等。
     #[sea_orm(indexed)]
     pub status: String,

@@ -6,7 +6,11 @@
 mod file_cache;
 mod item;
 mod job;
+mod observability;
 mod progress;
+mod result;
+mod runtime_config;
+mod targets_runtime_config;
 
 #[cfg(test)]
 mod tests;
@@ -29,10 +33,33 @@ pub(super) use job::{
     list_recoverable_jobs, mark_job_running, pause_job, request_cancel_job,
     update_result_message_link, wake_job,
 };
+pub(super) use observability::{
+    list_file_cache_status_summaries, list_recent_file_cache_snapshots,
+    list_transfer_health_snapshot,
+};
 pub(super) use progress::{
     find_active_job_by_source_target, find_active_job_id_by_source_target,
-    find_success_job_by_source_target, get_job_progress_snapshot,
-    get_job_progress_snapshot_for_request_chat, list_recent_job_snapshots,
+    find_success_job_by_source_target, get_job_progress_snapshot_with_context,
+    list_recent_job_snapshots,
+};
+pub(super) use result::{
+    ResultMessageRecord, list_result_messages_by_job, replace_result_messages_on_conn,
+    update_result_message_record_link,
+};
+#[cfg(test)]
+pub(crate) use runtime_config::ensure_transfer_runtime_config;
+pub(crate) use runtime_config::ensure_transfer_runtime_config_on;
+pub(crate) use runtime_config::save_transfer_runtime_config;
+#[cfg(test)]
+pub(crate) use runtime_config::{load_transfer_runtime_config, load_transfer_runtime_config_on};
+#[cfg(test)]
+pub(crate) use targets_runtime_config::ensure_targets_runtime_config;
+pub(crate) use targets_runtime_config::ensure_targets_runtime_config_on;
+pub(crate) use targets_runtime_config::save_targets_runtime_config;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use targets_runtime_config::{
+    load_targets_runtime_config, load_targets_runtime_config_on,
 };
 
 /// 主任务状态：等待后台执行。
@@ -116,6 +143,8 @@ pub(super) struct JobProgressJob {
     pub total_items: i32,
     /// 目标转存 chat_id。
     pub target_chat_id: i64,
+    /// 最后一次失败原因；仅失败/部分失败/取消异常时展示给 `/job status`。
+    pub last_error: Option<String>,
     /// 创建时间，用于列表排序。
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     /// 最后更新时间，用于页面展示。
@@ -166,6 +195,8 @@ pub(super) struct FinishJobSummary {
     pub result_message_id: Option<i64>,
     /// 上传结果入口链接。
     pub result_message_link: Option<String>,
+    /// 上传结果入口列表；超过 10 个媒体时会包含多个 album 入口。
+    pub result_messages: Vec<ResultMessageRecord>,
     /// 文件引用释放后的延迟删除分钟数。
     pub delay_minutes: i64,
 }
@@ -185,5 +216,96 @@ fn is_text_file_key(file_key: &str) -> bool {
 
 /// 统一生成 UTC+8 时间戳。
 pub(super) fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
-    chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+    let Some(offset) = chrono::FixedOffset::east_opt(8 * 3600) else {
+        tracing::error!("failed to build UTC+8 fixed offset, fallback to UTC");
+        return chrono::Utc::now().fixed_offset();
+    };
+    chrono::Utc::now().with_timezone(&offset)
+}
+
+/// 转存系统健康快照。
+///
+/// 这个结构只读，不参与任务状态变更，供 `/health` 与排障日志展示。
+#[derive(Debug, Clone)]
+pub(super) struct TransferHealthSnapshot {
+    /// 数据库里的任务总数。
+    pub total_jobs: i64,
+    /// 处于 pending/running/paused/cancelling 的活跃任务数。
+    pub active_jobs: i64,
+    /// 成功任务数。
+    pub success_jobs: i64,
+    /// 失败任务数。
+    pub failed_jobs: i64,
+    /// 停止完成任务数。
+    pub cancelled_jobs: i64,
+    /// 总子项数。
+    pub total_items: i64,
+    /// 正在准备的子项数。
+    pub preparing_items: i64,
+    /// 正在上传的子项数。
+    pub uploading_items: i64,
+    /// file_cache 记录数。
+    pub file_cache_rows: i64,
+    /// 引用数大于 0 的 file_cache 数量。
+    pub file_cache_active_rows: i64,
+    /// 待删除的 file_cache 数量。
+    pub file_cache_due_rows: i64,
+    /// 删除失败的 file_cache 数量。
+    pub file_cache_failed_rows: i64,
+    /// 待恢复任务数。
+    pub recoverable_jobs: i64,
+    /// 待收敛的 cancelling 任务数。
+    pub cancelling_jobs: i64,
+    /// 运行时并发上限。
+    pub job_concurrency: usize,
+    /// 真实执行中的并发任务数。
+    pub active_transfer_jobs: usize,
+    /// 进度消息编辑间隔。
+    pub progress_edit_interval_seconds: u64,
+    /// 文件删除延迟分钟数。
+    pub file_delete_delay_minutes: i64,
+    /// 文件 GC 间隔秒数。
+    pub file_gc_interval_seconds: u64,
+}
+
+/// file_cache 只读汇总。
+///
+/// `/cache` 只需要这类汇总数据，不需要暴露完整 file_cache 行。
+#[derive(Debug, Clone)]
+pub(super) struct FileCacheStatusSummary {
+    /// 缓存状态名。
+    pub status: String,
+    /// 该状态下的记录数。
+    pub count: i64,
+    /// 该状态下的引用数总和。
+    pub active_refs: i64,
+}
+
+/// 单条 file_cache 观测快照。
+///
+/// 这个结构只用于 `/cache` 的分页展示和排障，不改变任何删除/引用逻辑。
+#[derive(Debug, Clone)]
+pub(super) struct FileCacheSnapshot {
+    /// 所属 client 角色。
+    pub owner_client_role: String,
+    /// file_key。
+    pub file_key: String,
+    /// 当前状态。
+    pub status: String,
+    /// 引用数。
+    pub active_refs: i32,
+    /// 文件大小。
+    pub size_bytes: Option<i64>,
+    /// TDLib file_id。
+    pub td_file_id: Option<i32>,
+    /// 本地路径。
+    pub local_path: Option<String>,
+    /// 删除时间。
+    pub delete_after: Option<chrono::DateTime<chrono::FixedOffset>>,
+    /// 最近使用时间。
+    pub last_used_at: chrono::DateTime<chrono::FixedOffset>,
+    /// 最后更新时间。
+    pub updated_at: chrono::DateTime<chrono::FixedOffset>,
+    /// 最近错误。
+    pub last_error: Option<String>,
 }

@@ -5,8 +5,6 @@ mod content;
 mod raw;
 mod state;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use super::buttons::build_inline_keyboard;
 use content::{
     build_card_formatted_text, build_copyable_formatted_text, build_plain_formatted_text,
@@ -19,25 +17,23 @@ pub use raw::{
     edit_markdown_message_with_inline_keyboard,
 };
 pub use state::{
-    observe_message_send_failed, observe_message_send_succeeded, wait_for_sent_message,
-    wait_for_sent_message_id,
+    observe_message_send_failed_for_client, observe_message_send_succeeded_for_client,
+    wait_for_sent_message, wait_for_sent_message_id,
 };
-
-/// 当前账号是否支持发送 reply_markup。
-///
-/// TDLib 文档将 `sendMessage.reply_markup` 标注为 bot 能力；用户号登录时即使请求里带了按钮，
-/// Telegram 客户端也不会稳定展示。默认开启，主程序读取配置后会按登录模式覆盖。
-static REPLY_MARKUP_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// 设置当前发送层是否允许携带 reply_markup。
 pub fn set_reply_markup_enabled(enabled: bool) {
-    REPLY_MARKUP_ENABLED.store(enabled, Ordering::Relaxed);
+    crate::app_context::app_context()
+        .send_capabilities
+        .set_reply_markup_enabled(enabled);
     tracing::info!(enabled, "tdlib reply markup capability configured");
 }
 
 /// 查询当前发送层是否允许携带 reply_markup。
 pub(in crate::tgbot::send) fn is_reply_markup_enabled() -> bool {
-    REPLY_MARKUP_ENABLED.load(Ordering::Relaxed)
+    crate::app_context::app_context()
+        .send_capabilities
+        .reply_markup_enabled()
 }
 
 /// 向指定 chat 发送纯文本消息。
@@ -117,6 +113,27 @@ pub async fn send_markdown_message_with_buttons(
 pub async fn send_card_message(text: String, chat_id: i64, client_id: i32) -> anyhow::Result<()> {
     let formatted_text = build_card_formatted_text(text)?;
     send_formatted_text_message(formatted_text, chat_id, None, client_id).await
+}
+
+/// 向指定 chat 发送卡片风格文本，并要求客户端移除自定义 reply keyboard。
+///
+/// Telegram 的原生“选择聊天”按钮属于 reply keyboard，和 inline keyboard 不是同一类控件。
+/// 选择完成、取消或过期时发送这个消息，能避免输入框下方残留旧的“选择聊天”按钮。
+pub async fn send_card_message_with_remove_keyboard(
+    text: String,
+    chat_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let formatted_text = build_card_formatted_text(text)?;
+    send_formatted_text_message(
+        formatted_text,
+        chat_id,
+        Some(tdlib_rs::enums::ReplyMarkup::RemoveKeyboard(
+            tdlib_rs::types::ReplyMarkupRemoveKeyboard { is_personal: true },
+        )),
+        client_id,
+    )
+    .await
 }
 
 /// 向指定 chat 发送卡片风格文本并附带按钮。

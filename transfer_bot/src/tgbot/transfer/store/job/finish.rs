@@ -13,7 +13,8 @@ use super::super::item::set_item_status_on_conn;
 use super::super::{
     FinishJobSummary, JOB_STATUS_CANCEL_FINALIZING, JOB_STATUS_CANCELLED, JOB_STATUS_CANCELLING,
     JOB_STATUS_FAILED, JOB_STATUS_PARTIAL, JOB_STATUS_PAUSED, JOB_STATUS_PENDING,
-    JOB_STATUS_RUNNING, JOB_STATUS_SUCCESS, is_finished_job_status, now_utc8,
+    JOB_STATUS_RUNNING, JOB_STATUS_SUCCESS, ResultMessageRecord, is_finished_job_status, now_utc8,
+    replace_result_messages_on_conn,
 };
 
 /// 更新已完成任务的结果链接。
@@ -51,12 +52,14 @@ pub(in crate::tgbot::transfer) async fn finish_job(
     result_message_link: Option<String>,
     delay_minutes: i64,
 ) -> anyhow::Result<bool> {
+    let result_messages = single_result_message(&job, result_message_id, &result_message_link);
     let summary = FinishJobSummary {
         ok_count,
         fail_count,
         last_error,
         result_message_id,
         result_message_link,
+        result_messages,
         delay_minutes,
     };
     finish_job_with_allowed_statuses(
@@ -99,12 +102,14 @@ pub(in crate::tgbot::transfer) async fn finish_uploaded_job(
     result_message_link: Option<String>,
     delay_minutes: i64,
 ) -> anyhow::Result<bool> {
+    let result_messages = single_result_message(&job, result_message_id, &result_message_link);
     let summary = FinishJobSummary {
         ok_count,
         fail_count,
         last_error,
         result_message_id,
         result_message_link,
+        result_messages,
         delay_minutes,
     };
     finish_job_with_allowed_statuses(
@@ -187,6 +192,7 @@ async fn finish_job_with_allowed_statuses(
         for (item_id, status, error_message) in item_updates {
             set_item_status_on_conn(&txn, item_id, &status, error_message).await?;
         }
+        replace_result_messages_on_conn(&txn, job.id, &summary.result_messages).await?;
         release_job_file_refs_on_conn(&txn, job.id, summary.delay_minutes).await?;
         txn.commit().await?;
         return Ok(true);
@@ -216,4 +222,26 @@ async fn finish_job_with_allowed_statuses(
         job.id,
         current.status
     )
+}
+
+/// 旧接口只传主表首结果字段时，补成一条结果入口。
+///
+/// 新上传流程会直接传完整 `result_messages`；测试和少量兼容调用仍走旧参数，
+/// 这里避免它们完成任务后结果表为空。
+fn single_result_message(
+    job: &db::transfer_job::Model,
+    result_message_id: Option<i64>,
+    result_message_link: &Option<String>,
+) -> Vec<ResultMessageRecord> {
+    match (result_message_id, result_message_link.as_ref()) {
+        (Some(message_id), Some(message_link)) => vec![ResultMessageRecord {
+            result_index: 0,
+            target_chat_id: job.target_chat_id,
+            message_id,
+            message_link: message_link.clone(),
+            is_album: false,
+            item_count: job.total_items.max(1),
+        }],
+        _ => Vec::new(),
+    }
 }

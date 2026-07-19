@@ -35,4 +35,4 @@ tg/
 *.sqlite
 *.sqlite-*
 
-**/**/*.log
+*.log

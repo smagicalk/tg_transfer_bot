@@ -27,15 +27,12 @@ pub(in crate::tgbot::transfer) async fn find_job_by_request(
         .map_err(Into::into)
 }
 
-/// 按 job_id 与请求 chat 查找任务。
-/// 控制命令只允许管理当前请求聊天发起的任务，避免误操作其他聊天任务。
-pub(in crate::tgbot::transfer) async fn find_job_for_request_chat(
+/// 按主键查找任务。
+pub(in crate::tgbot::transfer) async fn find_job(
     job_id: i64,
-    request_chat_id: i64,
 ) -> anyhow::Result<Option<db::transfer_job::Model>> {
     let db_conn = db::get_db().await?;
     db::transfer_job::Entity::find_by_id(job_id)
-        .filter(db::transfer_job::Column::RequestChatId.eq(request_chat_id))
         .one(db_conn)
         .await
         .map_err(Into::into)

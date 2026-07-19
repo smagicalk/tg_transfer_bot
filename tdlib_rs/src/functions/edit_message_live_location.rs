@@ -6,6 +6,7 @@ use serde_json::json;
 /// # Arguments
 /// * `chat_id` - The chat the message belongs to
 /// * `message_id` - Identifier of the message. Use messageProperties.can_be_edited to check whether the message can be edited
+/// * `reply_markup` - The new message reply markup; pass null if none; for bots only
 /// * `location` - New location content of the message; pass null to stop sharing the live location
 /// * `live_period` - New time relative to the message send date, for which the location can be updated, in seconds. If 0x7FFFFFFF specified, then the location can be updated forever.
 /// Otherwise, must not exceed the current live_period by more than a day, and the live location expiration date must remain in the next 90 days. Pass 0 to keep the current live_period
@@ -16,6 +17,7 @@ use serde_json::json;
 pub async fn edit_message_live_location(
     chat_id: i64,
     message_id: i64,
+    reply_markup: Option<crate::enums::ReplyMarkup>,
     location: Option<crate::types::Location>,
     live_period: i32,
     heading: i32,
@@ -26,6 +28,7 @@ pub async fn edit_message_live_location(
     "@type": "editMessageLiveLocation",
     "chat_id": chat_id,
     "message_id": message_id,
+    "reply_markup": reply_markup,
     "location": location,
     "live_period": live_period,
     "heading": heading,

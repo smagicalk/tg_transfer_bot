@@ -18,6 +18,38 @@ fn test_file() -> tdlib_rs::types::File {
     }
 }
 
+/// 构造测试用 animation 描述。
+fn test_animation() -> tdlib_rs::types::Animation {
+    tdlib_rs::types::Animation {
+        duration: 1,
+        width: 320,
+        height: 180,
+        file_name: "test.gif".to_owned(),
+        mime_type: "image/gif".to_owned(),
+        has_stickers: false,
+        minithumbnail: None,
+        thumbnail: None,
+        animation: test_file(),
+    }
+}
+
+/// 构造测试用 sticker 描述。
+fn test_sticker() -> tdlib_rs::types::Sticker {
+    tdlib_rs::types::Sticker {
+        id: 1,
+        set_id: 0,
+        width: 128,
+        height: 128,
+        emoji: "x".to_owned(),
+        format: tdlib_rs::enums::StickerFormat::Webp,
+        full_type: tdlib_rs::enums::StickerFullType::Regular(
+            tdlib_rs::types::StickerFullTypeRegular::default(),
+        ),
+        thumbnail: None,
+        sticker: test_file(),
+    }
+}
+
 /// 构造最小可用的 Message，测试只关心 content/chat_id/id。
 fn message_with_content(content: tdlib_rs::enums::MessageContent) -> tdlib_rs::types::Message {
     tdlib_rs::types::Message {
@@ -63,6 +95,41 @@ fn message_with_content(content: tdlib_rs::enums::MessageContent) -> tdlib_rs::t
         content,
         reply_markup: None,
     }
+}
+
+/// GIF/animation 也应作为可转存媒体处理。
+#[test]
+fn test_animation_is_transferable_and_has_file_key() {
+    let message = message_with_content(tdlib_rs::enums::MessageContent::MessageAnimation(
+        tdlib_rs::types::MessageAnimation {
+            animation: test_animation(),
+            caption: tdlib_rs::types::FormattedText::default(),
+            show_caption_above_media: false,
+            has_spoiler: false,
+            is_secret: false,
+        },
+    ));
+
+    assert!(is_transferable_message(&message));
+    assert_eq!(
+        extract_file_key(&message),
+        Some("voice_unique_key".to_owned())
+    );
+    let seed = extract_download_seed(&message).expect("animation should have seed");
+    assert_eq!(seed.td_file_id, 42);
+}
+
+/// 暂不支持的消息类型不能自动进入转存队列。
+#[test]
+fn test_sticker_is_not_transferable() {
+    let message = message_with_content(tdlib_rs::enums::MessageContent::MessageSticker(
+        tdlib_rs::types::MessageSticker {
+            sticker: test_sticker(),
+            is_premium: false,
+        },
+    ));
+
+    assert!(!is_transferable_message(&message));
 }
 
 /// 语音消息应能提取稳定 file_key，后续才能参与文件缓存与下载去重。

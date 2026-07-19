@@ -10,9 +10,8 @@ use super::result_link::{
     build_private_supergroup_message_link, extract_tdlib_message_id_from_stored_link,
     fallback_result_message_locator, tdlib_message_id_to_visible_id,
 };
-use super::upload::validate_album_kinds;
+use super::upload::{album_chunk_sizes, validate_album_kinds};
 use crate::db;
-use migration::MigratorTrait;
 use rand::RngExt;
 use rand::distr::SampleString;
 use sea_orm::{ActiveModelTrait, EntityTrait};
@@ -21,8 +20,13 @@ use std::time::Duration;
 /// 测试前确保表结构存在。
 async fn prepare_test_schema() -> anyhow::Result<&'static sea_orm::DatabaseConnection> {
     let db_conn = db::get_db().await?;
-    migration::Migrator::up(db_conn, None).await?;
+    db::ensure_test_schema_current(db_conn).await?;
     Ok(db_conn)
+}
+
+/// 测试统一获取运行态上下文。
+fn test_app_context() -> std::sync::Arc<crate::app_context::AppContext> {
+    crate::app_context::app_context()
 }
 
 /// 构造一个指定状态的 transfer_job。
@@ -37,6 +41,8 @@ async fn insert_job(status: &str) -> anyhow::Result<db::transfer_job::Model> {
             rand::rng().random_range(1..=1000000),
             rand::rng().random_range(1..=1000000)
         )),
+        source_kind: sea_orm::ActiveValue::Set("link".to_owned()),
+        source_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         source_chat_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         source_message_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         source_album_id: sea_orm::ActiveValue::Set(0),
@@ -69,6 +75,7 @@ async fn insert_item_with_file_ref(job_id: i64) -> anyhow::Result<(i64, String)>
     );
 
     db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
         status: sea_orm::ActiveValue::Set("ready".to_owned()),
         size_bytes: sea_orm::ActiveValue::Set(Some(2048)),
@@ -90,6 +97,7 @@ async fn insert_item_with_file_ref(job_id: i64) -> anyhow::Result<(i64, String)>
         source_chat_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         source_message_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
+        file_owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         status: sea_orm::ActiveValue::Set(store::JOB_STATUS_PENDING.to_owned()),
         retry_count: sea_orm::ActiveValue::Set(0),
         error_message: sea_orm::ActiveValue::Set(None),
@@ -117,10 +125,45 @@ fn test_validate_album_kinds_for_photo_video_mix() {
     assert!(rs.is_ok());
 }
 
+// Telegram 单个 album 最多 10 条；正好 10 条应允许一次发送。
+#[test]
+fn test_validate_album_kinds_allows_ten_items() {
+    let kinds = vec![UploadKind::Photo; 10];
+    let rs = validate_album_kinds(&kinds);
+    assert!(rs.is_ok());
+}
+
+// 超过 10 条会在上传阶段分成多个 album；类型校验本身不应该拒绝。
+#[test]
+fn test_validate_album_kinds_allows_more_than_ten_items() {
+    let kinds = vec![UploadKind::Photo; 11];
+    let rs = validate_album_kinds(&kinds);
+    assert!(rs.is_ok());
+}
+
+// album 分组应避免尾部只剩 1 条，否则 11 条会退化成 10 条 album + 1 条单发。
+#[test]
+fn test_album_chunk_sizes_avoid_trailing_single_item() {
+    assert_eq!(album_chunk_sizes(0), Vec::<usize>::new());
+    assert_eq!(album_chunk_sizes(1), vec![1]);
+    assert_eq!(album_chunk_sizes(10), vec![10]);
+    assert_eq!(album_chunk_sizes(11), vec![9, 2]);
+    assert_eq!(album_chunk_sizes(20), vec![10, 10]);
+    assert_eq!(album_chunk_sizes(21), vec![10, 9, 2]);
+    assert_eq!(album_chunk_sizes(31), vec![10, 10, 9, 2]);
+}
+
 // 语音消息不能放进 album；单条语音会走 send_message。
 #[test]
 fn test_validate_album_kinds_rejects_voice_in_album() {
     let rs = validate_album_kinds(&[UploadKind::Voice, UploadKind::Voice]);
+    assert!(rs.is_err());
+}
+
+// GIF/animation 不能放进 album；单条 GIF 会走 send_message。
+#[test]
+fn test_validate_album_kinds_rejects_animation_in_album() {
+    let rs = validate_album_kinds(&[UploadKind::Animation, UploadKind::Animation]);
     assert!(rs.is_err());
 }
 
@@ -167,10 +210,22 @@ fn test_extract_tdlib_message_id_from_stored_link() {
 // 同 source_link + target_chat_id 的创建锁应阻止并发穿透查重窗口。
 #[tokio::test]
 async fn test_source_target_create_guard_is_exclusive() {
-    let first = acquire_source_target_create_guard("https://t.me/c/1/2".to_owned(), 100).await;
+    let app_context = test_app_context();
+    let first = acquire_source_target_create_guard(
+        app_context.as_ref(),
+        "https://t.me/c/1/2".to_owned(),
+        100,
+    )
+    .await;
 
     let waiting = tokio::spawn(async {
-        acquire_source_target_create_guard("https://t.me/c/1/2".to_owned(), 100).await
+        let app_context = test_app_context();
+        acquire_source_target_create_guard(
+            app_context.as_ref(),
+            "https://t.me/c/1/2".to_owned(),
+            100,
+        )
+        .await
     });
     tokio::time::sleep(Duration::from_millis(20)).await;
     assert!(!waiting.is_finished());
@@ -187,15 +242,21 @@ async fn test_source_target_create_guard_is_exclusive() {
 #[tokio::test]
 async fn test_job_guard_is_exclusive() {
     let job_id = rand::rng().random_range(1_000_000..=2_000_000);
-    let first = acquire_job_guard(job_id)
+    let app_context = test_app_context();
+    let first = acquire_job_guard(app_context.as_ref(), job_id)
         .await
         .expect("first guard should be acquired");
-    assert!(acquire_job_guard(job_id).await.is_none());
+    assert!(
+        acquire_job_guard(app_context.as_ref(), job_id)
+            .await
+            .is_none()
+    );
 
     drop(first);
     let second = tokio::time::timeout(Duration::from_secs(1), async {
+        let app_context = test_app_context();
         loop {
-            if let Some(guard) = acquire_job_guard(job_id).await {
+            if let Some(guard) = acquire_job_guard(app_context.as_ref(), job_id).await {
                 return guard;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -211,8 +272,9 @@ async fn test_job_guard_is_exclusive() {
 async fn test_apply_job_control_paused() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
     let job = insert_job(store::JOB_STATUS_PAUSED).await?;
+    let app_context = test_app_context();
 
-    let outcome = apply_job_control(job.id)
+    let outcome = apply_job_control(app_context.as_ref(), job.id)
         .await?
         .expect("paused job should stop workflow");
     match outcome {
@@ -229,8 +291,9 @@ async fn test_apply_job_control_cancelling() -> anyhow::Result<()> {
     let db_conn = prepare_test_schema().await?;
     let job = insert_job(store::JOB_STATUS_CANCELLING).await?;
     let (item_id, file_key) = insert_item_with_file_ref(job.id).await?;
+    let app_context = test_app_context();
 
-    let outcome = apply_job_control(job.id)
+    let outcome = apply_job_control(app_context.as_ref(), job.id)
         .await?
         .expect("cancelling job should stop workflow");
     match outcome {
@@ -249,7 +312,7 @@ async fn test_apply_job_control_cancelling() -> anyhow::Result<()> {
         .expect("item must exist");
     assert_eq!(item.status, "cancelled");
 
-    let cache = db::file_cache::Entity::find_by_id(file_key)
+    let cache = db::file_cache::Entity::find_by_id(("user".to_owned(), file_key))
         .one(db_conn)
         .await?
         .expect("file cache must exist");

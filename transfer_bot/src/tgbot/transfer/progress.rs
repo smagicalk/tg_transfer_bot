@@ -9,8 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::{store, types, workflow};
 use keyboard::{build_transfer_progress_keyboard, build_transfer_result_keyboard};
 use text::{
-    format_transfer_control_text, format_transfer_error_text, format_transfer_final_text,
-    format_transfer_progress_text, format_transfer_waiting_text,
+    format_transfer_control_text, format_transfer_error_text,
+    format_transfer_final_text_with_results, format_transfer_progress_text,
+    format_transfer_waiting_text,
 };
 
 mod keyboard;
@@ -18,13 +19,11 @@ mod keyboard;
 mod tests;
 mod text;
 
-// 进度面板编辑间隔，避免频繁调用 editMessageText 触发 Telegram 限流。
-const PROGRESS_EDIT_INTERVAL_SECONDS: u64 = 2;
-
 /// 周期性刷新 `/transfer` 的进度面板。
 ///
 /// 这里不直接参与下载/上传，只读取数据库快照；即使编辑失败，也不能影响后台转存任务。
 pub(super) async fn update_transfer_progress_message(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: types::TransferPlan,
     notify_chat_id: i64,
     message_id: i64,
@@ -44,10 +43,12 @@ pub(super) async fn update_transfer_progress_message(
         .await
         {
             // 进度面板只需要 job_id，具体展示字段由轻量快照查询读取。
-            Ok(Some(job_id)) => store::get_job_progress_snapshot(job_id)
-                .await
-                .ok()
-                .flatten(),
+            Ok(Some(job_id)) => {
+                store::get_job_progress_snapshot_with_context(app_context.as_ref(), job_id)
+                    .await
+                    .ok()
+                    .flatten()
+            }
             Ok(None) => None,
             Err(err) => {
                 tracing::warn!("load transfer progress failed: {:#}", err);
@@ -84,10 +85,11 @@ pub(super) async fn update_transfer_progress_message(
             last_text = text;
         }
 
-        tokio::time::sleep(std::time::Duration::from_secs(
-            PROGRESS_EDIT_INTERVAL_SECONDS,
-        ))
-        .await;
+        // 进度编辑间隔从运行时配置读取，避免频繁 editMessageText 触发 Telegram 限流。
+        let interval = crate::tgbot::transfer::runtime_config_on(app_context.as_ref())
+            .progress_edit_interval_seconds
+            .max(1);
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
     }
 }
 
@@ -100,20 +102,43 @@ pub(super) async fn edit_transfer_progress_for_outcome(
     message_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    let outcome_result_messages = match result {
+        Ok(workflow::TransferOutcome::Reused { job_id, link })
+        | Ok(workflow::TransferOutcome::Completed { job_id, link }) => {
+            let records = store::list_result_messages_by_job(*job_id)
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::warn!(
+                        job_id,
+                        error = %err,
+                        "load result messages for progress final text failed"
+                    );
+                    Vec::new()
+                });
+            Some(crate::tgbot::transfer::outcome::normalize_result_messages(
+                records,
+                link,
+                target_chat_id,
+            ))
+        }
+        _ => None,
+    };
+
     let (text, keyboard) = match result {
         Ok(workflow::TransferOutcome::Reused { job_id, link }) => (
-            format_transfer_final_text(
+            format_transfer_final_text_with_results(
                 "已存在历史转存结果",
                 source_link,
                 target_chat_id,
                 Some(*job_id),
-                link,
+                outcome_result_messages.as_deref().unwrap_or(&[]),
             ),
             build_transfer_result_keyboard(source_link, target_chat_id, Some(*job_id), Some(link)),
         ),
         Ok(workflow::TransferOutcome::Running { job_id }) => (
             format_transfer_control_text(
                 "相同链接正在转存中",
+                "running",
                 source_link,
                 target_chat_id,
                 *job_id,
@@ -129,6 +154,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         Ok(workflow::TransferOutcome::Paused { job_id }) => (
             format_transfer_control_text(
                 "转存任务已暂停",
+                "paused",
                 source_link,
                 target_chat_id,
                 *job_id,
@@ -144,6 +170,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         Ok(workflow::TransferOutcome::Cancelling { job_id }) => (
             format_transfer_control_text(
                 "转存任务正在停止",
+                "cancelling",
                 source_link,
                 target_chat_id,
                 *job_id,
@@ -159,6 +186,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         Ok(workflow::TransferOutcome::Cancelled { job_id }) => (
             format_transfer_control_text(
                 "转存任务已停止",
+                "cancelled",
                 source_link,
                 target_chat_id,
                 *job_id,
@@ -172,17 +200,17 @@ pub(super) async fn edit_transfer_progress_for_outcome(
             ),
         ),
         Ok(workflow::TransferOutcome::Completed { job_id, link }) => (
-            format_transfer_final_text(
+            format_transfer_final_text_with_results(
                 "转存完成",
                 source_link,
                 target_chat_id,
                 Some(*job_id),
-                link,
+                outcome_result_messages.as_deref().unwrap_or(&[]),
             ),
             build_transfer_result_keyboard(source_link, target_chat_id, Some(*job_id), Some(link)),
         ),
         Err(err) => (
-            format_transfer_error_text(source_link, target_chat_id, &err.to_string()),
+            format_transfer_error_text("转存失败", source_link, target_chat_id, &err.to_string()),
             build_transfer_result_keyboard(source_link, target_chat_id, None, None),
         ),
     };

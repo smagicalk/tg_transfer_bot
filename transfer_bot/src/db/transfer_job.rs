@@ -17,9 +17,18 @@ pub struct Model {
     /// 请求侧：发起命令那条消息的 message_id。
     #[sea_orm(indexed)]
     pub request_message_id: i64,
+    /// 创建任务时的所有者用户 ID，保留用于审计。
+    #[sea_orm(indexed)]
+    pub owner_user_id: i64,
     /// 爬虫侧：输入的源链接（抓取入口）。
     #[sea_orm(indexed)]
     pub source_link: String,
+    /// 源输入类型：`link` 表示 Telegram 链接，`bot_message` 表示 bot 收到/被回复的消息。
+    pub source_kind: String,
+    /// 实际读取源消息的 client 角色：`bot` 或 `user`。
+    pub source_client_role: String,
+    /// 链接源是否允许 bot 失败后 fallback 到 user。
+    pub allow_user_fallback: bool,
     /// 爬虫侧：源消息所属 chat_id。
     pub source_chat_id: i64,
     /// 爬虫侧：源入口消息的 message_id。

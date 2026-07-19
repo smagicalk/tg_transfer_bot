@@ -4,6 +4,7 @@
 /// 上传项媒体类型（用于相册兼容性校验）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot::transfer) enum UploadKind {
+    Animation,
     Photo,
     Video,
     Document,
