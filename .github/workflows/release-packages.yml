@@ -120,11 +120,9 @@ jobs:
     name: Windows Server 2022 MSVC x86_64
     runs-on: windows-2022
     env:
-      CI_ARTIFACT_NAME: ${{ env.ARTIFACT_PREFIX }}-windows-x86_64-msvc
+      CI_ARTIFACT_NAME: transfer_bot-windows-x86_64-msvc
       CARGO_TARGET_DIR: ${{ github.workspace }}\.ci-cache\windows\target
       LOCAL_TDLIB_PATH: ${{ github.workspace }}\tdlib-install
-      TD_BUILD_DIR: ${{ runner.temp }}\td-build
-      TD_SOURCE_DIR: ${{ runner.temp }}\td
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.ci-cache\windows\vcpkg-archives
       VCPKG_DEFAULT_TRIPLET: x64-windows
       VCPKG_INSTALLATION_ROOT: ${{ github.workspace }}\.ci-cache\windows\vcpkg-root

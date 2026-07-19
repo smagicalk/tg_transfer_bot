@@ -28,11 +28,20 @@ $packageMode = if ($env:PACKAGE_MODE) { $env:PACKAGE_MODE } else { "package" }
 $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
 if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
     $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+}
+$vcpkg = Join-Path $vcpkgRoot "vcpkg.exe"
+if (-not (Test-Path $vcpkg)) {
+    Remove-Item -Recurse -Force $vcpkgRoot -ErrorAction SilentlyContinue
     git clone --depth 1 https://github.com/microsoft/vcpkg.git $vcpkgRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "vcpkg clone failed"
+    }
     & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
+    if ($LASTEXITCODE -ne 0) {
+        throw "vcpkg bootstrap failed"
+    }
 }
 $env:VCPKG_ROOT = $vcpkgRoot
-$vcpkg = Join-Path $vcpkgRoot "vcpkg.exe"
 
 & $vcpkg install openssl:x64-windows zlib:x64-windows
 if ($LASTEXITCODE -ne 0) {
