@@ -250,15 +250,10 @@ fn build_failure_buttons(
             tdlib_rs::enums::ButtonStyle::Default,
         ));
     }
-    let retry_style = if job_id.is_some() {
-        tdlib_rs::enums::ButtonStyle::Primary
-    } else {
-        tdlib_rs::enums::ButtonStyle::Default
-    };
     action_row.push(crate::tgbot::send::build_callback_button(
         "重新转存",
         retry_callback_data,
-        retry_style,
+        tdlib_rs::enums::ButtonStyle::Primary,
     ));
 
     vec![
@@ -345,6 +340,18 @@ mod tests {
                 tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
             ));
         }
+    }
+
+    // 没有 job_id 时，“重新转存”是唯一恢复动作，仍应保持主按钮样式。
+    #[test]
+    fn test_build_failure_buttons_without_job_prioritizes_retry() {
+        let rows = build_failure_buttons(None, "lk:rt");
+
+        assert_eq!(rows[0].len(), 1);
+        assert_eq!(rows[0][0].text, "重新转存");
+        assert_eq!(rows[0][0].style, tdlib_rs::enums::ButtonStyle::Primary);
+        assert_eq!(rows[1][0].text, "查看失败列表");
+        assert_eq!(rows[1][1].text, "菜单");
     }
 
     // 失败正文应保留重试命令、查询命令和完整错误，用户号模式下也能继续操作。

@@ -687,6 +687,7 @@ pub(super) struct TargetContext {
 /// 目标选择按钮要推进到的下一步。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TargetDraftAdvance {
+    SourceLink,
     TargetChoice,
     TargetChat,
     Confirm { target_chat_id: i64 },
@@ -817,6 +818,7 @@ pub(super) async fn advance_target_context(
     };
 
     let next = match advance {
+        TargetDraftAdvance::SourceLink => MenuInputDraft::source_link(kind),
         TargetDraftAdvance::TargetChoice => {
             MenuInputDraft::target_choice(kind, source_link.clone())
         }
@@ -1343,6 +1345,37 @@ mod tests {
                     source_link: stored_source,
                 }
             }) if stored_source == source_link
+        ));
+        Ok(())
+    }
+
+    // 确认页返回来源输入时必须保留流程类型，并清除旧来源和目标上下文。
+    #[tokio::test]
+    async fn test_confirm_can_return_to_source_input() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_045, 900_046);
+        put_confirm_draft(
+            key,
+            MenuInputKind::Lookup,
+            "https://t.me/c/1/10".to_owned(),
+            -100,
+        )
+        .await?;
+
+        assert!(matches!(
+            advance_target_context(key, TargetDraftAdvance::SourceLink).await?,
+            TargetContextAdvanceResult::Active(TargetContext {
+                kind: MenuInputKind::Lookup,
+                ..
+            })
+        ));
+        assert!(matches!(
+            peek_current_draft(key).await?,
+            DraftTakeResult::Active(MenuInputDraft {
+                step: MenuInputStep::SourceLink {
+                    kind: MenuInputKind::Lookup
+                }
+            })
         ));
         Ok(())
     }

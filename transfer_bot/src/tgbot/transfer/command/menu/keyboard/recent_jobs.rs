@@ -61,7 +61,7 @@ fn recent_job_control_buttons(
             send::build_callback_button(
                 "停止",
                 &build_job_stop_callback_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
+                tdlib_rs::enums::ButtonStyle::Danger,
             ),
         ];
     }
@@ -76,7 +76,7 @@ fn recent_job_control_buttons(
             send::build_callback_button(
                 "停止",
                 &build_job_stop_callback_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
+                tdlib_rs::enums::ButtonStyle::Danger,
             ),
         ];
     }

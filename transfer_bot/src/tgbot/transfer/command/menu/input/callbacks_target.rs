@@ -7,7 +7,8 @@ use crate::config::BotConfig;
 use crate::tgbot::send;
 
 use super::super::text::{
-    build_menu_recovery_text, build_step_prompt_with_context, build_target_input_prompt_text,
+    build_menu_recovery_text, build_step_prompt_text, build_step_prompt_with_context,
+    build_target_input_prompt_text,
 };
 use super::flow::{ExistingCommandContext, run_existing_command};
 use super::state::{
@@ -371,6 +372,58 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_back_callback_quer
         ctx.message_id,
         context.kind,
         &context.source_link,
+    )
+    .await?;
+    Ok(())
+}
+
+/// 处理确认页“修改来源”按钮。
+pub(in crate::tgbot::transfer::command::menu) async fn target_source_back_callback_query(
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let ctx = TargetCallbackContext::new(
+        callback_query_id,
+        chat_id,
+        message_id,
+        sender_user_id,
+        client_id,
+    );
+    let Some(context) = advance_target_context_for_callback(
+        ctx.draft_key(),
+        TargetDraftAdvance::SourceLink,
+        callback_query_id,
+        chat_id,
+        "没有可修改的来源输入",
+        client_id,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+
+    ctx.answer("请重新输入来源").await?;
+    edit_input_waiting_card(
+        ctx.chat_id,
+        ctx.message_id,
+        ctx.client_id,
+        context.kind.source_step_label(),
+        "等待源链接",
+        "请回复新的源链接，或发送 /cancel 取消。",
+    )
+    .await;
+    send::send_card_message_with_force_reply_returning(
+        build_step_prompt_text(
+            context.kind.source_step_label(),
+            context.kind.source_title(),
+            context.kind.source_detail(),
+        ),
+        ctx.chat_id,
+        "输入源链接，或发送 /cancel",
+        ctx.client_id,
     )
     .await?;
     Ok(())

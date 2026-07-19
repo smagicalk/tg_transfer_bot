@@ -173,7 +173,45 @@ const MENU_INPUT_TIMEOUT_SECONDS_MAX: u64 = 24 * 60 * 60;
 const CONFIG_PAGE_TITLE: &str = "运行配置";
 /// 配置页简要说明。
 const CONFIG_PAGE_DETAIL: &str =
-    "先查看字段当前值，再进入字段详情页回复新值；不再提供碎片化 +/- 微调。";
+    "先查看字段当前值；常用调整直接点步进按钮，只有精确设置才需要回复新值。";
+
+/// 字段允许范围和单次按钮步长。
+fn config_field_adjustment(field: ConfigField) -> (i64, i64, i64) {
+    match field {
+        ConfigField::JobConcurrency => (JOB_CONCURRENCY_MIN as i64, JOB_CONCURRENCY_MAX as i64, 1),
+        ConfigField::FileDeleteDelayMinutes => (
+            FILE_DELETE_DELAY_MINUTES_MIN,
+            FILE_DELETE_DELAY_MINUTES_MAX,
+            1,
+        ),
+        ConfigField::FileGcIntervalSeconds => (
+            FILE_GC_INTERVAL_SECONDS_MIN as i64,
+            FILE_GC_INTERVAL_SECONDS_MAX as i64,
+            5,
+        ),
+        ConfigField::ProgressEditIntervalSeconds => (
+            PROGRESS_EDIT_INTERVAL_SECONDS_MIN as i64,
+            PROGRESS_EDIT_INTERVAL_SECONDS_MAX as i64,
+            1,
+        ),
+        ConfigField::DownloadsDefaultPageSize => (
+            DOWNLOADS_DEFAULT_PAGE_SIZE_MIN as i64,
+            DOWNLOADS_DEFAULT_PAGE_SIZE_MAX as i64,
+            1,
+        ),
+        ConfigField::MenuInputTimeoutSeconds => (
+            MENU_INPUT_TIMEOUT_SECONDS_MIN as i64,
+            MENU_INPUT_TIMEOUT_SECONDS_MAX as i64,
+            60,
+        ),
+    }
+}
+
+/// 根据字段步长计算下一个值，并钳制在允许范围内。
+fn adjusted_config_field_value(current: i64, field: ConfigField, direction: i8) -> i64 {
+    let (min, max, step) = config_field_adjustment(field);
+    (current + step * i64::from(direction)).clamp(min, max)
+}
 
 /// 配置字段详情页。
 fn format_config_field_detail_text(
@@ -189,7 +227,8 @@ fn format_config_field_detail_text(
         )],
         "说明",
         vec![
-            format!("点“{}”后直接回复新值即可。", spec.input_label),
+            "常用调整可直接点击当前值两侧的步进按钮。".to_owned(),
+            format!("需要精确数值时，点“{}”后回复新值。", spec.input_label),
             "点“恢复默认值”只恢复当前字段，不会重置其他运行参数。".to_owned(),
         ],
     )
@@ -197,22 +236,54 @@ fn format_config_field_detail_text(
 
 /// 配置字段详情页按钮。
 fn build_config_field_detail_buttons(
+    config: &crate::config::TransferConfig,
     field: ConfigField,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let spec = field.spec();
-    vec![
-        vec![send::build_callback_button(
-            spec.input_label,
-            &callback::build_config_detail_callback_data(ConfigCallbackAction::Input { field }),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        )],
-        vec![send::build_callback_button(
-            "恢复默认值",
-            &callback::build_config_detail_callback_data(ConfigCallbackAction::ResetField {
+    let current = current_config_field_value(config, field);
+    let (min, max, step) = config_field_adjustment(field);
+    let mut adjust_row = Vec::new();
+    if current > min {
+        adjust_row.push(send::build_callback_button(
+            &format!("-{step}"),
+            &callback::build_config_detail_callback_data(ConfigCallbackAction::Adjust {
                 field,
+                direction: -1,
             }),
             tdlib_rs::enums::ButtonStyle::Default,
-        )],
+        ));
+    }
+    adjust_row.push(send::build_callback_button(
+        &format!("当前 {current}"),
+        &callback::build_config_detail_callback_data(ConfigCallbackAction::View { field }),
+        tdlib_rs::enums::ButtonStyle::Primary,
+    ));
+    if current < max {
+        adjust_row.push(send::build_callback_button(
+            &format!("+{step}"),
+            &callback::build_config_detail_callback_data(ConfigCallbackAction::Adjust {
+                field,
+                direction: 1,
+            }),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ));
+    }
+    vec![
+        adjust_row,
+        vec![
+            send::build_callback_button(
+                spec.input_label,
+                &callback::build_config_detail_callback_data(ConfigCallbackAction::Input { field }),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
+                "恢复默认值",
+                &callback::build_config_detail_callback_data(ConfigCallbackAction::ResetField {
+                    field,
+                }),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
         build_runtime_admin_back_menu_row(send::build_callback_button(
             "返回配置",
             &callback::build_config_detail_callback_data(ConfigCallbackAction::Refresh),
@@ -294,28 +365,24 @@ pub async fn config_callback_query_on(
     let action_result = match action {
         ConfigCallbackAction::Refresh => Ok(()),
         ConfigCallbackAction::Reset => reset_transfer_config_to_default_on(app).await.map(|_| ()),
+        ConfigCallbackAction::ConfirmReset => {
+            return render_config_reset_confirm_on(update.chat_id, update.message_id, client_id)
+                .await;
+        }
         ConfigCallbackAction::ResetField { field } => {
             reset_transfer_config_field_to_default_on(app, field)
                 .await
                 .map(|_| ())
         }
         ConfigCallbackAction::View { field } => {
-            let config = crate::tgbot::transfer::runtime_config_on(app);
-            let (text, keyboard) =
-                send::ReplyPanel::card(format_config_field_detail_text(&config, field))
-                    .rows(build_config_field_detail_buttons(field))
-                    .into_card_parts()?;
-            edit_runtime_admin_interaction_card_or_error(
-                text,
+            return render_config_field_detail_on(
+                app,
                 update.chat_id,
                 update.message_id,
-                keyboard,
+                field,
                 client_id,
-                "运行配置",
-                "/config show",
             )
-            .await?;
-            return Ok(());
+            .await;
         }
         ConfigCallbackAction::Input { field } => {
             return crate::tgbot::transfer::command::menu::start_admin_input_callback(
@@ -324,6 +391,20 @@ pub async fn config_callback_query_on(
                 update.message_id,
                 update.sender_user_id,
                 field.spec().admin_input_action,
+                client_id,
+            )
+            .await;
+        }
+        ConfigCallbackAction::Adjust { field, direction } => {
+            if let Err(err) = adjust_transfer_config_field_on(app, field, direction).await {
+                send_config_callback_error(update.chat_id, client_id, &err).await?;
+                return Err(err);
+            }
+            return render_config_field_detail_on(
+                app,
+                update.chat_id,
+                update.message_id,
+                field,
                 client_id,
             )
             .await;
@@ -351,6 +432,88 @@ pub async fn config_callback_query_on(
     )
     .await?;
     Ok(())
+}
+
+/// 原地打开运行配置全量重置确认页。
+async fn render_config_reset_confirm_on(
+    chat_id: i64,
+    message_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let text = build_runtime_admin_detail_text(
+        "确认重置运行配置",
+        vec![card::field("范围", "全部动态运行参数")],
+        "影响",
+        vec![
+            "并发、文件清理、进度刷新、分页和菜单超时都会恢复为启动配置默认值。".to_owned(),
+            "如果只想恢复一个字段，请返回字段详情使用“恢复默认值”。".to_owned(),
+        ],
+    );
+    let rows = build_config_reset_confirm_buttons();
+    let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
+    edit_runtime_admin_interaction_card_or_error(
+        text,
+        chat_id,
+        message_id,
+        keyboard,
+        client_id,
+        "运行配置",
+        "/config show",
+    )
+    .await
+}
+
+/// 运行配置重置确认页按钮。
+fn build_config_reset_confirm_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![send::build_callback_button(
+            "确认重置全部",
+            &callback::build_config_detail_callback_data(ConfigCallbackAction::Reset),
+            tdlib_rs::enums::ButtonStyle::Danger,
+        )],
+        build_runtime_admin_back_menu_row(send::build_callback_button(
+            "取消",
+            &callback::build_config_detail_callback_data(ConfigCallbackAction::Refresh),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )),
+    ]
+}
+
+/// 调整单个字段，并复用现有 set 路径完成范围校验、持久化和运行态刷新。
+async fn adjust_transfer_config_field_on(
+    app: &crate::app_context::AppContext,
+    field: ConfigField,
+    direction: i8,
+) -> anyhow::Result<()> {
+    let config = crate::tgbot::transfer::runtime_config_on(app);
+    let current = current_config_field_value(&config, field);
+    let value = adjusted_config_field_value(current, field, direction);
+    update_transfer_config_on(app, field.spec().key, &value.to_string()).await?;
+    Ok(())
+}
+
+/// 原地刷新配置字段详情，使连续步进不需要返回列表重新进入。
+async fn render_config_field_detail_on(
+    app: &crate::app_context::AppContext,
+    chat_id: i64,
+    message_id: i64,
+    field: ConfigField,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let config = crate::tgbot::transfer::runtime_config_on(app);
+    let (text, keyboard) = send::ReplyPanel::card(format_config_field_detail_text(&config, field))
+        .rows(build_config_field_detail_buttons(&config, field))
+        .into_card_parts()?;
+    edit_runtime_admin_interaction_card_or_error(
+        text,
+        chat_id,
+        message_id,
+        keyboard,
+        client_id,
+        "运行配置",
+        "/config show",
+    )
+    .await
 }
 
 /// 在指定上下文上更新 `transfer_config` 中允许动态调整的字段。
@@ -598,7 +761,7 @@ mod tests {
         assert!(text.contains("/config show"));
     }
 
-    // 配置首页不应回退到旧版 +/- 微调，而应统一进入字段详情再输入目标值。
+    // 配置首页只负责字段导航；步进调整下沉到字段详情，全量重置必须明确标注范围。
     #[test]
     fn test_config_buttons_use_detail_navigation_only() {
         let rows = build_config_buttons_on(crate::app_context::app_context().as_ref());
@@ -611,7 +774,7 @@ mod tests {
         assert!(labels.iter().any(|label| label.starts_with("并发")));
         assert!(labels.iter().any(|label| label.starts_with("删除")));
         assert!(labels.contains(&"刷新"));
-        assert!(labels.contains(&"重置默认"));
+        assert!(labels.contains(&"重置全部"));
         assert!(!labels.iter().any(|label| label.starts_with("+")));
         assert!(!labels.iter().any(|label| label.starts_with("-")));
     }
@@ -619,7 +782,8 @@ mod tests {
     // 字段详情页里的“恢复默认值”必须只作用于当前字段，不得误导成全局 reset。
     #[test]
     fn test_config_field_detail_buttons_use_field_reset_action() {
-        let rows = build_config_field_detail_buttons(ConfigField::JobConcurrency);
+        let config = crate::config::TransferConfig::default();
+        let rows = build_config_field_detail_buttons(&config, ConfigField::JobConcurrency);
         let labels = rows
             .iter()
             .flatten()
@@ -628,6 +792,9 @@ mod tests {
 
         assert!(labels.contains(&"设并发"));
         assert!(labels.contains(&"恢复默认值"));
+        assert!(labels.contains(&"-1"));
+        assert!(labels.contains(&"+1"));
+        assert!(labels.contains(&format!("当前 {}", config.job_concurrency).as_str()));
         assert!(!labels.contains(&"重置默认"));
 
         let reset_button = rows
@@ -642,6 +809,66 @@ mod tests {
         let decoded =
             String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
         assert_eq!(decoded, "cfg:xf:jc");
+    }
+
+    // 字段达到最小值时不应继续显示无效减小按钮。
+    #[test]
+    fn test_config_field_detail_buttons_hide_invalid_decrease() {
+        let config = crate::config::TransferConfig {
+            job_concurrency: JOB_CONCURRENCY_MIN,
+            ..Default::default()
+        };
+
+        let rows = build_config_field_detail_buttons(&config, ConfigField::JobConcurrency);
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(!labels.contains(&"-1"));
+        assert!(labels.contains(&"+1"));
+    }
+
+    // 不同字段应使用各自步长，并始终钳制在允许范围内。
+    #[test]
+    fn test_adjusted_config_field_value_uses_step_and_bounds() {
+        assert_eq!(
+            adjusted_config_field_value(30, ConfigField::FileGcIntervalSeconds, 1),
+            35
+        );
+        assert_eq!(
+            adjusted_config_field_value(900, ConfigField::MenuInputTimeoutSeconds, -1),
+            840
+        );
+        assert_eq!(
+            adjusted_config_field_value(JOB_CONCURRENCY_MAX as i64, ConfigField::JobConcurrency, 1,),
+            JOB_CONCURRENCY_MAX as i64
+        );
+        assert_eq!(
+            adjusted_config_field_value(
+                FILE_DELETE_DELAY_MINUTES_MIN,
+                ConfigField::FileDeleteDelayMinutes,
+                -1,
+            ),
+            FILE_DELETE_DELAY_MINUTES_MIN
+        );
+    }
+
+    // 全量重置必须经过确认页，确认按钮才发送旧执行 payload。
+    #[test]
+    fn test_config_reset_confirm_buttons() {
+        let rows = build_config_reset_confirm_buttons();
+        assert_eq!(rows[0][0].text, "确认重置全部");
+        assert_eq!(rows[1][0].text, "取消");
+
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
+        else {
+            panic!("config reset confirm must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "cfg:x");
     }
 
     // 字段级恢复默认值只能覆盖当前字段，不能把其它运行参数一并抹掉。

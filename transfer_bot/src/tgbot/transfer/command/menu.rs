@@ -50,6 +50,7 @@ enum HubEntryAction {
     DownloadsFilter { filter: &'static str, limit: u64 },
     MenuPage(MenuPage),
     QuickLookupDefault,
+    NewLookup,
     HealthHome,
     CacheHome,
 }
@@ -97,14 +98,8 @@ fn tasks_hub_specs() -> Vec<Vec<HubEntrySpec>> {
                 },
             },
             HubEntrySpec {
-                text: "下载列表",
-                command_preview: downloads_command(None, None, None, CommandStyle::Long),
-                style: tdlib_rs::enums::ButtonStyle::Default,
-                action: HubEntryAction::MenuPage(MenuPage::Downloads),
-            },
-            HubEntrySpec {
-                text: "任务控制",
-                command_preview: "/job status <job_id>".to_owned(),
+                text: "更多状态",
+                command_preview: downloads_command(Some("ok"), None, None, CommandStyle::Long),
                 style: tdlib_rs::enums::ButtonStyle::Default,
                 action: HubEntryAction::MenuPage(MenuPage::Jobs),
             },
@@ -117,11 +112,11 @@ fn tasks_hub_specs() -> Vec<Vec<HubEntrySpec>> {
                 action: HubEntryAction::QuickLookupDefault,
             },
             HubEntrySpec {
-                text: "查询页",
+                text: "指定目标",
                 command_preview: lookup_command("<link>", 0, CommandStyle::Long)
                     .replace(" 0", " <target_chat_id>"),
                 style: tdlib_rs::enums::ButtonStyle::Default,
-                action: HubEntryAction::MenuPage(MenuPage::Lookup),
+                action: HubEntryAction::NewLookup,
             },
         ],
     ]
@@ -225,6 +220,13 @@ pub(super) fn build_menu_home_callback_data() -> String {
     callback::menu_page_callback_data(MenuPage::Home)
 }
 
+/// 生成菜单任务中心 callback 数据。
+///
+/// 供任务列表、任务详情等菜单外部页面直接回到任务操作入口。
+pub(super) fn build_menu_tasks_hub_callback_data() -> String {
+    callback::menu_page_callback_data(MenuPage::TasksHub)
+}
+
 /// 给菜单外部模块复用统一的恢复态卡片正文。
 pub(super) fn build_menu_recovery_text_for_outer(
     title: &str,
@@ -232,14 +234,6 @@ pub(super) fn build_menu_recovery_text_for_outer(
     detail: &str,
 ) -> String {
     text::build_menu_recovery_text(title, status, detail)
-}
-
-/// 生成菜单下载页 callback 数据。
-///
-/// 供 `/downloads` 这类列表页放置“返回下载页”按钮，
-/// 让用户能从命令详情页回到菜单里的下载筛选总览。
-pub(super) fn build_menu_downloads_callback_data() -> String {
-    callback::menu_page_callback_data(MenuPage::Downloads)
 }
 
 /// 生成菜单“开始转存”回调，供帮助页等外部模块直接跳入交互流程。
@@ -260,26 +254,6 @@ pub(super) fn build_menu_new_lookup_callback_data() -> String {
 /// 生成菜单“快速查询”回调，供帮助页等外部模块复用。
 pub(super) fn build_menu_quick_lookup_default_callback_data() -> String {
     callback::quick_lookup_default_callback_data()
-}
-
-/// 生成菜单任务页里“输入 job_id”按钮的回调数据，供帮助页复用。
-pub(super) fn build_menu_job_status_input_button_data() -> String {
-    callback::job_id_input_callback_data(input::MenuJobAction::Status)
-}
-
-/// 生成菜单任务页里“输入暂停”按钮的回调数据，供帮助页复用。
-pub(super) fn build_menu_job_pause_input_button_data() -> String {
-    callback::job_id_input_callback_data(input::MenuJobAction::Pause)
-}
-
-/// 生成菜单任务页里“输入恢复”按钮的回调数据，供帮助页复用。
-pub(super) fn build_menu_job_resume_input_button_data() -> String {
-    callback::job_id_input_callback_data(input::MenuJobAction::Resume)
-}
-
-/// 生成菜单任务页里“输入停止”按钮的回调数据，供帮助页复用。
-pub(super) fn build_menu_job_stop_input_button_data() -> String {
-    callback::job_id_input_callback_data(input::MenuJobAction::Stop)
 }
 
 /// 生成菜单配置页 callback 数据。
@@ -520,6 +494,16 @@ pub async fn menu_callback_query_on(
                 )
                 .await
             }
+            MenuRequestAction::TargetSourceBack => {
+                input::target_source_back_callback_query(
+                    update.id,
+                    update.chat_id,
+                    update.message_id,
+                    update.sender_user_id,
+                    client_id,
+                )
+                .await
+            }
             MenuRequestAction::JobIdInput(action) => {
                 input::job_id_input_callback_query(
                     update.id,
@@ -568,6 +552,7 @@ impl MenuRequestAction {
                 | Self::TargetAlias(_)
                 | Self::TargetConfirm
                 | Self::TargetBack
+                | Self::TargetSourceBack
                 | Self::JobIdInput(_)
                 | Self::AdminInput(_)
                 | Self::ContinueInput

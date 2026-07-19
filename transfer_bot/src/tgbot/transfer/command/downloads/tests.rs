@@ -165,6 +165,10 @@ fn test_build_downloads_keyboard_has_running_job_controls() {
     assert_eq!(keyboard.rows[0][0].text, "详情 #1");
     assert_eq!(keyboard.rows[0][1].text, "暂停");
     assert_eq!(keyboard.rows[0][2].text, "停止");
+    assert_eq!(
+        keyboard.rows[0][2].style,
+        tdlib_rs::enums::ButtonStyle::Danger
+    );
     assert_eq!(decoded_callback_data(&keyboard.rows[0][1]), "j:p:1");
     assert_eq!(decoded_callback_data(&keyboard.rows[0][2]), "j:sc:1");
     assert!(matches!(
@@ -352,7 +356,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
     assert_eq!(decoded, "d:p:run:8:2");
 }
 
-// 列表页把“刷新 / 返回 / 菜单”单独放一行，分页单独放一行。
+// 列表页把“刷新 / 任务中心 / 菜单”单独放一行，分页单独放一行。
 #[test]
 fn test_build_downloads_keyboard_has_refresh_row() {
     let args = DownloadsArgs {
@@ -368,7 +372,8 @@ fn test_build_downloads_keyboard_has_refresh_row() {
         keyboard.rows[4][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[4][1].text, "返回");
+    assert_eq!(keyboard.rows[4][1].text, "任务中心");
+    assert_eq!(decoded_callback_data(&keyboard.rows[4][1]), "m:th");
     assert_eq!(keyboard.rows[4][2].text, "菜单");
     assert!(matches!(
         keyboard.rows[4][2].r#type,

@@ -147,7 +147,7 @@ pub(in crate::tgbot::transfer) fn build_job_action_row(
             action_row.push(crate::tgbot::send::build_callback_button(
                 "停止",
                 &build_job_stop_button_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
+                tdlib_rs::enums::ButtonStyle::Danger,
             ));
         }
         "running" => {
@@ -159,7 +159,7 @@ pub(in crate::tgbot::transfer) fn build_job_action_row(
             action_row.push(crate::tgbot::send::build_callback_button(
                 "停止",
                 &build_job_stop_button_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
+                tdlib_rs::enums::ButtonStyle::Danger,
             ));
         }
         _ => {}
@@ -325,9 +325,14 @@ mod tests {
         assert_eq!(rows[0][0].text, "查看任务详情");
         assert_eq!(rows[0][1].text, "暂停");
         assert_eq!(rows[0][2].text, "停止");
+        assert_eq!(rows[0][2].style, tdlib_rs::enums::ButtonStyle::Danger);
         assert_eq!(decoded_callback_data(&rows[0][2]), "j:sc:42");
         assert_eq!(paused_rows[0][1].text, "恢复");
         assert_eq!(paused_rows[0][2].text, "停止");
+        assert_eq!(
+            paused_rows[0][2].style,
+            tdlib_rs::enums::ButtonStyle::Danger
+        );
         assert_eq!(decoded_callback_data(&paused_rows[0][2]), "j:sc:42");
         assert_eq!(rows[1][0].text, "查看运行列表");
         assert_eq!(rows[1][1].text, "菜单");

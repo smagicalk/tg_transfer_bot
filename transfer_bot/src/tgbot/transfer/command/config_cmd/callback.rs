@@ -13,6 +13,7 @@ const CONFIG_CALLBACK_PREFIX: &str = "cfg:";
 pub(super) enum ConfigCallbackAction {
     Refresh,
     Reset,
+    ConfirmReset,
     /// 仅恢复当前字段到启动配置里的默认值。
     ResetField {
         field: ConfigField,
@@ -22,6 +23,10 @@ pub(super) enum ConfigCallbackAction {
     },
     Input {
         field: ConfigField,
+    },
+    Adjust {
+        field: ConfigField,
+        direction: i8,
     },
 }
 
@@ -33,9 +38,11 @@ impl ConfigCallbackAction {
         match self {
             Self::Refresh => "正在刷新",
             Self::Reset => "正在重置",
+            Self::ConfirmReset => "请确认重置",
             Self::ResetField { .. } => "正在恢复默认值",
             Self::View { .. } => "正在打开字段详情",
             Self::Input { .. } => "请回复参数",
+            Self::Adjust { .. } => "正在调整",
         }
     }
 }
@@ -191,6 +198,13 @@ pub(super) fn parse_config_callback_data(data: &str) -> Option<ConfigCallbackAct
                 None
             }
         }
+        "xc" => {
+            if parts.next().is_none() {
+                Some(ConfigCallbackAction::ConfirmReset)
+            } else {
+                None
+            }
+        }
         "xf" => {
             let field = ConfigField::parse(parts.next()?)?;
             if parts.next().is_some() {
@@ -211,6 +225,14 @@ pub(super) fn parse_config_callback_data(data: &str) -> Option<ConfigCallbackAct
                 return None;
             }
             Some(ConfigCallbackAction::Input { field })
+        }
+        "a" => {
+            let field = ConfigField::parse(parts.next()?)?;
+            let direction = parts.next()?.parse::<i8>().ok()?;
+            if !matches!(direction, -1 | 1) || parts.next().is_some() {
+                return None;
+            }
+            Some(ConfigCallbackAction::Adjust { field, direction })
         }
         _ => None,
     }
@@ -244,9 +266,9 @@ pub(in crate::tgbot::transfer::command) fn build_config_buttons_on(
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             send::build_callback_button(
-                "重置默认",
-                &build_config_callback_data(ConfigCallbackAction::Reset),
-                tdlib_rs::enums::ButtonStyle::Default,
+                "重置全部",
+                &build_config_callback_data(ConfigCallbackAction::ConfirmReset),
+                tdlib_rs::enums::ButtonStyle::Danger,
             ),
         ],
         build_runtime_admin_help_menu_row("config"),
@@ -282,6 +304,7 @@ pub(in crate::tgbot::transfer::command) fn build_config_detail_callback_data(
     match action {
         ConfigCallbackAction::Refresh => format!("{}r", CONFIG_CALLBACK_PREFIX),
         ConfigCallbackAction::Reset => format!("{}x", CONFIG_CALLBACK_PREFIX),
+        ConfigCallbackAction::ConfirmReset => format!("{}xc", CONFIG_CALLBACK_PREFIX),
         ConfigCallbackAction::ResetField { field } => {
             format!("{}xf:{}", CONFIG_CALLBACK_PREFIX, field.code())
         }
@@ -290,6 +313,9 @@ pub(in crate::tgbot::transfer::command) fn build_config_detail_callback_data(
         }
         ConfigCallbackAction::Input { field } => {
             format!("{}i:{}", CONFIG_CALLBACK_PREFIX, field.code())
+        }
+        ConfigCallbackAction::Adjust { field, direction } => {
+            format!("{}a:{}:{}", CONFIG_CALLBACK_PREFIX, field.code(), direction)
         }
     }
 }
@@ -318,6 +344,12 @@ mod tests {
         assert_eq!(
             parse_config_callback_data(&reset),
             Some(ConfigCallbackAction::Reset)
+        );
+        let confirm_reset = build_config_callback_data(ConfigCallbackAction::ConfirmReset);
+        assert_eq!(confirm_reset, "cfg:xc");
+        assert_eq!(
+            parse_config_callback_data(&confirm_reset),
+            Some(ConfigCallbackAction::ConfirmReset)
         );
 
         let reset_field = build_config_callback_data(ConfigCallbackAction::ResetField {
@@ -356,6 +388,20 @@ mod tests {
                 field: ConfigField::ProgressEditIntervalSeconds,
             })
         );
+
+        let decrease = build_config_callback_data(ConfigCallbackAction::Adjust {
+            field: ConfigField::JobConcurrency,
+            direction: -1,
+        });
+        assert_eq!(decrease, "cfg:a:jc:-1");
+        assert_eq!(
+            parse_config_callback_data(&decrease),
+            Some(ConfigCallbackAction::Adjust {
+                field: ConfigField::JobConcurrency,
+                direction: -1,
+            })
+        );
+        assert_eq!(parse_config_callback_data("cfg:a:jc:0"), None);
     }
 
     // 点击配置按钮时应先给即时提示，再执行可能较慢的数据库写入。
@@ -363,6 +409,10 @@ mod tests {
     fn test_config_callback_started_tip() {
         assert_eq!(ConfigCallbackAction::Refresh.started_tip(), "正在刷新");
         assert_eq!(ConfigCallbackAction::Reset.started_tip(), "正在重置");
+        assert_eq!(
+            ConfigCallbackAction::ConfirmReset.started_tip(),
+            "请确认重置"
+        );
         assert_eq!(
             ConfigCallbackAction::ResetField {
                 field: ConfigField::JobConcurrency,
@@ -398,7 +448,7 @@ mod tests {
 
         for expected in [
             "菜单",
-            "重置默认",
+            "重置全部",
             "并发",
             "删除",
             "GC",
@@ -411,6 +461,7 @@ mod tests {
                 "missing config button: {expected}"
             );
         }
+        assert!(!labels.contains(&"重置默认"));
 
         let menu = rows
             .iter()

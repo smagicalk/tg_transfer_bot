@@ -81,6 +81,7 @@ pub(super) enum MenuRequestAction {
     TargetAlias(i64),
     TargetConfirm,
     TargetBack,
+    TargetSourceBack,
     JobIdInput(MenuJobAction),
     AdminInput(AdminInputAction),
     ContinueInput,
@@ -104,6 +105,7 @@ pub(super) fn parse_menu_callback_data(data: &str) -> Option<MenuRequestAction> 
         "tm" => Some(MenuRequestAction::TargetManual),
         "tr" => Some(MenuRequestAction::TargetConfirm),
         "tb" => Some(MenuRequestAction::TargetBack),
+        "ts" => Some(MenuRequestAction::TargetSourceBack),
         "jst" => Some(MenuRequestAction::JobIdInput(MenuJobAction::Status)),
         "jp" => Some(MenuRequestAction::JobIdInput(MenuJobAction::Pause)),
         "jr" => Some(MenuRequestAction::JobIdInput(MenuJobAction::Resume)),
@@ -172,15 +174,9 @@ pub(super) fn target_back_callback_data() -> String {
     menu_callback_data("tb")
 }
 
-/// 输入任务编号的 callback payload。
-pub(super) fn job_id_input_callback_data(action: MenuJobAction) -> String {
-    let code = match action {
-        MenuJobAction::Status => "jst",
-        MenuJobAction::Pause => "jp",
-        MenuJobAction::Resume => "jr",
-        MenuJobAction::Stop => "js",
-    };
-    menu_callback_data(code)
+/// 返回来源输入的 callback payload。
+pub(super) fn target_source_back_callback_data() -> String {
+    menu_callback_data("ts")
 }
 
 /// 继续当前输入草稿的 callback payload。
@@ -262,6 +258,10 @@ mod tests {
             Some(MenuRequestAction::TargetBack)
         );
         assert_eq!(
+            parse_menu_callback_data("m:ts"),
+            Some(MenuRequestAction::TargetSourceBack)
+        );
+        assert_eq!(
             parse_menu_callback_data("m:jst"),
             Some(MenuRequestAction::JobIdInput(MenuJobAction::Status))
         );
@@ -286,14 +286,5 @@ mod tests {
             Some(MenuRequestAction::CancelInput)
         );
         assert_eq!(parse_menu_callback_data("x:new"), None);
-    }
-
-    // 任务输入按钮也应走菜单自己的短 callback 协议。
-    #[test]
-    fn test_job_id_input_callback_data() {
-        assert_eq!(job_id_input_callback_data(MenuJobAction::Status), "m:jst");
-        assert_eq!(job_id_input_callback_data(MenuJobAction::Pause), "m:jp");
-        assert_eq!(job_id_input_callback_data(MenuJobAction::Resume), "m:jr");
-        assert_eq!(job_id_input_callback_data(MenuJobAction::Stop), "m:js");
     }
 }

@@ -66,7 +66,7 @@ fn build_pause_job_action_rows(job_id: i64) -> Vec<Vec<tdlib_rs::types::InlineKe
             send::build_callback_button(
                 "停止",
                 &build_job_stop_callback_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
+                tdlib_rs::enums::ButtonStyle::Danger,
             ),
         ],
         vec![
@@ -139,7 +139,7 @@ pub(super) async fn resume_job_on(
             send::build_callback_button(
                 "停止",
                 &build_job_stop_callback_data(job.id),
-                tdlib_rs::enums::ButtonStyle::Primary,
+                tdlib_rs::enums::ButtonStyle::Danger,
             ),
         ])
         .row(vec![
@@ -264,6 +264,7 @@ mod tests {
         assert_eq!(rows[0][0].text, "查看详情");
         assert_eq!(rows[0][1].text, "恢复");
         assert_eq!(rows[0][2].text, "停止");
+        assert_eq!(rows[0][2].style, tdlib_rs::enums::ButtonStyle::Danger);
         assert_eq!(decoded_callback_data(&rows[0][2]), "j:sc:42");
         assert_eq!(rows[1][0].text, "查看暂停列表");
         assert_eq!(rows[1][1].text, "菜单");

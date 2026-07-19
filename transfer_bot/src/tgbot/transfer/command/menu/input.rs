@@ -29,7 +29,7 @@ pub(super) use callbacks_simple::{
 };
 pub(super) use callbacks_target::{
     target_alias_callback_query, target_back_callback_query, target_confirm_callback_query,
-    target_default_callback_query, target_manual_callback_query,
+    target_default_callback_query, target_manual_callback_query, target_source_back_callback_query,
 };
 pub(in crate::tgbot::transfer::command) use state::AdminInputAction;
 use state::{

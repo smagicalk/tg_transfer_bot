@@ -154,24 +154,7 @@ pub async fn lookup_command_on(
             job.id,
             &job.status,
         ))
-        .row(vec![
-            send::build_callback_button(
-                "查看任务详情",
-                &build_job_status_button_data(job.id),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_callback_button(
-                "返回列表",
-                &build_downloads_status_button_data(&job.status, 8),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "菜单",
-                &build_menu_home_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ])
-        .row(build_lookup_active_control_buttons(job.id, &job.status))
+        .rows(build_lookup_active_button_rows(job.id, &job.status))
         .send(actor.request_chat_id, client_id)
         .await;
     }
@@ -263,11 +246,7 @@ pub async fn lookup_callback_query_on(
             "expired",
             "请重新发送 /lookup，或直接发送 /transfer 发起新任务。",
         ))
-        .row(vec![send::build_callback_button(
-            "菜单",
-            &build_menu_home_button_data(),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        )])
+        .rows(build_expired_retry_button_rows())
         .send(update.chat_id, client_id)
         .await?;
         return Ok(());
@@ -287,6 +266,22 @@ pub async fn lookup_callback_query_on(
         client_id,
     )
     .await
+}
+
+/// 重新转存上下文失效后的恢复入口。
+fn build_expired_retry_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![vec![
+        send::build_callback_button(
+            "重新开始",
+            &super::menu::build_menu_new_transfer_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        send::build_callback_button(
+            "菜单",
+            &build_menu_home_button_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]]
 }
 
 /// 构建 lookup 命中进行中任务时的控制按钮。
@@ -324,10 +319,37 @@ fn build_lookup_active_control_buttons(
         row.push(send::build_callback_button(
             "停止",
             &build_job_stop_button_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Default,
+            tdlib_rs::enums::ButtonStyle::Danger,
         ));
     }
     row
+}
+
+/// 构建 lookup 命中进行中任务时的完整按钮层级。
+fn build_lookup_active_button_rows(
+    job_id: i64,
+    status: &str,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut action_row = vec![send::build_callback_button(
+        "查看任务详情",
+        &build_job_status_button_data(job_id),
+        tdlib_rs::enums::ButtonStyle::Primary,
+    )];
+    action_row.extend(build_lookup_active_control_buttons(job_id, status));
+    let mut rows = vec![action_row];
+    rows.push(vec![
+        send::build_callback_button(
+            "返回列表",
+            &build_downloads_status_button_data(status, 8),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        send::build_callback_button(
+            "菜单",
+            &build_menu_home_button_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]);
+    rows
 }
 
 /// 构造命中进行中任务时的查询卡片。
@@ -392,6 +414,7 @@ fn format_lookup_miss_text(source_link: &str, target_chat_id: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
+        build_expired_retry_button_rows, build_lookup_active_button_rows,
         build_lookup_active_control_buttons, build_lookup_miss_button_rows,
         build_lookup_success_navigation_buttons, format_lookup_active_text,
         format_lookup_miss_text, is_lookup_callback_data,
@@ -456,6 +479,31 @@ mod tests {
         assert!(!cancelling.iter().any(|button| button.text == "复制 job_id"));
     }
 
+    // 查询命中卡应先展示任务详情和控制，最后才放列表/菜单导航。
+    #[test]
+    fn test_build_lookup_active_button_rows_prioritizes_job_actions() {
+        let rows = build_lookup_active_button_rows(42, "running");
+
+        assert_eq!(rows[0][0].text, "查看任务详情");
+        assert_eq!(rows[0][1].text, "暂停");
+        assert_eq!(rows[0][2].text, "停止");
+        assert_eq!(rows[0][2].style, tdlib_rs::enums::ButtonStyle::Danger);
+        assert_eq!(rows[1][0].text, "返回列表");
+        assert_eq!(rows[1][1].text, "菜单");
+        assert_eq!(rows.len(), 2);
+    }
+
+    // 停止中任务没有可执行控制时，详情和导航之间不能插入空行。
+    #[test]
+    fn test_build_lookup_active_button_rows_omits_empty_controls() {
+        let rows = build_lookup_active_button_rows(42, "cancelling");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0][0].text, "查看任务详情");
+        assert_eq!(rows[1][0].text, "返回列表");
+        assert_eq!(rows[1][1].text, "菜单");
+    }
+
     // lookup 成功命中已有结果时，按钮区应使用真实 callback 导航，不再重复复制查询/重转命令。
     #[test]
     fn test_build_lookup_success_navigation_buttons_drop_command_copy_buttons() {
@@ -492,5 +540,25 @@ mod tests {
     fn test_lookup_retry_callback_prefix() {
         assert!(is_lookup_callback_data("lk:rt"));
         assert!(!is_lookup_callback_data("l:rt"));
+    }
+
+    // 重试上下文过期后应能直接重新开始转存，不必先返回菜单再找入口。
+    #[test]
+    fn test_build_expired_retry_button_rows_restart_transfer_directly() {
+        use base64::{Engine as _, engine::general_purpose};
+
+        let rows = build_expired_retry_button_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0].text, "重新开始");
+        assert_eq!(rows[0][0].style, tdlib_rs::enums::ButtonStyle::Primary);
+        assert_eq!(rows[0][1].text, "菜单");
+
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
+        else {
+            panic!("restart button must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "m:new");
     }
 }

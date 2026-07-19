@@ -13,7 +13,7 @@ use super::super::downloads::build_downloads_menu_filter_rows;
 use super::super::help;
 use super::super::job::build_job_menu_filter_rows;
 use super::callback::{self, MenuPage};
-use super::input::{MenuDraftSummary, MenuJobAction};
+use super::input::MenuDraftSummary;
 use home::home_buttons;
 use hubs::{admin_hub_buttons, tasks_hub_buttons};
 
@@ -78,30 +78,6 @@ fn downloads_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
 /// 任务页按钮。
 fn jobs_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let mut rows = build_job_menu_filter_rows();
-    rows.push(vec![
-        job_id_input_button(
-            "输入详情",
-            MenuJobAction::Status,
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        job_id_input_button(
-            "输入暂停",
-            MenuJobAction::Pause,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ]);
-    rows.push(vec![
-        job_id_input_button(
-            "输入恢复",
-            MenuJobAction::Resume,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-        job_id_input_button(
-            "输入停止",
-            MenuJobAction::Stop,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ]);
     rows.push(build_refresh_return_menu_row(
         menu_nav_button(
             "刷新",
@@ -178,15 +154,6 @@ fn help_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
         ),
     ));
     rows
-}
-
-/// 构建等待用户输入 job_id 的任务控制按钮。
-fn job_id_input_button(
-    text: &str,
-    action: MenuJobAction,
-    style: tdlib_rs::enums::ButtonStyle,
-) -> tdlib_rs::types::InlineKeyboardButton {
-    send::build_callback_button(text, &callback::job_id_input_callback_data(action), style)
 }
 
 /// 构建下载筛选 callback 按钮。
@@ -316,6 +283,7 @@ mod tests {
             .flatten()
             .find(|button| button.text == "停止")
             .expect("tasks hub should have stop confirmation button");
+        assert_eq!(stop.style, tdlib_rs::enums::ButtonStyle::Danger);
         let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &stop.r#type else {
             panic!("stop button must be callback");
         };
@@ -327,6 +295,8 @@ mod tests {
     // 任务 hub 应承接原首页的状态快捷入口。
     #[test]
     fn test_tasks_hub_has_status_shortcuts() {
+        use base64::{Engine as _, engine::general_purpose};
+
         let rows = build_menu_buttons(MenuPage::TasksHub, &[], None);
         let labels = rows
             .iter()
@@ -339,9 +309,26 @@ mod tests {
         assert!(labels.contains(&"已暂停"));
         assert!(labels.contains(&"失败任务"));
         assert!(labels.contains(&"快速查询"));
-        assert!(labels.contains(&"查询页"));
+        assert!(labels.contains(&"指定目标"));
+        assert!(labels.contains(&"更多状态"));
+        assert!(!labels.contains(&"下载列表"));
+        assert!(!labels.contains(&"查询页"));
         assert!(!labels.contains(&"复制当前列表"));
         assert!(!labels.contains(&"查看最近任务"));
+
+        let specified_lookup = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "指定目标")
+            .expect("tasks hub should have specified lookup button");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) =
+            &specified_lookup.r#type
+        else {
+            panic!("specified lookup must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "m:qlk");
     }
 
     // 首页按钮应收敛成高频动作 + hub + footer，不再直接暴露细页或最近任务。
@@ -500,9 +487,9 @@ mod tests {
         assert!(!labels.contains(&"复制帮助命令"));
     }
 
-    // 任务菜单应同时提供列表筛选、job_id 输入向导和复制模板。
+    // 任务菜单应通过列表选中任务，不再要求手动输入 job_id。
     #[test]
-    fn test_jobs_buttons_have_job_id_input_callbacks() {
+    fn test_jobs_buttons_prefer_clickable_lists_over_job_id_input() {
         use base64::{Engine as _, engine::general_purpose};
 
         let rows = build_menu_buttons(MenuPage::Jobs, &[], None);
@@ -512,22 +499,28 @@ mod tests {
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        for expected in ["输入详情", "输入暂停", "输入恢复", "输入停止"] {
-            assert!(labels.contains(&expected), "missing job input: {expected}");
+        for removed in ["输入详情", "输入暂停", "输入恢复", "输入停止"] {
+            assert!(
+                !labels.contains(&removed),
+                "unexpected job input: {removed}"
+            );
         }
+        assert!(labels.contains(&"最近任务"));
+        assert!(labels.contains(&"运行任务"));
+        assert!(labels.contains(&"暂停任务"));
 
-        let status_button = rows
+        let recent_button = rows
             .iter()
             .flatten()
-            .find(|button| button.text == "输入详情")
-            .expect("status input button should exist");
-        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &status_button.r#type
+            .find(|button| button.text == "最近任务")
+            .expect("recent jobs button should exist");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &recent_button.r#type
         else {
-            panic!("job input button must be callback");
+            panic!("recent jobs button must be callback");
         };
         let decoded =
             String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
-        assert_eq!(decoded, "m:jst");
+        assert!(decoded.starts_with("d:"));
     }
 
     // 已经有交互入口的页面不应继续保留旧模板复制按钮，避免按钮区重复表达同一动作。

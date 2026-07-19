@@ -52,6 +52,7 @@ const TARGETS_CALLBACK_PREFIX: &str = "tcfg:";
 enum TargetsCallbackAction {
     Refresh,
     Reset,
+    ConfirmReset,
     ClearDefault,
     ViewDefault,
     InputSetDefault,
@@ -78,6 +79,7 @@ impl TargetsCallbackAction {
         match self {
             Self::Refresh => "正在刷新目标配置",
             Self::Reset => "正在重置目标配置",
+            Self::ConfirmReset => "请确认重置",
             Self::ClearDefault => "正在恢复私聊默认目标",
             Self::ViewDefault => "正在打开默认目标",
             Self::InputSetDefault
@@ -251,7 +253,7 @@ pub(in crate::tgbot::transfer::command) fn targets_intro_lines() -> Vec<String> 
 /// `/targets` 帮助页和卡片共用的交互说明。
 fn targets_interaction_items() -> Vec<String> {
     let mut items = vec![
-        "刷新 / 重置默认 / 恢复私聊默认：直接点按钮执行。".to_owned(),
+        "刷新可直接执行；重置全部需要二次确认；恢复私聊默认只清除显式默认目标。".to_owned(),
         "默认目标：进入详情页后可手动设置，或恢复为当前私聊默认。".to_owned(),
         "现有别名：进入分页列表后，先点编号进入详情，再修改、设默认或删除。".to_owned(),
     ];
@@ -345,6 +347,10 @@ pub async fn targets_callback_query_on(
             return render_targets_home_on(app, update.chat_id, update.message_id, client_id).await;
         }
         TargetsCallbackAction::Reset => reset_targets_config_to_default_on(app).await.map(|_| ()),
+        TargetsCallbackAction::ConfirmReset => {
+            return render_targets_reset_confirm_on(update.chat_id, update.message_id, client_id)
+                .await;
+        }
         TargetsCallbackAction::ClearDefault => {
             update_targets_with_on(app, &cleared_action_title("私聊默认目标"), |config| {
                 config.default_chat_id = 0;
@@ -867,9 +873,9 @@ pub(super) fn build_targets_buttons_on(
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             send::build_callback_button(
-                "重置默认",
-                &build_targets_callback_data(TargetsCallbackAction::Reset),
-                tdlib_rs::enums::ButtonStyle::Default,
+                "重置全部",
+                &build_targets_callback_data(TargetsCallbackAction::ConfirmReset),
+                tdlib_rs::enums::ButtonStyle::Danger,
             ),
             send::build_callback_button(
                 "恢复私聊默认",
@@ -1062,6 +1068,51 @@ fn build_targets_list_page_callback_data(context: &AliasListContext, target_page
     build_targets_callback_data(TargetsCallbackAction::ViewAliases(target))
 }
 
+/// 原地打开目标配置全量重置确认页。
+async fn render_targets_reset_confirm_on(
+    chat_id: i64,
+    message_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let text = build_runtime_admin_detail_text(
+        "确认重置目标配置",
+        vec![card::field("范围", "默认目标和全部别名")],
+        "影响",
+        vec![
+            "当前运行态目标配置会被启动配置完整覆盖。".to_owned(),
+            "如果只想让默认目标回到当前私聊，请使用“恢复私聊默认”。".to_owned(),
+        ],
+    );
+    let rows = build_targets_reset_confirm_buttons();
+    let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
+    edit_runtime_admin_interaction_card_or_error(
+        text,
+        chat_id,
+        message_id,
+        keyboard,
+        client_id,
+        "目标配置",
+        "/targets show",
+    )
+    .await
+}
+
+/// 目标配置重置确认页按钮。
+fn build_targets_reset_confirm_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    vec![
+        vec![send::build_callback_button(
+            "确认重置全部",
+            &build_targets_callback_data(TargetsCallbackAction::Reset),
+            tdlib_rs::enums::ButtonStyle::Danger,
+        )],
+        build_runtime_admin_back_menu_row(send::build_callback_button(
+            "取消",
+            &build_targets_callback_data(TargetsCallbackAction::Refresh),
+            tdlib_rs::enums::ButtonStyle::Default,
+        )),
+    ]
+}
+
 /// 渲染主页。
 async fn render_targets_home_on(
     app: &crate::app_context::AppContext,
@@ -1157,6 +1208,7 @@ fn parse_targets_callback_data(data: &str) -> Option<TargetsCallbackAction> {
     match payload {
         "r" => Some(TargetsCallbackAction::Refresh),
         "x" => Some(TargetsCallbackAction::Reset),
+        "xc" => Some(TargetsCallbackAction::ConfirmReset),
         "d" => Some(TargetsCallbackAction::ClearDefault),
         "v" => Some(TargetsCallbackAction::ViewDefault),
         "is" => Some(TargetsCallbackAction::InputSetDefault),
@@ -1255,6 +1307,7 @@ fn build_targets_callback_data(action: TargetsCallbackAction) -> String {
     let suffix = match action {
         TargetsCallbackAction::Refresh => "r",
         TargetsCallbackAction::Reset => "x",
+        TargetsCallbackAction::ConfirmReset => "xc",
         TargetsCallbackAction::ClearDefault => "d",
         TargetsCallbackAction::ViewDefault => "v",
         TargetsCallbackAction::InputSetDefault => "is",
@@ -1368,6 +1421,7 @@ mod tests {
     fn test_targets_callback_roundtrip() {
         let refresh = build_targets_callback_data(TargetsCallbackAction::Refresh);
         let reset = build_targets_callback_data(TargetsCallbackAction::Reset);
+        let confirm_reset = build_targets_callback_data(TargetsCallbackAction::ConfirmReset);
         let clear = build_targets_callback_data(TargetsCallbackAction::ClearDefault);
         let view_default = build_targets_callback_data(TargetsCallbackAction::ViewDefault);
         let view_alias = build_targets_callback_data(TargetsCallbackAction::ViewAlias {
@@ -1405,6 +1459,11 @@ mod tests {
         assert_eq!(
             parse_targets_callback_data(&reset),
             Some(TargetsCallbackAction::Reset)
+        );
+        assert_eq!(confirm_reset, "tcfg:xc");
+        assert_eq!(
+            parse_targets_callback_data(&confirm_reset),
+            Some(TargetsCallbackAction::ConfirmReset)
         );
         assert_eq!(
             parse_targets_callback_data(&clear),
@@ -1511,9 +1570,26 @@ mod tests {
         assert_eq!(rows[1][2].text, "恢复私聊默认");
         assert!(labels.contains(&"默认目标"));
         assert!(labels.contains(&"别名列表"));
+        assert!(labels.contains(&"重置全部"));
+        assert!(!labels.contains(&"重置默认"));
         assert!(!labels.contains(&"设默认"));
         assert!(!labels.contains(&"设路由"));
         assert!(!labels.contains(&"设别名"));
+    }
+
+    #[test]
+    fn test_targets_reset_confirm_buttons() {
+        let rows = build_targets_reset_confirm_buttons();
+        assert_eq!(rows[0][0].text, "确认重置全部");
+        assert_eq!(rows[1][0].text, "取消");
+
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
+        else {
+            panic!("targets reset confirm must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "tcfg:x");
     }
 
     #[test]

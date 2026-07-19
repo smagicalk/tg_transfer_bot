@@ -6,7 +6,7 @@ use super::super::job::{
     build_job_pause_callback_data, build_job_resume_callback_data, build_job_status_callback_data,
     build_job_stop_callback_data,
 };
-use super::super::menu::{build_menu_downloads_callback_data, build_menu_home_callback_data};
+use super::super::menu::{build_menu_home_callback_data, build_menu_tasks_hub_callback_data};
 use super::types::{DownloadsArgs, DownloadsFilter};
 use crate::tgbot::send;
 use crate::tgbot::transfer::store;
@@ -119,7 +119,7 @@ pub(super) fn parse_downloads_callback_data(
 ///
 /// 规则：
 /// - 主操作区优先放任务详情、控制和筛选
-/// - “刷新 / 返回 / 菜单”固定为单独一行
+/// - “刷新 / 任务中心 / 菜单”固定为单独一行
 /// - 复制类按钮固定单独一行
 /// - 分页固定单独一行，放在最末尾
 /// - 当前页/当前筛选/边界页同样允许点击刷新；发送层会把“消息未修改”当成幂等成功处理
@@ -143,8 +143,8 @@ pub(super) fn build_downloads_keyboard(
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         build_callback_button(
-            "返回",
-            &build_menu_downloads_callback_data(),
+            "任务中心",
+            &build_menu_tasks_hub_callback_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         build_callback_button(
@@ -224,7 +224,7 @@ fn build_inline_job_control_buttons(
             send::build_callback_button(
                 "停止",
                 &build_job_stop_callback_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
+                tdlib_rs::enums::ButtonStyle::Danger,
             ),
         ];
     }
@@ -239,7 +239,7 @@ fn build_inline_job_control_buttons(
             send::build_callback_button(
                 "停止",
                 &build_job_stop_callback_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
+                tdlib_rs::enums::ButtonStyle::Danger,
             ),
         ];
     }

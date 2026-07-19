@@ -75,10 +75,9 @@ pub(in crate::tgbot::transfer::command) fn job_help_summary() -> &'static str {
 /// `/job` 帮助详情和菜单页共用的说明。
 pub(in crate::tgbot::transfer::command) fn job_help_intro_lines() -> Vec<String> {
     vec![
-        "先进入最近任务或运行任务，再点任务详情进行暂停、恢复、停止。".to_owned(),
-        "知道 job_id 时可点“输入详情/暂停/恢复/停止”，按提示回复编号。".to_owned(),
+        "先选择任务状态，再点任务详情进行暂停、恢复或停止，无需手动输入 job_id。".to_owned(),
         "单所有者模式可直接控制任意任务。".to_owned(),
-        "命令模式仍可使用命令模板手动输入。".to_owned(),
+        "已知 job_id 时仍可直接使用 /job 命令。".to_owned(),
     ]
 }
 
@@ -180,32 +179,7 @@ pub(in crate::tgbot::transfer::command) fn build_job_help_detail_text() -> Strin
 /// 命令示例仍保留在正文里，方便需要命令模式时查看。
 pub(in crate::tgbot::transfer::command) fn build_job_help_entry_rows()
 -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    vec![
-        vec![
-            send::build_callback_button(
-                "输入详情",
-                &super::menu::build_menu_job_status_input_button_data(),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_callback_button(
-                "输入暂停",
-                &super::menu::build_menu_job_pause_input_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            send::build_callback_button(
-                "输入恢复",
-                &super::menu::build_menu_job_resume_input_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "输入停止",
-                &super::menu::build_menu_job_stop_input_button_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-    ]
+    build_job_menu_filter_rows()
 }
 
 /// `/menu` 任务页复用的筛选按钮行。

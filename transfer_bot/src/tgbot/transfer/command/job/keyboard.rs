@@ -40,7 +40,7 @@ pub(super) fn build_job_status_buttons(
             action_row.push(send::build_callback_button(
                 "停止",
                 &build_job_callback_data(JobCallbackAction::StopConfirm, job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
+                tdlib_rs::enums::ButtonStyle::Danger,
             ));
         }
         rows.push(action_row);
@@ -78,7 +78,7 @@ pub(super) fn build_job_stop_confirm_buttons(
         vec![send::build_callback_button(
             "确认停止",
             &build_job_stop_execute_callback_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Default,
+            tdlib_rs::enums::ButtonStyle::Danger,
         )],
         build_refresh_return_menu_row(
             send::build_callback_button(
@@ -113,6 +113,7 @@ mod tests {
 
         assert_eq!(buttons[0][0].text, "暂停");
         assert_eq!(buttons[0][1].text, "停止");
+        assert_eq!(buttons[0][1].style, tdlib_rs::enums::ButtonStyle::Danger);
         assert_eq!(decoded_callback_data(&buttons[0][1]), "j:sc:42");
         assert_eq!(buttons[1][0].text, "刷新详情");
         assert_eq!(buttons[1][2].text, "菜单");
@@ -177,6 +178,7 @@ mod tests {
             build_job_stop_confirm_buttons(&snapshot_with_status(store::JOB_STATUS_RUNNING));
 
         assert_eq!(buttons[0][0].text, "确认停止");
+        assert_eq!(buttons[0][0].style, tdlib_rs::enums::ButtonStyle::Danger);
         assert_eq!(decoded_callback_data(&buttons[0][0]), "j:s:42");
         assert_eq!(buttons[1][0].text, "返回详情");
         assert_eq!(decoded_callback_data(&buttons[1][0]), "j:st:42");

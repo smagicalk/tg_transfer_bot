@@ -57,7 +57,7 @@ fn tasks_hub_text() -> String {
         build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("操作"),
-        "查看最近任务、运行任务、失败任务，或直接进入任务控制。".to_owned(),
+        "常用状态直接打开任务列表；其他状态和指定目标查询也可从这里直接进入。".to_owned(),
         card::section("命令"),
     ];
     lines.extend(build_hub_command_lines(tasks_hub_specs()));

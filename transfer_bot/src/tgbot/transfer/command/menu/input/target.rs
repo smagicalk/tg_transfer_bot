@@ -192,6 +192,11 @@ pub(super) fn confirm_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardBu
         )],
         vec![
             send::build_callback_button(
+                "修改来源",
+                &callback::target_source_back_callback_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            send::build_callback_button(
                 "重选目标",
                 &callback::target_back_callback_data(),
                 tdlib_rs::enums::ButtonStyle::Default,
@@ -283,7 +288,7 @@ fn build_confirm_text(kind: MenuInputKind, source_link: &str, target_chat_id: i6
             target_chat_id,
         )),
         crate::tgbot::transfer::card::section("下一步"),
-        "确认无误后点击“执行”；如果目标不对，返回重新选择。".to_owned(),
+        "确认无误后点击“执行”；来源或目标不对时，可使用下方按钮返回修改。".to_owned(),
         format!("取消：{}", crate::tgbot::transfer::card::code("/cancel")),
     ]);
     lines.join("\n")
@@ -512,12 +517,23 @@ mod tests {
     // 确认页第一行只放“执行”，降低误触取消或重选的概率。
     #[test]
     fn test_confirm_button_rows_layout() {
+        use base64::{Engine as _, engine::general_purpose};
+
         let rows = confirm_button_rows();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].len(), 1);
         assert_eq!(rows[0][0].text, "执行");
-        assert_eq!(rows[1][0].text, "重选目标");
-        assert_eq!(rows[1][1].text, "取消");
+        assert_eq!(rows[1][0].text, "修改来源");
+        assert_eq!(rows[1][1].text, "重选目标");
+        assert_eq!(rows[1][2].text, "取消");
+
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[1][0].r#type
+        else {
+            panic!("source back must be callback");
+        };
+        let decoded =
+            String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap();
+        assert_eq!(decoded, "m:ts");
     }
 }

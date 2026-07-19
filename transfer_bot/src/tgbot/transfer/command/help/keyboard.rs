@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn test_help_job_detail_buttons_prefer_input_callbacks() -> anyhow::Result<()> {
+    fn test_help_job_detail_buttons_prefer_clickable_lists() -> anyhow::Result<()> {
         let rows = build_help_detail_buttons("job")?;
         let labels = rows
             .iter()
@@ -199,16 +199,20 @@ mod tests {
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(rows[0][0].text, "输入详情");
-        assert_eq!(rows[0][1].text, "输入暂停");
-        assert_eq!(rows[1][0].text, "输入恢复");
-        assert_eq!(rows[1][1].text, "输入停止");
+        assert_eq!(rows[0][0].text, "最近任务");
+        assert_eq!(rows[0][1].text, "运行任务");
+        assert_eq!(rows[0][2].text, "暂停任务");
+        assert!(!labels.contains(&"输入详情"));
+        assert!(!labels.contains(&"输入暂停"));
+        assert!(!labels.contains(&"输入恢复"));
+        assert!(!labels.contains(&"输入停止"));
         assert!(!labels.contains(&"复制暂停命令"));
         assert!(!labels.contains(&"复制恢复命令"));
         assert!(!labels.contains(&"复制停止命令"));
         assert!(!labels.contains(&"复制详情命令"));
-        assert_eq!(rows[2][0].text, "返回目录");
-        assert_eq!(rows[2][1].text, "菜单");
+        let navigation = rows.last().expect("job help navigation row");
+        assert_eq!(navigation[0].text, "返回目录");
+        assert_eq!(navigation[1].text, "菜单");
         Ok(())
     }
 

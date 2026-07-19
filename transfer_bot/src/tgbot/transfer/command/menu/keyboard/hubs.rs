@@ -69,6 +69,11 @@ fn build_hub_button(spec: &HubEntrySpec) -> tdlib_rs::types::InlineKeyboardButto
             &callback::quick_lookup_default_callback_data(),
             spec.style.clone(),
         ),
+        HubEntryAction::NewLookup => send::build_callback_button(
+            spec.text,
+            &callback::new_lookup_callback_data(),
+            spec.style.clone(),
+        ),
         HubEntryAction::HealthHome => {
             send::build_callback_button(spec.text, &build_health_button_data(), spec.style.clone())
         }

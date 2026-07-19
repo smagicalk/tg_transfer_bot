@@ -159,7 +159,7 @@ fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
     ));
 }
 
-// 运行中进度面板应支持直接跳任务详情和运行列表，减少复制命令操作。
+// 运行中进度面板应把任务操作放在导航前，减少控制任务时的视觉查找。
 // 停止按钮只打开确认页，避免进度卡片误触后直接取消任务。
 #[test]
 fn test_build_transfer_progress_keyboard_has_callback_buttons() {
@@ -170,26 +170,30 @@ fn test_build_transfer_progress_keyboard_has_callback_buttons() {
         -100,
     );
 
-    assert_eq!(keyboard.rows[0][0].text, "查看运行列表");
-    assert_eq!(keyboard.rows[0][1].text, "菜单");
-    assert_eq!(keyboard.rows[1][0].text, "查看任务详情");
-    assert_eq!(keyboard.rows[1][1].text, "暂停");
-    assert_eq!(keyboard.rows[1][2].text, "停止");
-    assert_eq!(decoded_callback_data(&keyboard.rows[1][2]), "j:sc:42");
-    assert!(matches!(
-        keyboard.rows[0][0].r#type,
-        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
-    ));
+    assert_eq!(keyboard.rows[0][0].text, "查看任务详情");
+    assert_eq!(keyboard.rows[0][1].text, "暂停");
+    assert_eq!(keyboard.rows[0][2].text, "停止");
+    assert_eq!(
+        keyboard.rows[0][2].style,
+        tdlib_rs::enums::ButtonStyle::Danger
+    );
+    assert_eq!(decoded_callback_data(&keyboard.rows[0][2]), "j:sc:42");
+    assert_eq!(keyboard.rows[1][0].text, "查看运行列表");
+    assert_eq!(keyboard.rows[1][1].text, "菜单");
     assert!(matches!(
         keyboard.rows[1][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
     assert!(matches!(
-        keyboard.rows[1][1].r#type,
+        keyboard.rows[0][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
     assert!(matches!(
         keyboard.rows[0][1].r#type,
+        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
+    ));
+    assert!(matches!(
+        keyboard.rows[1][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
     let labels = keyboard
@@ -212,12 +216,16 @@ fn test_build_transfer_progress_keyboard_for_paused_job() {
         -100,
     );
 
-    assert_eq!(keyboard.rows[0][0].text, "查看暂停列表");
-    assert_eq!(keyboard.rows[1][1].text, "恢复");
-    assert_eq!(keyboard.rows[1][2].text, "停止");
-    assert_eq!(decoded_callback_data(&keyboard.rows[1][2]), "j:sc:42");
+    assert_eq!(keyboard.rows[0][1].text, "恢复");
+    assert_eq!(keyboard.rows[0][2].text, "停止");
+    assert_eq!(
+        keyboard.rows[0][2].style,
+        tdlib_rs::enums::ButtonStyle::Danger
+    );
+    assert_eq!(decoded_callback_data(&keyboard.rows[0][2]), "j:sc:42");
+    assert_eq!(keyboard.rows[1][0].text, "查看暂停列表");
     assert!(matches!(
-        keyboard.rows[1][1].r#type,
+        keyboard.rows[0][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
 }
@@ -232,10 +240,21 @@ fn test_build_transfer_progress_keyboard_for_cancelled_job() {
         -100,
     );
 
-    assert_eq!(keyboard.rows[0][0].text, "查看已停列表");
-    assert_eq!(keyboard.rows[1][0].text, "查看任务详情");
-    assert_eq!(keyboard.rows[1].len(), 1);
+    assert_eq!(keyboard.rows[0][0].text, "查看任务详情");
+    assert_eq!(keyboard.rows[0].len(), 1);
+    assert_eq!(keyboard.rows[1][0].text, "查看已停列表");
+    assert_eq!(keyboard.rows[1][1].text, "菜单");
     assert_eq!(keyboard.rows.len(), 2);
+}
+
+// 等待阶段还没有 job_id，只展示列表和菜单，不能因主操作重排生成空行。
+#[test]
+fn test_build_transfer_progress_keyboard_without_job_has_navigation_only() {
+    let keyboard = build_transfer_progress_keyboard(None, None, "https://t.me/c/1/2", -100);
+
+    assert_eq!(keyboard.rows.len(), 1);
+    assert_eq!(keyboard.rows[0][0].text, "查看运行列表");
+    assert_eq!(keyboard.rows[0][1].text, "菜单");
 }
 
 // 构造最小进度快照，避免文本测试依赖数据库。

@@ -16,7 +16,7 @@ pub(super) fn build_transfer_progress_keyboard(
     let (list_status, list_label) = job_status
         .map(build_job_list_button_meta)
         .unwrap_or(("run", "查看运行列表"));
-    let mut rows = vec![vec![
+    let navigation_row = vec![
         crate::tgbot::send::build_callback_button(
             list_label,
             &build_downloads_status_button_data(list_status, 8),
@@ -27,11 +27,13 @@ pub(super) fn build_transfer_progress_keyboard(
             &build_menu_home_button_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-    ]];
+    ];
 
+    let mut rows = Vec::new();
     if let Some(job_id) = job_id {
         rows.extend(build_job_control_rows(job_id, job_status));
     }
+    rows.push(navigation_row);
 
     crate::tgbot::send::build_inline_keyboard(rows)
 }
