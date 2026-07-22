@@ -12,6 +12,38 @@ use super::super::{
     FILE_CACHE_STATUS_READY, now_utc8,
 };
 
+/// 读取当前 client 可复用的本地缓存；数据库记录存在但文件已被外部删除时视为未命中。
+pub(in crate::tgbot::transfer) async fn find_ready_file_cache(
+    owner_client_role: &str,
+    file_key: &str,
+) -> anyhow::Result<Option<PreparedCacheMeta>> {
+    let db_conn = db::get_db().await?;
+    let Some(cache) =
+        db::file_cache::Entity::find_by_id((owner_client_role.to_owned(), file_key.to_owned()))
+            .one(db_conn)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    let Some(local_path) = cache.local_path.filter(|path| !path.trim().is_empty()) else {
+        return Ok(None);
+    };
+    if cache.status != FILE_CACHE_STATUS_READY
+        || cache.active_refs <= 0
+        || !std::path::Path::new(&local_path).is_file()
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(PreparedCacheMeta {
+        file_key: cache.file_key,
+        td_file_id: cache.td_file_id.unwrap_or_default(),
+        local_path,
+        size_bytes: cache.size_bytes,
+    }))
+}
+
 /// 将 file_cache 标记为“下载中”。
 /// 同时预写入 td_file_id 和 size_bytes，供实时进度查询使用。
 pub(in crate::tgbot::transfer) async fn mark_file_cache_downloading(

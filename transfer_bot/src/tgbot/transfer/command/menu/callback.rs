@@ -78,6 +78,7 @@ pub(super) enum MenuRequestAction {
     QuickLookupDefault,
     TargetDefault,
     TargetManual,
+    TargetRequestChat,
     TargetAlias(i64),
     TargetConfirm,
     TargetBack,
@@ -103,6 +104,7 @@ pub(super) fn parse_menu_callback_data(data: &str) -> Option<MenuRequestAction> 
         "qld" => Some(MenuRequestAction::QuickLookupDefault),
         "td" => Some(MenuRequestAction::TargetDefault),
         "tm" => Some(MenuRequestAction::TargetManual),
+        "tp" => Some(MenuRequestAction::TargetRequestChat),
         "tr" => Some(MenuRequestAction::TargetConfirm),
         "tb" => Some(MenuRequestAction::TargetBack),
         "ts" => Some(MenuRequestAction::TargetSourceBack),
@@ -157,6 +159,11 @@ pub(super) fn target_default_callback_data() -> String {
 /// 进入手动输入目标的 callback payload。
 pub(super) fn target_manual_callback_data() -> String {
     menu_callback_data("tm")
+}
+
+/// 打开 Telegram 原生目标聊天选择器的 callback payload。
+pub(super) fn target_request_chat_callback_data() -> String {
+    menu_callback_data("tp")
 }
 
 /// 使用某个目标 chat 的 callback payload。
@@ -244,6 +251,10 @@ mod tests {
         assert_eq!(
             parse_menu_callback_data("m:tm"),
             Some(MenuRequestAction::TargetManual)
+        );
+        assert_eq!(
+            parse_menu_callback_data("m:tp"),
+            Some(MenuRequestAction::TargetRequestChat)
         );
         assert_eq!(
             parse_menu_callback_data("m:ta:-100"),

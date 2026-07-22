@@ -3,6 +3,7 @@
 
 use crate::tgbot::transfer::command::{
     build_downloads_status_button_data, build_job_list_button_meta, build_menu_home_button_data,
+    build_view_commands_button,
 };
 use crate::tgbot::transfer::store;
 
@@ -22,6 +23,7 @@ pub(super) fn build_transfer_progress_keyboard(
             &build_downloads_status_button_data(list_status, 8),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
+        build_view_commands_button(Some(if job_id.is_some() { "job" } else { "transfer" })),
         crate::tgbot::send::build_callback_button(
             "菜单",
             &build_menu_home_button_data(),
@@ -41,7 +43,7 @@ pub(super) fn build_transfer_progress_keyboard(
 /// 按任务状态构造可点击控制按钮。
 ///
 /// 进度面板可能被最终结果复用，因此这里不能对 cancelled/cancelling 再展示暂停按钮。
-/// 正文已经保留完整命令，按钮区只保留真正的交互控制。
+/// 按钮区只保留真正的交互控制；命令说明由导航行按需打开。
 fn build_job_control_rows(
     job_id: i64,
     job_status: Option<&str>,

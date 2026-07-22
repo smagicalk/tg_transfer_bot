@@ -50,14 +50,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: alpine-3.22
-            label: Alpine 3.22 musl x86_64
-            image: alpine:3.22
-            artifact_suffix: linux-x86_64-alpine3.22
-          - id: debian-12
-            label: Debian 12 glibc x86_64
-            image: debian:12
-            artifact_suffix: linux-x86_64-debian12
+          - id: alpine-3.23
+            label: Alpine 3.23 musl x86_64
+            image: alpine:3.23
+            artifact_suffix: linux-x86_64-alpine3.23
+          - id: debian-13
+            label: Debian 13 glibc x86_64
+            image: debian:13
+            artifact_suffix: linux-x86_64-debian13
           - id: ubuntu-24.04
             label: Ubuntu 24.04 glibc x86_64
             image: ubuntu:24.04

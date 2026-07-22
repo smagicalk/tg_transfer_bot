@@ -10,7 +10,9 @@ use super::super::text::{
     build_step_prompt_text, build_step_prompt_with_context, build_target_input_prompt_text,
 };
 use super::MenuInputKind;
-use super::flow::{ExistingCommandContext, looks_like_telegram_link, run_existing_command};
+use super::flow::{
+    ExistingCommandContext, ExistingCommandOrigin, looks_like_telegram_link, run_existing_command,
+};
 use super::state::{
     MenuInputDraft, MenuInputStep, put_confirm_draft, put_draft, remember_last_target,
 };
@@ -91,7 +93,7 @@ pub(super) async fn continue_flow_input_on(
                     kind.source_detail(),
                 ),
                 chat_id,
-                "输入源链接，或发送 /cancel",
+                "输入源链接（回复“取消”可退出）",
                 client_id,
             )
             .await?;
@@ -117,7 +119,7 @@ pub(super) async fn continue_flow_input_on(
                 build_target_input_prompt_text(
                     source_link,
                     "输入目标 chat",
-                    "请回复目标 chat_id、别名或 default，或发送 /cancel。",
+                    "请回复目标 chat_id、别名或 default；回复“取消”可退出。",
                 ),
                 chat_id,
                 "输入目标 chat_id、alias 或 default",
@@ -137,7 +139,20 @@ pub(super) async fn continue_flow_input_on(
             source_link,
             target_chat_id,
         } => {
-            send_confirm_prompt(*kind, source_link, *target_chat_id, chat_id, client_id).await?;
+            send_confirm_prompt(
+                *kind,
+                source_link,
+                *target_chat_id,
+                None,
+                chat_id,
+                client_id,
+            )
+            .await?;
+            Ok(true)
+        }
+        MenuInputStep::ChatPicker { source_link, .. } => {
+            super::send_target_chat_picker_prompt(chat_id, user_id, source_link, None, client_id)
+                .await?;
             Ok(true)
         }
         MenuInputStep::JobId { .. } | MenuInputStep::AdminInput { .. } => Ok(false),
@@ -174,12 +189,28 @@ pub(super) async fn handle_flow_input(
                 "waiting-confirm",
                 "3/3",
                 "等待确认",
-                "请点击确认卡片里的“执行”，或发送 /cancel 取消。",
+                "请点击确认卡片里的“执行”，回复“取消”可退出。",
                 None,
                 Some(target_chat_id),
             ))
             .rows(confirm_button_rows())
             .send(ctx.request_chat_id, ctx.client_id)
+            .await?;
+            Ok(Some(true))
+        }
+        MenuInputStep::ChatPicker { kind, source_link } => {
+            put_draft(
+                ctx.key,
+                MenuInputDraft::chat_picker(kind, source_link.clone()),
+            )
+            .await?;
+            super::send_target_chat_picker_prompt(
+                ctx.request_chat_id,
+                ctx.key.1,
+                &source_link,
+                None,
+                ctx.client_id,
+            )
             .await?;
             Ok(Some(true))
         }
@@ -279,7 +310,7 @@ async fn handle_source_link_input(
                 build_step_prompt_text(
                     kind.source_step_label(),
                     "源链接格式不正确",
-                    "请回复 t.me 消息链接，或发送 /cancel 取消。",
+                    "请回复 t.me 消息链接，回复“取消”可退出。",
                 ),
                 ctx.request_chat_id,
                 "输入 https://t.me/... 链接",
@@ -343,6 +374,7 @@ async fn handle_source_link_input(
                     app: Arc::new(app.clone()),
                     request_chat_id: ctx.request_chat_id,
                     request_message_id: ctx.request_message_id,
+                    origin: ExistingCommandOrigin::TextInput,
                     actor: ctx.actor,
                     client_id: ctx.client_id,
                 },
@@ -363,7 +395,7 @@ async fn handle_source_link_input(
                 build_step_prompt_text(
                     kind.source_step_label(),
                     "源链接格式不正确",
-                    "请回复 t.me 消息链接，或发送 /cancel 取消。",
+                    "请回复 t.me 消息链接，回复“取消”可退出。",
                 ),
                 ctx.request_chat_id,
                 "输入 https://t.me/... 链接",
@@ -432,6 +464,7 @@ async fn handle_target_input(
                 kind,
                 &source_link,
                 target_chat_id,
+                None,
                 ctx.request_chat_id,
                 ctx.client_id,
             )
@@ -457,7 +490,7 @@ async fn handle_target_input(
                 build_target_input_prompt_text(
                     &source_link,
                     "输入目标 chat",
-                    "请回复目标 chat_id、别名或 default，或发送 /cancel。",
+                    "请回复目标 chat_id、别名或 default；回复“取消”可退出。",
                 ),
                 ctx.request_chat_id,
                 "输入目标 chat_id、alias 或 default",

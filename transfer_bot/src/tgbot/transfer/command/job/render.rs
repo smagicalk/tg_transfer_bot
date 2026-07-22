@@ -4,10 +4,7 @@
 use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store::{self, JobProgressSnapshot};
 
-use super::super::common::{
-    CommandStyle, build_page_command_section, build_ready_page_header,
-    downloads_command as build_downloads_command, format_bytes, job_command as build_job_command,
-};
+use super::super::common::{build_ready_page_header, format_bytes};
 
 /// 构造 `/job` 动作结果卡片。
 pub(super) fn format_job_action_text(
@@ -57,8 +54,26 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
         ),
     ]);
 
+    lines.push(card::section("目标消息"));
+    match snapshot.job.result_message_link.as_deref() {
+        Some(link) if crate::tgbot::send::is_openable_url(link) => {
+            lines.push(format!("跳转：{}", card::link("打开转存消息", link)));
+            lines.push(card::field("地址", link));
+        }
+        Some(locator) => {
+            lines.push(card::field("定位", locator));
+            lines.push(card::note(
+                "Telegram 普通群、私聊等目标不提供可点击的消息链接；超级群或频道才可直接跳转。",
+            ));
+        }
+        None => lines.push(card::field("地址", "任务尚未完成或暂无结果地址")),
+    }
+
     if snapshot.active_download_files > 0 {
         lines.push(format!("真实下载：{}", format_job_live_download(snapshot)));
+    }
+    if snapshot.active_upload_files > 0 {
+        lines.push(format!("真实上传：{}", format_job_live_upload(snapshot)));
     }
 
     if let Some(last_error) = snapshot.job.last_error.as_deref() {
@@ -76,50 +91,17 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
         "更新",
         snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
     ));
-    // 按钮在用户号登录模式下会被发送层统一禁用，因此正文也必须保留可复制命令。
-    lines.push(build_page_command_section());
-    lines.push(card::command_line(
-        "详情",
-        build_job_command("status", snapshot.job.id, CommandStyle::Long),
-    ));
-    match snapshot.job.status.as_str() {
-        store::JOB_STATUS_PAUSED => {
-            lines.push(card::command_line(
-                "恢复",
-                build_job_command("resume", snapshot.job.id, CommandStyle::Long),
-            ));
-            lines.push(card::command_line(
-                "停止",
-                build_job_command("stop", snapshot.job.id, CommandStyle::Long),
-            ));
-            lines.push(card::command_line(
-                "列表",
-                build_downloads_command(Some("pause"), None, None, CommandStyle::Long),
-            ));
+    let interaction_note = match snapshot.job.status.as_str() {
+        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING => {
+            "可直接点击下方按钮暂停或停止任务；需要命令时点击“查看命令”。"
         }
-        store::JOB_STATUS_CANCELLING
-        | store::JOB_STATUS_CANCEL_FINALIZING
-        | store::JOB_STATUS_CANCELLED => {
-            lines.push(card::command_line(
-                "列表",
-                build_downloads_command(Some("cancel"), None, None, CommandStyle::Long),
-            ));
+        store::JOB_STATUS_PAUSED => "可直接点击下方按钮恢复或停止任务；需要命令时点击“查看命令”。",
+        store::JOB_STATUS_CANCELLING | store::JOB_STATUS_CANCEL_FINALIZING => {
+            "任务正在停止并安全收尾，当前无需重复操作。"
         }
-        _ => {
-            lines.push(card::command_line(
-                "暂停",
-                build_job_command("pause", snapshot.job.id, CommandStyle::Long),
-            ));
-            lines.push(card::command_line(
-                "停止",
-                build_job_command("stop", snapshot.job.id, CommandStyle::Long),
-            ));
-            lines.push(card::command_line(
-                "列表",
-                build_downloads_command(Some("run"), None, None, CommandStyle::Long),
-            ));
-        }
-    }
+        _ => "任务已结束，不能再暂停或停止；可点击下方按钮刷新详情。",
+    };
+    lines.push(card::note(interaction_note));
     lines.join("\n")
 }
 
@@ -144,10 +126,8 @@ pub(super) fn format_job_stop_confirm_text(snapshot: &JobProgressSnapshot) -> St
         card::note("停止后会请求取消任务；未完成文件引用会释放，后续按删除队列配置延迟清理。"),
         card::note("如果只是临时不想继续，请优先使用“暂停”。"),
     ]);
-    lines.push(build_page_command_section());
-    lines.push(card::command_line(
-        "命令停止",
-        build_job_command("stop", snapshot.job.id, CommandStyle::Long),
+    lines.push(card::note(
+        "确认无误后点击“确认停止”；需要命令时点击“查看命令”。",
     ));
     lines.join("\n")
 }
@@ -183,11 +163,42 @@ pub(super) fn format_job_live_download(snapshot: &JobProgressSnapshot) -> String
     )
 }
 
+/// 渲染单任务详情里的 TDLib 实时上传进度。
+pub(super) fn format_job_live_upload(snapshot: &JobProgressSnapshot) -> String {
+    let prefix = format!("{} 个文件", snapshot.active_upload_files);
+    if snapshot.active_upload_total_bytes > 0 && !snapshot.has_unknown_upload_total {
+        let progress = snapshot.active_uploaded_bytes.saturating_mul(100)
+            / snapshot.active_upload_total_bytes.max(1);
+        return format!(
+            "{} {}/{}\n{}",
+            prefix,
+            format_bytes(snapshot.active_uploaded_bytes),
+            format_bytes(snapshot.active_upload_total_bytes),
+            card::progress_bar_percent(progress)
+        );
+    }
+
+    if snapshot.active_upload_total_bytes > 0 {
+        return format!(
+            "{} 已传 {} / 已知总量 {}+",
+            prefix,
+            format_bytes(snapshot.active_uploaded_bytes),
+            format_bytes(snapshot.active_upload_total_bytes)
+        );
+    }
+
+    format!(
+        "{} 已传 {}",
+        prefix,
+        format_bytes(snapshot.active_uploaded_bytes)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        format_job_action_text, format_job_live_download, format_job_status_text,
-        format_job_stop_confirm_text,
+        format_job_action_text, format_job_live_download, format_job_live_upload,
+        format_job_status_text, format_job_stop_confirm_text,
     };
     use crate::tgbot::transfer::store;
 
@@ -214,10 +225,8 @@ mod tests {
         assert!(text.contains("总进度：‹1/3›"));
         assert!(text.contains("完成率：‹|||||||------------- 33%›"));
         assert!(text.contains("■ 时间"));
-        assert!(text.contains("■ 命令"));
-        assert!(text.contains("暂停：‹/job pause 42›"));
-        assert!(text.contains("停止：‹/job stop 42›"));
-        assert!(text.contains("列表：‹/downloads run›"));
+        assert!(!text.contains("■ 命令"));
+        assert!(text.contains("可直接点击下方按钮暂停或停止任务"));
     }
 
     // 失败任务详情应展示 transfer_job.last_error，方便事后通过 /job st 追溯失败原因。
@@ -232,7 +241,33 @@ mod tests {
         assert!(text.contains("«code=400, message=Message not found»"));
     }
 
-    // 停止确认页必须把影响说清楚，并保留显式命令作为无按钮环境的兜底。
+    #[test]
+    fn test_format_job_status_text_shows_result_link() {
+        let mut snapshot = snapshot_with_status(store::JOB_STATUS_SUCCESS);
+        snapshot.job.result_message_link = Some("https://t.me/c/123/456".to_owned());
+
+        let text = format_job_status_text(&snapshot);
+
+        assert!(text.contains("■ 目标消息"));
+        assert!(text.contains("跳转：【打开转存消息】(https://t.me/c/123/456)"));
+        assert!(text.contains("地址：‹https://t.me/c/123/456›"));
+        assert!(text.contains("任务已结束，不能再暂停或停止"));
+    }
+
+    #[test]
+    fn test_format_job_status_text_explains_non_openable_result_locator() {
+        let mut snapshot = snapshot_with_status(store::JOB_STATUS_SUCCESS);
+        snapshot.job.result_message_link =
+            Some("chat_id=-5221439438 message_id=318767104".to_owned());
+
+        let text = format_job_status_text(&snapshot);
+
+        assert!(text.contains("定位：‹chat_id=-5221439438 message_id=318767104›"));
+        assert!(text.contains("Telegram 普通群、私聊等目标不提供可点击的消息链接"));
+        assert!(text.contains("任务已结束，不能再暂停或停止"));
+    }
+
+    // 停止确认页必须把影响说清楚，命令说明通过按钮按需打开。
     #[test]
     fn test_format_job_stop_confirm_text() {
         let snapshot = snapshot_with_status(store::JOB_STATUS_RUNNING);
@@ -244,7 +279,8 @@ mod tests {
         assert!(text.contains("目标：‹-100›"));
         assert!(text.contains("停止后会请求取消任务"));
         assert!(text.contains("如果只是临时不想继续，请优先使用“暂停”。"));
-        assert!(text.contains("命令停止：‹/job stop 42›"));
+        assert!(!text.contains("/job stop 42"));
+        assert!(text.contains("需要命令时点击“查看命令”"));
     }
 
     // 真实下载摘要应和下载列表保持同一风格。
@@ -261,12 +297,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_format_job_status_text_shows_live_upload_progress() {
+        let mut snapshot = snapshot_with_status(store::JOB_STATUS_RUNNING);
+        snapshot.active_upload_files = 2;
+        snapshot.active_uploaded_bytes = 1024;
+        snapshot.active_upload_total_bytes = 4096;
+
+        assert_eq!(
+            format_job_live_upload(&snapshot),
+            "2 个文件 1.0 KB/4.0 KB\n|||||--------------- 25%"
+        );
+        let text = format_job_status_text(&snapshot);
+        assert!(text.contains("真实上传：2 个文件 1.0 KB/4.0 KB"));
+        assert!(text.contains("25%"));
+    }
+
     fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
         let now = store::now_utc8();
         store::JobProgressSnapshot {
             job: store::JobProgressJob {
                 id: 42,
                 target_chat_id: -100,
+                result_message_link: None,
                 status: status.to_owned(),
                 total_items: 3,
                 created_at: now,
@@ -284,6 +337,10 @@ mod tests {
             active_downloaded_bytes: 0,
             active_download_total_bytes: 0,
             has_unknown_download_total: false,
+            active_upload_files: 0,
+            active_uploaded_bytes: 0,
+            active_upload_total_bytes: 0,
+            has_unknown_upload_total: false,
         }
     }
 }

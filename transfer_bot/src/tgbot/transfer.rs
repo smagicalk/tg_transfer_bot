@@ -11,20 +11,22 @@ mod runtime;
 mod spawn;
 mod spider;
 mod store;
-mod types;
+pub(crate) mod types;
 mod workflow;
 
 pub(in crate::tgbot) use command::{
-    build_help_button_data, build_menu_home_button_data_for_outer,
-    build_menu_new_transfer_button_data_for_outer,
+    auth_command_on, cache_command_on, config_command_on, downloads_command_on,
+    handle_auth_shared_user_input, handle_auth_text_input_on, handle_menu_shared_chat_input,
+    handle_menu_text_input_on, health_command_on, job_command_on, lookup_command_on,
+    menu_command_on, start_transfer_target_choice_from_bot_message,
+    start_transfer_target_choice_from_link_message, targets_command_on, transfer_callback_query_on,
+    transfer_command_on, transferable_message_source_location,
 };
 pub(in crate::tgbot) use command::{
-    cache_command_on, config_command_on, downloads_command_on, handle_menu_text_input_on,
-    health_command_on, job_command_on, lookup_command_on, menu_command_on,
-    start_transfer_target_choice_from_bot_message, start_transfer_target_choice_from_link_message,
-    targets_command_on, transfer_callback_query_on, transfer_command_on,
-    transferable_message_source_location,
+    build_help_message_button_data, build_menu_home_button_data_for_outer,
+    build_menu_new_transfer_button_data_for_outer, build_view_commands_button,
 };
+pub(in crate::tgbot) use command::{cancel_auth_input, discard_auth_input_for_command};
 pub use command::{
     cancel_menu_input, discard_menu_input, discard_menu_input_for_command, help_command,
     job_command, transfer_callback_query,

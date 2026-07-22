@@ -53,18 +53,29 @@ pub(super) fn build_cache_keyboard(
     let current_callback = build_cache_view_callback_data(args.view, args.limit, args.page);
     let mut pagination_row = None;
     let mut rows = Vec::new();
-    rows.push(vec![
-        send::build_callback_button(
-            "概览",
-            &build_cache_view_callback_data(CacheView::Summary, args.limit, 1),
-            tdlib_rs::enums::ButtonStyle::Primary,
-        ),
-        send::build_callback_button(
-            "分页",
-            &build_cache_view_callback_data(CacheView::Page, args.limit, args.page),
+    // 明细列表是默认入口，不再重复展示“分页”切换；概览页仅补一个返回列表的入口。
+    let mut view_row = vec![send::build_callback_button(
+        "概览",
+        &build_cache_view_callback_data(CacheView::Summary, args.limit, 1),
+        if matches!(args.view, CacheView::Summary) {
+            tdlib_rs::enums::ButtonStyle::Primary
+        } else {
+            tdlib_rs::enums::ButtonStyle::Default
+        },
+    )];
+    if matches!(args.view, CacheView::Summary) {
+        view_row.push(send::build_callback_button(
+            "缓存列表",
+            &build_cache_view_callback_data(CacheView::Page, args.limit, 1),
             tdlib_rs::enums::ButtonStyle::Default,
-        ),
-    ]);
+        ));
+    }
+    view_row.push(send::build_callback_button(
+        "查看命令",
+        &super::super::build_help_button_data(Some("cache")),
+        tdlib_rs::enums::ButtonStyle::Default,
+    ));
+    rows.push(view_row);
     if matches!(args.view, CacheView::Page) {
         let first_page = 1u64;
         let prev_page = args.page.saturating_sub(1).max(1);

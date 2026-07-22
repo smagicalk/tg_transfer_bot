@@ -89,7 +89,8 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
             .await
         {
             tracing::warn!("edit final transfer progress failed: {:#}", err);
-            should_send_separate_result = true;
+            // 用户要求整个转存生命周期只使用原进度消息；编辑失败时不再补发第二条结果卡。
+            should_send_separate_result = false;
         }
 
         if !should_send_separate_result {

@@ -6,19 +6,9 @@ use crate::tgbot::transfer::command::menu::build_menu_home_callback_data;
 
 use super::super::text::{build_menu_status_text, build_step_prompt_text};
 use super::state::{
-    AdminInputAction, MenuInputDraft, MenuJobAction, admin_input_prompt_meta, cancel_menu_input,
-    put_draft,
+    AdminInputAction, MenuInputDraft, MenuJobAction, admin_input_prompt_meta,
+    cancel_menu_input_with_result, put_draft,
 };
-
-/// 管理输入入口的步骤标签。
-///
-/// 新增别名是两步输入，其他管理动作仍是一条回复完成。
-fn admin_input_step_label(action: AdminInputAction) -> &'static str {
-    match action {
-        AdminInputAction::TargetsAliasName => "1/2",
-        _ => "1/1",
-    }
-}
 
 /// 处理任务页的“输入 job_id”按钮。
 ///
@@ -45,7 +35,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn job_id_input_callback_que
     send::send_card_message_with_force_reply_returning(
         build_step_prompt_text("1/1", action.input_title(), action.input_detail()),
         chat_id,
-        "输入数字 job_id，或发送 /cancel",
+        "输入数字 job_id（回复“取消”可退出）",
         client_id,
     )
     .await?;
@@ -99,36 +89,61 @@ pub(in crate::tgbot::transfer::command::menu) async fn admin_input_callback_quer
     client_id: i32,
 ) -> anyhow::Result<()> {
     // 先算提示文案，再把上下文写进草稿；否则 `context_text` 会被移动掉。
-    let meta = admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
+    // 目标 picker 需要把本次 callback 绑定到草稿，防止旧消息的共享聊天结果串线。
+    let picker_token = if action.uses_chat_picker() {
+        Some(context_i64.unwrap_or(callback_query_id))
+    } else {
+        context_i64
+    };
+    let meta = admin_input_prompt_meta(action, context_text.as_deref(), picker_token);
+    let step_label = super::admin_input_step_label(action, context_text.as_deref(), picker_token);
     put_draft(
         (chat_id, sender_user_id),
-        MenuInputDraft::admin_input(action, context_text, context_i64),
+        MenuInputDraft::admin_input(action, context_text, picker_token),
     )
     .await?;
     let prompt_title = prompt_title.unwrap_or(meta.title);
     let prompt_detail = prompt_detail.unwrap_or(meta.detail);
     let prompt_placeholder = prompt_placeholder.unwrap_or(meta.placeholder);
-    send::answer_callback_query(callback_query_id, Some("请输入参数"), client_id).await?;
+    let callback_tip = if action.uses_chat_picker() {
+        "请选择目标聊天"
+    } else {
+        "请输入参数"
+    };
+    send::answer_callback_query(callback_query_id, Some(callback_tip), client_id).await?;
     super::callbacks_target::edit_input_waiting_card(
         chat_id,
         message_id,
         client_id,
-        admin_input_step_label(action),
+        step_label,
         &prompt_title,
         &prompt_detail,
     )
     .await;
-    send::send_card_message_with_force_reply_returning(
-        build_step_prompt_text(
-            admin_input_step_label(action),
-            &prompt_title,
-            &prompt_detail,
-        ),
-        chat_id,
+    super::send_admin_input_prompt(
+        action,
+        picker_token,
+        step_label,
+        &prompt_title,
+        &prompt_detail,
         &prompt_placeholder,
+        chat_id,
+        sender_user_id,
         client_id,
     )
     .await?;
+    // 目标管理 picker 使用新消息承载 reply keyboard；旧 inline 卡片只会造成重复入口。
+    if action.uses_chat_picker()
+        && let Err(error) = send::delete_message(chat_id, message_id, client_id).await
+    {
+        tracing::debug!(
+            chat_id,
+            sender_user_id,
+            message_id,
+            error = %error,
+            "stale admin input card could not be deleted"
+        );
+    }
     Ok(())
 }
 
@@ -140,12 +155,12 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_input_callback_que
     sender_user_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let removed = cancel_menu_input(chat_id, sender_user_id).await?;
+    let cancelled = cancel_menu_input_with_result(chat_id, sender_user_id).await?;
     send::answer_callback_query(callback_query_id, Some("已取消"), client_id).await?;
     let (text, keyboard) = send::ReplyPanel::card(build_menu_status_text(
         "已取消",
         "cancelled",
-        if removed {
+        if cancelled.removed {
             "当前输入流程已取消。"
         } else {
             "没有正在进行的输入流程。"
@@ -164,8 +179,23 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_input_callback_que
         keyboard,
         client_id,
         "取消输入刷新失败",
-        "输入流程已处理，但原消息编辑失败；请复制错误或重新打开 /menu。",
+        "输入流程已处理，但原消息编辑失败；请使用错误卡片上的“菜单”按钮重新进入。",
     )
     .await?;
+    if cancelled.remove_reply_keyboard {
+        let cleared = super::clear_native_picker_messages(chat_id, sender_user_id, client_id).await;
+        if !cleared {
+            send::send_card_message_with_remove_keyboard(
+                build_menu_status_text(
+                    "聊天选择已关闭",
+                    "cancelled",
+                    "输入框下方的目标聊天选择按钮已移除。",
+                ),
+                chat_id,
+                client_id,
+            )
+            .await?;
+        }
+    }
     Ok(())
 }

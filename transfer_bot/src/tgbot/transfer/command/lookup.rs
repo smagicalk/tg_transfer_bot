@@ -9,12 +9,12 @@ use crate::tgbot::transfer::store;
 use crate::tgbot::transfer::{refresh_stored_result_link, refresh_stored_result_messages};
 
 use super::common::{
-    CommandStyle, job_command as build_job_command, lookup_command as build_lookup_command,
-    resolve_target_chat_id_on, transfer_command as build_transfer_command,
+    CommandStyle, lookup_command as build_lookup_command, resolve_target_chat_id_on,
 };
 use super::{
     build_downloads_status_button_data, build_job_pause_button_data, build_job_resume_button_data,
     build_job_status_button_data, build_job_stop_button_data, build_menu_home_button_data,
+    build_view_commands_button,
 };
 
 const LOOKUP_CALLBACK_PREFIX: &str = "lk:";
@@ -122,21 +122,23 @@ pub async fn lookup_command_on(
             result_count = result_messages.len(),
             "lookup command hit success job"
         );
-        let mut panel =
-            send::ReplyPanel::card(crate::tgbot::transfer::outcome::format_result_card_text(
-                "已找到历史转存结果",
-                &source_link,
-                target_chat_id,
-                Some(job.id),
-                &result_messages,
-            ));
-        for row in crate::tgbot::transfer::outcome::build_result_message_rows(&result_messages) {
-            panel = panel.row(row);
-        }
-        for row in build_lookup_success_navigation_buttons(job.id) {
-            panel = panel.row(row);
-        }
-        return panel.send(actor.request_chat_id, client_id).await;
+        let text = crate::tgbot::transfer::outcome::format_result_card_text(
+            "已找到历史转存结果",
+            &source_link,
+            target_chat_id,
+            Some(job.id),
+            &result_messages,
+        );
+        let mut rows = crate::tgbot::transfer::outcome::build_result_message_rows(&result_messages);
+        rows.extend(build_lookup_success_navigation_buttons(job.id));
+        return crate::tgbot::transfer::outcome::send_result_card(
+            text,
+            rows,
+            &result_messages,
+            actor.request_chat_id,
+            client_id,
+        )
+        .await;
     }
 
     if let Some(job) = store::find_active_job_by_source_target(&source_link, target_chat_id).await?
@@ -187,8 +189,7 @@ pub async fn lookup_command_on(
 
 /// 构建 lookup 命中成功结果时的导航按钮。
 ///
-/// 查询命令和重转命令已经在正文里保留；lookup 成功页复用统一结果导航层级，
-/// 保持“任务详情”与“列表/菜单”分成两行，避免不同结果页布局漂移。
+/// lookup 成功页复用统一结果导航层级，保持结果页布局一致。
 fn build_lookup_success_navigation_buttons(
     job_id: i64,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
@@ -209,6 +210,7 @@ fn build_lookup_miss_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardBut
             &build_lookup_retry_transfer_callback_data(),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
+        build_view_commands_button(Some("lookup")),
         send::build_callback_button(
             "菜单",
             &build_menu_home_button_data(),
@@ -244,7 +246,7 @@ pub async fn lookup_callback_query_on(
         send::ReplyPanel::card(super::menu::build_menu_recovery_text_for_outer(
             "重新转存入口已失效",
             "expired",
-            "请重新发送 /lookup，或直接发送 /transfer 发起新任务。",
+            "请点击“重新开始”重新选择来源和目标。",
         ))
         .rows(build_expired_retry_button_rows())
         .send(update.chat_id, client_id)
@@ -261,9 +263,12 @@ pub async fn lookup_callback_query_on(
         vec!["/transfer", context.source_link.as_str(), target.as_str()],
         config,
         update.chat_id,
-        update.message_id,
-        actor,
-        client_id,
+        super::transfer_cmd::TransferCommandContext {
+            request_message_id: update.message_id,
+            interaction_message_id: Some(update.message_id),
+            actor,
+            client_id,
+        },
     )
     .await
 }
@@ -286,7 +291,7 @@ fn build_expired_retry_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardB
 
 /// 构建 lookup 命中进行中任务时的控制按钮。
 ///
-/// 控制按钮复用 `/job` callback；停止按钮会先进入确认页，正文里保留完整命令作为兜底。
+/// 控制按钮复用 `/job` callback；停止按钮会先进入确认页。
 /// 这里不再额外复制 `job_id`，避免和“查看任务详情”形成重复入口。
 fn build_lookup_active_control_buttons(
     job_id: i64,
@@ -343,6 +348,7 @@ fn build_lookup_active_button_rows(
             &build_downloads_status_button_data(status, 8),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
+        build_view_commands_button(Some("job")),
         send::build_callback_button(
             "菜单",
             &build_menu_home_button_data(),
@@ -364,24 +370,7 @@ fn format_lookup_active_text(
         card::status_job_target(status, job_id, target_chat_id),
         card::DIVIDER.to_owned(),
         card::section("下一步"),
-        format!(
-            "可直接用按钮控制任务，或使用 {} 查看运行列表。",
-            card::code("/downloads run")
-        ),
-        card::section("命令"),
-        card::command_line(
-            "详情",
-            build_job_command("status", job_id, CommandStyle::Long),
-        ),
-        card::command_line(
-            "暂停",
-            build_job_command("pause", job_id, CommandStyle::Long),
-        ),
-        card::command_line(
-            "停止",
-            build_job_command("stop", job_id, CommandStyle::Long),
-        ),
-        card::command_line("列表", "/downloads run"),
+        "可直接用按钮控制任务或查看对应列表；需要命令时点击“查看命令”。".to_owned(),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
@@ -395,16 +384,7 @@ fn format_lookup_miss_text(source_link: &str, target_chat_id: i64) -> String {
         card::status_target("miss", target_chat_id),
         card::DIVIDER.to_owned(),
         card::section("下一步"),
-        "可直接点击下方“重新转存”，也可使用命令手动发起任务。".to_owned(),
-        card::section("命令"),
-        card::command_line(
-            "转存",
-            build_transfer_command(source_link, target_chat_id, CommandStyle::Long),
-        ),
-        card::command_line(
-            "查询",
-            build_lookup_command(source_link, target_chat_id, CommandStyle::Long),
-        ),
+        "可直接点击下方“重新转存”；需要命令时点击“查看命令”。".to_owned(),
         String::new(),
     ];
     lines.extend(card::source_block(source_link));
@@ -427,7 +407,8 @@ mod tests {
 
         assert!(text.contains("状态：‹running›"));
         assert!(text.contains("job：‹#42›"));
-        assert!(text.contains("‹/downloads run›"));
+        assert!(!text.contains("/downloads run"));
+        assert!(text.contains("需要命令时点击“查看命令”"));
         assert!(text.contains("可直接用按钮控制任务"));
     }
 
@@ -479,7 +460,7 @@ mod tests {
         assert!(!cancelling.iter().any(|button| button.text == "复制 job_id"));
     }
 
-    // 查询命中卡应先展示任务详情和控制，最后才放列表/菜单导航。
+    // 查询命中卡应先展示任务详情和控制，最后再放列表、命令和菜单导航。
     #[test]
     fn test_build_lookup_active_button_rows_prioritizes_job_actions() {
         let rows = build_lookup_active_button_rows(42, "running");
@@ -489,7 +470,8 @@ mod tests {
         assert_eq!(rows[0][2].text, "停止");
         assert_eq!(rows[0][2].style, tdlib_rs::enums::ButtonStyle::Danger);
         assert_eq!(rows[1][0].text, "返回列表");
-        assert_eq!(rows[1][1].text, "菜单");
+        assert_eq!(rows[1][1].text, "查看命令");
+        assert_eq!(rows[1][2].text, "菜单");
         assert_eq!(rows.len(), 2);
     }
 
@@ -501,7 +483,8 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0][0].text, "查看任务详情");
         assert_eq!(rows[1][0].text, "返回列表");
-        assert_eq!(rows[1][1].text, "菜单");
+        assert_eq!(rows[1][1].text, "查看命令");
+        assert_eq!(rows[1][2].text, "菜单");
     }
 
     // lookup 成功命中已有结果时，按钮区应使用真实 callback 导航，不再重复复制查询/重转命令。
@@ -513,9 +496,10 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].len(), 1);
         assert_eq!(rows[0][0].text, "查看任务详情");
-        assert_eq!(rows[1].len(), 2);
+        assert_eq!(rows[1].len(), 3);
         assert_eq!(rows[1][0].text, "查看完成列表");
-        assert_eq!(rows[1][1].text, "菜单");
+        assert_eq!(rows[1][1].text, "查看命令");
+        assert_eq!(rows[1][2].text, "菜单");
         assert!(!buttons.iter().any(|button| button.text == "复制查询命令"));
         assert!(!buttons.iter().any(|button| button.text == "复制重新转存"));
     }

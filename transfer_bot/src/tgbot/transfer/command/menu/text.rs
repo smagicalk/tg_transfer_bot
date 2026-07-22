@@ -3,16 +3,14 @@
 
 use crate::tgbot::transfer::card;
 
-use super::super::common::{build_runtime_admin_landing_text, lookup_command, transfer_command};
+use super::super::common::build_runtime_admin_landing_text;
 use super::super::config_cmd::{config_help_descriptor, config_intro_lines, config_summary_lines};
-use super::super::downloads::{downloads_help_intro_lines, downloads_menu_command_lines};
-use super::super::job::{job_help_intro_lines, job_menu_command_lines};
+use super::super::downloads::downloads_help_intro_lines;
+use super::super::job::job_help_intro_lines;
 use super::super::targets::{
     targets_help_descriptor, targets_input_entry_lines, targets_intro_lines,
 };
 use super::callback::MenuPage;
-use super::input::MenuInputKind;
-use super::{admin_hub_specs, tasks_hub_specs};
 
 /// 菜单首页摘要。
 ///
@@ -52,40 +50,26 @@ pub(super) fn build_menu_text(page: MenuPage) -> String {
 
 /// 任务 hub。
 fn tasks_hub_text() -> String {
-    let mut lines = vec![
+    [
         "任务".to_owned(),
         build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("操作"),
-        "常用状态直接打开任务列表；其他状态和指定目标查询也可从这里直接进入。".to_owned(),
-        card::section("命令"),
-    ];
-    lines.extend(build_hub_command_lines(tasks_hub_specs()));
-    lines.join("\n")
+        "常用状态、指定目标查询和最近任务都可以直接点击进入。需要命令时点击“查看命令”。".to_owned(),
+    ]
+    .join("\n")
 }
 
 /// 管理 hub。
 fn admin_hub_text() -> String {
-    let mut lines = vec![
+    [
         "管理".to_owned(),
         build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("操作"),
-        "运行配置、目标配置、健康和缓存统一放在这里。".to_owned(),
-        card::section("命令"),
-    ];
-    lines.extend(build_hub_command_lines(admin_hub_specs()));
-    lines.join("\n")
-}
-
-/// 把 hub 入口元数据转换为卡片命令区。
-///
-/// 文案和按钮都从 `menu.rs` 的共享入口定义读取，避免两处顺序或命令模板漂移。
-fn build_hub_command_lines(rows: Vec<Vec<super::HubEntrySpec>>) -> Vec<String> {
-    rows.into_iter()
-        .flatten()
-        .map(|spec| card::command_line(spec.text, spec.command_preview))
-        .collect()
+        "运行配置、目标配置、健康和缓存统一放在这里。需要命令时点击“查看命令”。".to_owned(),
+    ]
+    .join("\n")
 }
 
 /// 目标配置页。
@@ -132,12 +116,7 @@ pub(super) fn build_menu_home_text(summary: &MenuHomeSummary) -> String {
         },
         "首页已经放了常用直达动作：快速转存、指定目标和管理入口。".to_owned(),
         "任务状态、最近任务、任务控制和查询结果已下沉到“任务”页，首页只保留高频入口。".to_owned(),
-        card::section("命令"),
-        card::command_line("转存", "/transfer"),
-        card::command_line("下载列表", "/downloads run"),
-        card::command_line("运行健康", "/health"),
-        card::command_line("文件缓存", "/cache"),
-        card::command_line("帮助", "/help"),
+        "日常操作都可以点击按钮完成，需要命令时点击“查看命令”。".to_owned(),
     ]
     .join("\n")
 }
@@ -184,7 +163,7 @@ pub(super) fn build_step_prompt_with_context(
     ];
     lines.extend(build_menu_context_lines(source_link, target_chat_id));
     lines.push(card::note(detail));
-    lines.push(format!("取消：{}", card::code("/cancel")));
+    lines.push("取消：点击“取消”按钮，或回复“取消”结束当前流程。".to_owned());
     lines.join("\n")
 }
 
@@ -252,7 +231,6 @@ pub(super) fn build_menu_status_text(title: &str, status: &str, detail: &str) ->
         build_menu_state_line(status),
         card::DIVIDER.to_owned(),
         card::note(detail),
-        card::command_line("菜单", "/menu"),
     ]
     .join("\n")
 }
@@ -261,14 +239,7 @@ pub(super) fn build_menu_status_text(title: &str, status: &str, detail: &str) ->
 ///
 /// 这类提示不应继续沿用 `waiting-input` 的步骤式文本，否则用户会误以为流程仍在等待输入。
 pub(super) fn build_menu_recovery_text(title: &str, status: &str, detail: &str) -> String {
-    [
-        title.to_owned(),
-        build_menu_state_line(status),
-        card::DIVIDER.to_owned(),
-        card::note(detail),
-        card::command_line("菜单", "/menu"),
-    ]
-    .join("\n")
+    build_menu_status_text(title, status, detail)
 }
 
 /// 构造统一的“没有未完成输入”空态卡片。
@@ -280,29 +251,6 @@ pub(super) fn build_menu_no_pending_input_text() -> String {
     )
 }
 
-/// 构造确认页命令预览。
-///
-/// 按钮是主入口，但在执行前把最终命令展示出来，可以帮助用户快速复核“源链接 + 目标 chat”是否正确。
-pub(super) fn build_confirm_command_preview(
-    kind: MenuInputKind,
-    source_link: &str,
-    target_chat_id: i64,
-) -> String {
-    if kind.command_kind() == MenuInputKind::Transfer {
-        transfer_command(
-            source_link,
-            target_chat_id,
-            super::super::common::CommandStyle::Long,
-        )
-    } else {
-        lookup_command(
-            source_link,
-            target_chat_id,
-            super::super::common::CommandStyle::Long,
-        )
-    }
-}
-
 /// 下载页。
 fn downloads_text() -> String {
     let mut lines = vec![
@@ -312,8 +260,7 @@ fn downloads_text() -> String {
         card::section("筛选"),
     ];
     lines.extend(downloads_help_intro_lines());
-    lines.push(card::section("命令"));
-    lines.extend(downloads_menu_command_lines());
+    lines.push("筛选、分页和任务详情都可以直接点击按钮，需要命令时点击“查看命令”。".to_owned());
     lines.join("\n")
 }
 
@@ -326,8 +273,7 @@ fn jobs_text() -> String {
         card::section("操作"),
     ];
     lines.extend(job_help_intro_lines());
-    lines.push(card::section("命令"));
-    lines.extend(job_menu_command_lines());
+    lines.push("任务详情、控制和刷新都可以直接点击按钮，需要命令时点击“查看命令”。".to_owned());
     lines.join("\n")
 }
 
@@ -341,9 +287,7 @@ fn lookup_text() -> String {
         "点击“快速查询”，只回复源链接，目标 chat 使用预先配置的目标。".to_owned(),
         "点击“指定目标”，按提示输入源链接和目标 chat。".to_owned(),
         "命中后会返回结果链接或定位。".to_owned(),
-        card::section("命令"),
-        card::command_line("快速查询", "/lookup <link>"),
-        card::command_line("指定目标", "/lookup <link> <target_chat_id>"),
+        "需要命令时点击“查看命令”。".to_owned(),
     ]
     .join("\n")
 }
@@ -363,11 +307,7 @@ fn help_text() -> String {
         build_menu_state_line("ready"),
         card::DIVIDER.to_owned(),
         card::section("说明"),
-        "点按钮可直接切换帮助页，命令仍可在下方查看。".to_owned(),
-        card::section("命令"),
-        card::command_line("帮助目录", "/help"),
-        card::command_line("转存帮助", "/help transfer"),
-        card::command_line("任务帮助", "/help job"),
+        "点按钮可直接切换帮助主题；完整命令目录通过“查看命令”入口打开。".to_owned(),
     ]
     .join("\n")
 }
@@ -397,10 +337,12 @@ mod tests {
         let admin = build_menu_text(MenuPage::AdminHub);
 
         assert!(tasks.contains("最近任务"));
-        assert!(tasks.contains("/downloads run"));
+        assert!(tasks.contains("查看命令"));
+        assert!(!tasks.contains("/downloads run"));
         assert!(admin.contains("运行配置"));
-        assert!(admin.contains("/config show"));
-        assert!(admin.contains("/targets show"));
+        assert!(admin.contains("查看命令"));
+        assert!(!admin.contains("/config show"));
+        assert!(!admin.contains("/targets show"));
     }
 
     #[test]
@@ -409,7 +351,8 @@ mod tests {
 
         assert!(targets.contains("目标配置"));
         assert!(targets.contains("■ 输入入口"));
-        assert!(targets.contains("/targets set-default 123456789"));
+        assert!(targets.contains("设置默认目标：‹set-default›"));
+        assert!(!targets.contains("/targets set-default 123456789"));
     }
 
     #[test]
@@ -452,11 +395,12 @@ mod tests {
         let text = build_menu_text(MenuPage::TasksHub);
 
         assert!(text.contains("最近任务"));
-        assert!(text.contains("/downloads run"));
-        assert!(text.contains("/lookup <link> <target_chat_id>"));
+        assert!(text.contains("查看命令"));
+        assert!(!text.contains("/downloads run"));
+        assert!(!text.contains("/lookup <link> <target_chat_id>"));
     }
 
-    // 配置页应列出 `/config set` 实际支持的动态字段，避免菜单文案落后于命令实现。
+    // 配置页应列出可调字段，但默认不展开命令区。
     #[test]
     fn test_build_menu_text_config_contains_runtime_fields() {
         let text = build_menu_text(MenuPage::Config);
@@ -467,8 +411,8 @@ mod tests {
         assert!(text.contains("progress_edit_interval_seconds"));
         assert!(text.contains("downloads_default_page_size"));
         assert!(text.contains("menu_input_timeout_seconds"));
-        assert!(text.contains("■ 命令"));
-        assert!(text.contains("/config set job_concurrency 4"));
+        assert!(!text.contains("■ 命令"));
+        assert!(!text.contains("/config set job_concurrency 4"));
     }
 
     // 分步提示应明确告诉用户当前是第几步，减少多消息流程里的迷路感。
@@ -477,7 +421,7 @@ mod tests {
         let text = build_step_prompt_text("1/3", "源链接", "请回复链接。");
 
         assert!(text.contains("步骤：‹1/3›"));
-        assert!(text.contains("‹/cancel›"));
+        assert!(text.contains("回复“取消”结束当前流程"));
     }
 
     // 带上下文的步骤提示应把来源/目标回显出来，减少多步流程里的迷路感。
@@ -520,18 +464,18 @@ mod tests {
 
         assert!(text.contains("已取消"));
         assert!(text.contains("‹cancelled›"));
-        assert!(text.contains("‹/menu›"));
+        assert!(!text.contains("/menu"));
         assert!(!text.contains("waiting-input"));
     }
 
     // 过期/恢复提示应是终态卡片，而不是继续显示等待输入状态。
     #[test]
     fn test_build_menu_recovery_text() {
-        let text = build_menu_recovery_text("输入已过期", "expired", "请重新打开 /menu。");
+        let text = build_menu_recovery_text("输入已过期", "expired", "请返回菜单重新开始。");
 
         assert!(text.contains("输入已过期"));
         assert!(text.contains("‹expired›"));
-        assert!(text.contains("‹/menu›"));
+        assert!(!text.contains("/menu"));
         assert!(!text.contains("waiting-input"));
     }
 
@@ -543,18 +487,5 @@ mod tests {
         assert!(text.contains("没有未完成输入"));
         assert!(text.contains("‹empty›"));
         assert!(text.contains("当前没有可继续的菜单输入"));
-    }
-
-    // 确认页应展示最终命令预览，方便执行前快速复核。
-    #[test]
-    fn test_build_confirm_command_preview() {
-        assert_eq!(
-            build_confirm_command_preview(MenuInputKind::Transfer, "https://t.me/c/1/2", -100),
-            "/transfer https://t.me/c/1/2 -100"
-        );
-        assert_eq!(
-            build_confirm_command_preview(MenuInputKind::Lookup, "https://t.me/c/1/2", -100),
-            "/lookup https://t.me/c/1/2 -100"
-        );
     }
 }

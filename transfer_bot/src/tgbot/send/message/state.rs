@@ -35,6 +35,18 @@ pub async fn wait_for_sent_message(
     message: tdlib_rs::types::Message,
     client_id: i32,
 ) -> anyhow::Result<tdlib_rs::types::Message> {
+    wait_for_sent_message_with_timeout(message, client_id, SEND_SUCCEEDED_WAIT_TIMEOUT).await
+}
+
+/// 等待 TDLib 把临时 message_id 替换成最终 message_id，并允许业务场景指定等待窗口。
+///
+/// 媒体上传可能在服务端处理较慢，上传调用方应使用更长窗口；普通机器人文本仍使用
+/// `wait_for_sent_message` 的短窗口，避免单条回复长时间阻塞。
+pub async fn wait_for_sent_message_with_timeout(
+    message: tdlib_rs::types::Message,
+    client_id: i32,
+    timeout: Duration,
+) -> anyhow::Result<tdlib_rs::types::Message> {
     if message.sending_state.is_none() {
         return Ok(message);
     }
@@ -51,7 +63,7 @@ pub async fn wait_for_sent_message(
         rx
     };
 
-    match tokio::time::timeout(SEND_SUCCEEDED_WAIT_TIMEOUT, rx).await {
+    match tokio::time::timeout(timeout, rx).await {
         Ok(Ok(Ok(final_message))) => Ok(final_message),
         Ok(Ok(Err(error))) => {
             anyhow::bail!("message send failed after initial response: {}", error)
@@ -334,6 +346,36 @@ mod tests {
         )
         .await;
         assert_eq!(resolved_id, Some(final_id));
+    }
+
+    /// 上传场景使用更长的自定义等待窗口时，应接住稍后到达的最终消息 ID。
+    #[tokio::test]
+    async fn test_custom_wait_timeout_resolves_delayed_final_message() {
+        let chat_id = next_chat_id();
+        let temporary_id = -14;
+        let final_id = 34;
+
+        let observer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            observe_message_send_succeeded_for_client(
+                tdlib_rs::types::UpdateMessageSendSucceeded {
+                    message: test_message(chat_id, final_id, None),
+                    old_message_id: temporary_id,
+                },
+                TEST_CLIENT_ID,
+            );
+        });
+
+        let resolved = wait_for_sent_message_with_timeout(
+            test_message(chat_id, temporary_id, pending_state()),
+            TEST_CLIENT_ID,
+            Duration::from_millis(100),
+        )
+        .await
+        .expect("delayed successful send should resolve within custom timeout");
+        observer.await.expect("observer task should finish");
+
+        assert_eq!(resolved.id, final_id);
     }
 
     #[tokio::test]

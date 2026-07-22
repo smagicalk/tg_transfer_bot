@@ -2,10 +2,6 @@
 // 正文使用统一卡片风格，错误详情单独用等宽代码块，兼顾美观和排查便利。
 
 use super::super::card;
-use super::super::command::common::{
-    CommandStyle, downloads_command as build_downloads_command,
-    lookup_command as build_lookup_command, transfer_command as build_transfer_command,
-};
 use super::super::command::{
     build_job_status_button_data, build_lookup_retry_transfer_button_data,
 };
@@ -67,7 +63,7 @@ pub(in crate::tgbot) fn classify_transfer_error_text(error_text: &str) -> Transf
             "缺少目标",
             "need-target",
             "当前请求 chat 没有匹配到默认目标，也没有在命令里指定目标。",
-            "重新发送转存命令并带上目标 chat_id 或别名，或者在目标配置中设置默认目标。",
+            "点击“重新转存”后选择目标，或者在目标配置中设置默认目标。",
         );
     }
 
@@ -202,19 +198,9 @@ pub(in crate::tgbot::transfer) async fn send_failure_message(
     notify_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let retry_command = build_transfer_command(source_link, target_chat_id, CommandStyle::Long);
-    let lookup_command = build_lookup_command(source_link, target_chat_id, CommandStyle::Long);
     let buttons = build_failure_buttons(job_id, &build_lookup_retry_transfer_button_data());
     let sent = crate::tgbot::send::send_card_message_with_buttons_returning(
-        format_failure_card_text(
-            title,
-            source_link,
-            target_chat_id,
-            job_id,
-            &retry_command,
-            &lookup_command,
-            &err,
-        ),
+        format_failure_card_text(title, source_link, target_chat_id, job_id, &err),
         notify_chat_id,
         buttons,
         client_id,
@@ -236,7 +222,7 @@ pub(in crate::tgbot::transfer) async fn send_failure_message(
 
 /// 构造失败卡片按钮。
 ///
-/// 失败详情和重试命令保留在正文；按钮区优先放能直接点击的 callback。
+/// 失败详情和恢复动作优先通过按钮完成；命令说明按需打开。
 /// 重新转存沿用 lookup 的短 callback + 进程内上下文，避免把长链接塞进 callback_data。
 fn build_failure_buttons(
     job_id: Option<i64>,
@@ -264,14 +250,11 @@ fn build_failure_buttons(
 
 /// 构造失败卡片正文。
 ///
-/// 用户号模式下按钮会被发送层丢弃，因此重试、查询和失败列表命令必须出现在正文里。
 pub(in crate::tgbot::transfer) fn format_failure_card_text(
     title: &str,
     source_link: &str,
     target_chat_id: i64,
     job_id: Option<i64>,
-    retry_command: &str,
-    lookup_command: &str,
     err: &anyhow::Error,
 ) -> String {
     let mut lines = vec![
@@ -284,13 +267,7 @@ pub(in crate::tgbot::transfer) fn format_failure_card_text(
     ];
     lines.extend(build_failure_advice_lines(err));
     lines.extend([
-        card::section("命令"),
-        card::command_line("重试", retry_command),
-        card::command_line("查询", lookup_command),
-        card::command_line(
-            "列表",
-            build_downloads_command(Some("fail"), None, None, CommandStyle::Long),
-        ),
+        card::note("可直接点击下方按钮恢复或查看任务；需要命令时点击“查看命令”。"),
         String::new(),
     ]);
     lines.extend(card::source_block(source_link));
@@ -332,7 +309,8 @@ mod tests {
         assert!(buttons.iter().any(|button| button.text == "查看任务详情"));
         assert!(buttons.iter().any(|button| button.text == "重新转存"));
         assert_eq!(rows[1][0].text, "查看失败列表");
-        assert_eq!(rows[1][1].text, "菜单");
+        assert_eq!(rows[1][1].text, "查看命令");
+        assert_eq!(rows[1][2].text, "菜单");
         assert!(!buttons.iter().any(|button| button.text == "复制重试命令"));
         for button in buttons {
             assert!(matches!(
@@ -351,31 +329,25 @@ mod tests {
         assert_eq!(rows[0][0].text, "重新转存");
         assert_eq!(rows[0][0].style, tdlib_rs::enums::ButtonStyle::Primary);
         assert_eq!(rows[1][0].text, "查看失败列表");
-        assert_eq!(rows[1][1].text, "菜单");
+        assert_eq!(rows[1][1].text, "查看命令");
+        assert_eq!(rows[1][2].text, "菜单");
     }
 
-    // 失败正文应保留重试命令、查询命令和完整错误，用户号模式下也能继续操作。
+    // 失败正文默认隐藏命令，恢复动作通过按钮提供。
     #[test]
     fn test_format_failure_card_text() {
         let err = anyhow::anyhow!("network failed");
-        let text = format_failure_card_text(
-            "转存失败",
-            "https://t.me/c/1/2",
-            -100,
-            Some(42),
-            "/transfer https://t.me/c/1/2 -100",
-            "/lookup https://t.me/c/1/2 -100",
-            &err,
-        );
+        let text = format_failure_card_text("转存失败", "https://t.me/c/1/2", -100, Some(42), &err);
 
         assert!(text.contains("状态：‹failed›"));
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("«network failed»"));
         assert!(text.contains("■ 建议"));
         assert!(text.contains("确认源链接、目标 chat、登录状态和权限后重试"));
-        assert!(text.contains("重试：‹/transfer https://t.me/c/1/2 -100›"));
-        assert!(text.contains("查询：‹/lookup https://t.me/c/1/2 -100›"));
-        assert!(text.contains("列表：‹/downloads fail›"));
+        assert!(!text.contains("■ 命令"));
+        assert!(!text.contains("/transfer https://t.me/c/1/2 -100"));
+        assert!(!text.contains("/lookup https://t.me/c/1/2 -100"));
+        assert!(text.contains("需要命令时点击“查看命令”"));
     }
 
     // 源消息不可见时，应直接告诉用户检查源消息和账号访问权限。

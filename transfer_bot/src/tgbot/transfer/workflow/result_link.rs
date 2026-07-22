@@ -191,7 +191,9 @@ pub(super) fn fallback_result_message_locator(chat_id: i64, message_id: i64) -> 
 /// 兼容两类旧数据：
 /// - `tg://openmessage?chat_id=...&message_id=...`
 /// - `chat_id=... message_id=...`
-pub(super) fn extract_tdlib_message_id_from_stored_link(link: &str) -> Option<i64> {
+pub(in crate::tgbot::transfer) fn extract_tdlib_message_id_from_stored_link(
+    link: &str,
+) -> Option<i64> {
     link.split(['?', '&', ' '])
         .find_map(|part| part.strip_prefix("message_id=")?.parse::<i64>().ok())
 }

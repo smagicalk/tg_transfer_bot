@@ -36,25 +36,21 @@ pub(super) async fn update_transfer_progress_message(
             return;
         }
 
-        let snapshot = match store::find_active_job_id_by_source_target(
-            &plan.source_link,
-            plan.target_chat_id,
-        )
-        .await
-        {
-            // 进度面板只需要 job_id，具体展示字段由轻量快照查询读取。
-            Ok(Some(job_id)) => {
-                store::get_job_progress_snapshot_with_context(app_context.as_ref(), job_id)
-                    .await
-                    .ok()
-                    .flatten()
-            }
-            Ok(None) => None,
-            Err(err) => {
-                tracing::warn!("load transfer progress failed: {:#}", err);
-                None
-            }
-        };
+        let snapshot =
+            match store::find_job_by_request(plan.request_chat_id, plan.request_message_id).await {
+                // 每条请求消息绑定自己的 job；同源同目标的并发请求不能串看最新任务。
+                Ok(Some(job)) => {
+                    store::get_job_progress_snapshot_with_context(app_context.as_ref(), job.id)
+                        .await
+                        .ok()
+                        .flatten()
+                }
+                Ok(None) => None,
+                Err(err) => {
+                    tracing::warn!("load transfer progress failed: {:#}", err);
+                    None
+                }
+            };
 
         let text = match &snapshot {
             Some(snapshot) => format_transfer_progress_text(snapshot, &plan.source_link),

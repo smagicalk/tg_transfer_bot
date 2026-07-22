@@ -1,11 +1,7 @@
 // 转存任务中间状态回复卡片。
-// 这些状态不会携带错误堆栈，只提供 job_id 和下一步控制命令。
+// 这些状态不会携带错误堆栈，只提供 job_id 和下一步控制按钮。
 
 use super::super::card;
-use super::super::command::common::{
-    CommandStyle, downloads_command as build_downloads_command, job_command as build_job_command,
-    lookup_command as build_lookup_command, transfer_command as build_transfer_command,
-};
 use super::super::command::{
     build_downloads_status_button_data, build_job_pause_button_data, build_job_resume_button_data,
     build_job_status_button_data, build_job_stop_button_data, build_menu_home_button_data,
@@ -92,7 +88,7 @@ pub(in crate::tgbot::transfer) async fn send_running_message(
         source_link,
         target_chat_id,
         job_id,
-        &format!("建议：使用 {} 查看后台进度。", card::code("/downloads run")),
+        "可通过下方按钮查看后台进度。",
     ))
     .rows(build_status_button_rows("running", job_id))
     .send(notify_chat_id, client_id)
@@ -101,8 +97,7 @@ pub(in crate::tgbot::transfer) async fn send_running_message(
 
 /// 构造中间状态卡片按钮。
 ///
-/// 所有状态统一为：第一行任务主操作，第二行列表/菜单导航。
-/// 任务详情和正文命令已经能覆盖后续动作，这里不再重复堆叠 `job_id` 复制按钮。
+/// 所有状态统一为：第一行任务主操作，第二行列表/命令/菜单导航。
 pub(in crate::tgbot::transfer) fn build_status_button_rows(
     status: &str,
     job_id: i64,
@@ -115,6 +110,7 @@ pub(in crate::tgbot::transfer) fn build_status_button_rows(
                 &build_downloads_status_button_data(status, 8),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
+            crate::tgbot::transfer::command::build_view_commands_button(Some("job")),
             crate::tgbot::send::build_callback_button(
                 "菜单",
                 &build_menu_home_button_data(),
@@ -126,7 +122,7 @@ pub(in crate::tgbot::transfer) fn build_status_button_rows(
 
 /// 构造任务操作行。
 ///
-/// 这行只承载和单个任务直接相关的操作；列表与菜单导航统一由上层单独拼接。
+/// 这行只承载和单个任务直接相关的操作；列表、命令与菜单导航统一由上层单独拼接。
 pub(in crate::tgbot::transfer) fn build_job_action_row(
     status: &str,
     job_id: i64,
@@ -194,89 +190,16 @@ pub(in crate::tgbot::transfer) fn format_status_card_text(
         card::DIVIDER.to_owned(),
         card::section("说明"),
         card::note(detail),
-        card::section("命令"),
+        card::note("可直接点击下方按钮操作；需要命令时点击“查看命令”。"),
     ];
-    lines.extend(status_command_lines(
-        status,
-        source_link,
-        target_chat_id,
-        job_id,
-    ));
     lines.push(String::new());
     lines.extend(card::source_block(source_link));
     lines.join("\n")
 }
 
-/// 根据任务状态生成正文命令。
-///
-/// 按钮只在 bot token 模式稳定可用；正文命令是用户号模式和日志截图排查时的兜底入口。
-fn status_command_lines(
-    status: &str,
-    source_link: &str,
-    target_chat_id: i64,
-    job_id: i64,
-) -> Vec<String> {
-    let mut lines = vec![
-        card::command_line(
-            "详情",
-            build_job_command("status", job_id, CommandStyle::Long),
-        ),
-        card::command_line(
-            "查询",
-            build_lookup_command(source_link, target_chat_id, CommandStyle::Long),
-        ),
-    ];
-
-    match status {
-        "paused" => {
-            lines.push(card::command_line(
-                "恢复",
-                build_job_command("resume", job_id, CommandStyle::Long),
-            ));
-            lines.push(card::command_line(
-                "停止",
-                build_job_command("stop", job_id, CommandStyle::Long),
-            ));
-            lines.push(card::command_line(
-                "列表",
-                build_downloads_command(Some("pause"), None, None, CommandStyle::Long),
-            ));
-        }
-        "cancelling" | "cancel_finalizing" | "cancelled" => {
-            lines.push(card::command_line(
-                "列表",
-                build_downloads_command(Some("cancel"), None, None, CommandStyle::Long),
-            ));
-        }
-        _ => {
-            lines.push(card::command_line(
-                "暂停",
-                build_job_command("pause", job_id, CommandStyle::Long),
-            ));
-            lines.push(card::command_line(
-                "停止",
-                build_job_command("stop", job_id, CommandStyle::Long),
-            ));
-            lines.push(card::command_line(
-                "列表",
-                build_downloads_command(Some("run"), None, None, CommandStyle::Long),
-            ));
-        }
-    }
-
-    lines.push(card::command_line(
-        "重转",
-        build_transfer_command(source_link, target_chat_id, CommandStyle::Long),
-    ));
-    lines
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_job_action_row, build_status_button_rows, format_status_card_text,
-        status_command_lines,
-    };
+    use super::{build_job_action_row, build_status_button_rows, format_status_card_text};
     use base64::{Engine as _, engine::general_purpose};
 
     // 后台状态卡片应使用 card 标记展示状态、job 和来源。
@@ -294,21 +217,8 @@ mod tests {
         assert!(text.contains("状态：‹running›"));
         assert!(text.contains("job：‹#42›"));
         assert!(text.contains("‹https://t.me/c/1/2›"));
-        assert!(text.contains("详情：‹/job status 42›"));
-        assert!(text.contains("列表：‹/downloads run›"));
-    }
-
-    // paused/cancelled 状态应生成对应列表和控制命令，不能继续展示无效暂停命令。
-    #[test]
-    fn test_status_command_lines_by_status() {
-        let paused = status_command_lines("paused", "https://t.me/c/1/2", -100, 42).join("\n");
-        let cancelled =
-            status_command_lines("cancelled", "https://t.me/c/1/2", -100, 42).join("\n");
-
-        assert!(paused.contains("恢复：‹/job resume 42›"));
-        assert!(paused.contains("列表：‹/downloads pause›"));
-        assert!(cancelled.contains("列表：‹/downloads cancel›"));
-        assert!(!cancelled.contains("暂停：‹/job pause 42›"));
+        assert!(!text.contains("■ 命令"));
+        assert!(text.contains("需要命令时点击“查看命令”"));
     }
 
     // 中间状态卡片按钮应统一为主操作、导航两层，不再混排命令或 `job_id` 复制按钮。
@@ -335,7 +245,9 @@ mod tests {
         );
         assert_eq!(decoded_callback_data(&paused_rows[0][2]), "j:sc:42");
         assert_eq!(rows[1][0].text, "查看运行列表");
-        assert_eq!(rows[1][1].text, "菜单");
+        assert_eq!(rows[1][1].text, "查看命令");
+        assert_eq!(rows[1][2].text, "菜单");
+        assert_eq!(rows[1].len(), 3);
         assert_eq!(rows.len(), 2);
         assert!(!labels.contains(&"复制查询命令"));
         assert!(!labels.contains(&"复制重新转存"));

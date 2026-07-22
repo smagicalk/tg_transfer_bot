@@ -10,20 +10,22 @@
 
 ## 当前状态
 
-记录日期：2026-07-18
+记录日期：2026-07-20
 
-当前项目已经切换为单所有者模式：
+当前项目采用 owner + 静态管理员 + 数据库动态管理员模式：
 
-- `config.json` 顶层使用单个必填 `owner_user_id`。
-- 仅处理 `chat_id == sender_user_id == owner_user_id` 的 bot 私聊。
+- `config.json` 顶层使用必填 `owner_user_id` 和可选 `admin_user_ids`。
+- 仅处理 `chat_id == sender_user_id`，且发送者为所有者或管理员白名单成员的 bot 私聊。
 - TDLib `user` client 保留，只用于 bot 无法读取私有源时 fallback，不是交互用户。
-- 普通使用者、多用户角色、ACL、积分、计费、账户余额和流水代码已经删除。
+- 普通使用者、分级角色、积分、计费、账户余额和流水代码已经删除；静态管理员与动态管理员之间同权。
+- `/auth` 仅 owner 可执行：打开管理员列表，显示名称/用户名/ID；可点击添加后选择 Telegram 用户或输入 ID，也可删除动态管理员。
+- 动态授权写入 `authorized_user`，同时保存可选名称快照；启动时加载到运行时权限集合。
 - 旧数据库不会自动 `DROP` 历史表；运行时代码不再读取旧表，新数据库也不再创建旧表。
 - `transfer_job.owner_user_id` 仅作为审计字段保留，不再参与任务权限过滤。
 - `/menu` 首页为：`快速转存 / 指定目标 / 任务 / 管理 / 帮助`。
 - 管理页仅保留：`运行配置 / 目标配置 / 运行健康 / 文件缓存`。
-- Bot 命令仅保留 `menu / transfer / lookup / downloads / job / config / health / cache / help`。
-- 单所有者模式下不可达的请求 chat 路由已经删除；目标配置只保留默认目标和别名。
+- Bot 命令仅保留 `menu / transfer / lookup / downloads / job / auth / config / health / cache / help`。
+- 管理员私聊模式下不可达的请求 chat 路由已经删除；目标配置只保留默认目标和别名。
 - 菜单旧选聊 callback、`ChatPicker` 草稿状态和共享选聊处理链已经删除。
 - 配置只暴露真实可变的 `workflow.upload_client`；交互固定 bot，源读取固定 bot-first + user fallback。
 - 未使用的 `utils::retry` 与纯转发 `menu/input/callbacks.rs` 已删除。
@@ -33,6 +35,7 @@
 - 手动输入目标的等待卡片支持返回目标选择，并保留原来源链接，不再需要取消后重走整个向导。
 - 重复的转存中转页已经删除；帮助页可直接开始转存，历史 `m:t` 按钮也会兼容启动新向导。
 - 快速转存/查询的来源输入显示为单步 `1/1`；指定目标流程仍为三步，继续输入和错误重试保持一致。
+- 首页存在未完成草稿时只显示“继续输入/取消输入”，隐藏会覆盖当前草稿的“快速转存/指定目标”；取消后恢复新建入口。
 - 默认目标未配置时固定回落当前私聊；不可达的“默认目标缺失”回退分支已删除。
 - 手动目标输入、继续输入和错误重试统一回显来源链接，旧 inline 等待卡也保留当前来源上下文。
 - 目标选择页始终提供当前私聊；上次目标、默认目标、当前私聊和别名按 chat_id 去重，重复别名稳定保留字典序靠前项。
@@ -48,16 +51,17 @@
 - 转存失败卡无论是否已创建 job，都将“重新转存”保持为主操作；没有 job_id 时仍保留失败列表和菜单导航。
 - “重新转存”短回调上下文失效时，恢复卡新增“重新开始”主按钮直接进入转存来源输入，并保留菜单作为次级导航。
 - 两个 GitHub Windows Workflow 已移除 job-level `env` 中不可用的 `env.*`/`runner.*` 引用；Windows 打包脚本会在缓存目录缺少 `vcpkg.exe` 时重新 clone/bootstrap。
+- Linux Workflow 目标已升级为 Debian 13 和 Alpine 3.23，并同步手动 target 选项、镜像、产物后缀和 README 说明；构建脚本按发行版 ID 通用处理，无需额外分支。
 - 转存/查询确认页新增“修改来源”，可原子返回来源输入并保留流程类型，不再需要取消后重走向导。
 
 当前验证基线：
 
 ```text
-cargo test -p transfer_bot
-378 passed; 0 failed
+cargo test --workspace
+413 passed; 0 failed
 ```
 
-交付检查已完成：`cargo fmt --all -- --check`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings`、`git diff --check` 以及编码/BOM 检查均通过。
+交付检查已完成：`cargo fmt --all -- --check`、`cargo test --workspace`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings`、`git diff --check` 以及编码/BOM 检查均通过。
 
 ## 历史记录（2026-06 多用户版本，已失效）
 

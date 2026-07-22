@@ -5,7 +5,7 @@
 mod callback;
 
 use super::common::{
-    CommandStyle, RuntimeAdminHelpDescriptor, RuntimeAdminUsageItem, build_command_examples,
+    CommandStyle, RuntimeAdminHelpDescriptor, RuntimeAdminUsageItem,
     build_runtime_admin_back_menu_row, build_runtime_admin_detail_text,
     build_runtime_admin_page_intro, build_runtime_admin_section_block, config_set_command,
     config_show_command, edit_runtime_admin_interaction_card_or_error, reset_action_title,
@@ -428,7 +428,6 @@ pub async fn config_callback_query_on(
         keyboard,
         client_id,
         "运行配置",
-        "/config show",
     )
     .await?;
     Ok(())
@@ -458,7 +457,6 @@ async fn render_config_reset_confirm_on(
         keyboard,
         client_id,
         "运行配置",
-        "/config show",
     )
     .await
 }
@@ -511,7 +509,6 @@ async fn render_config_field_detail_on(
         keyboard,
         client_id,
         "运行配置",
-        "/config show",
     )
     .await
 }
@@ -694,7 +691,6 @@ fn format_transfer_config_text(title: &str, config: &crate::config::TransferConf
             ),
         ],
     ));
-    lines.extend(build_command_examples(config_example_commands()));
     lines.join("\n")
 }
 
@@ -741,7 +737,7 @@ mod tests {
     use super::*;
     use base64::{Engine as _, engine::general_purpose};
 
-    // 配置页文本应包含主要字段与命令示例。
+    // 配置页默认只展示字段；命令说明通过“查看命令”按钮按需打开。
     #[test]
     fn test_format_config_text_contains_sections() {
         let cfg = crate::config::TransferConfig {
@@ -757,8 +753,7 @@ mod tests {
         assert!(text.contains("progress_edit_interval_seconds"));
         assert!(text.contains("downloads_default_page_size"));
         assert!(text.contains("menu_input_timeout_seconds"));
-        assert!(text.contains("/config reset"));
-        assert!(text.contains("/config show"));
+        assert!(!text.contains("/config"));
     }
 
     // 配置首页只负责字段导航；步进调整下沉到字段详情，全量重置必须明确标注范围。
@@ -775,6 +770,7 @@ mod tests {
         assert!(labels.iter().any(|label| label.starts_with("删除")));
         assert!(labels.contains(&"刷新"));
         assert!(labels.contains(&"重置全部"));
+        assert!(labels.contains(&"查看命令"));
         assert!(!labels.iter().any(|label| label.starts_with("+")));
         assert!(!labels.iter().any(|label| label.starts_with("-")));
     }

@@ -49,13 +49,6 @@ pub(in crate::tgbot) fn field(label: &str, value: impl std::fmt::Display) -> Str
     format!("{}：{}", label, code(value))
 }
 
-/// 构造一行命令字段。
-///
-/// 命令统一使用 code 实体，用户号模式下即使没有按钮，也能长按复制。
-pub(in crate::tgbot) fn command_line(label: &str, command: impl std::fmt::Display) -> String {
-    field(label, command)
-}
-
 /// 构造同一行上的两个字段，适合状态/目标、进度/更新时间这类高频摘要。
 pub(in crate::tgbot) fn field_pair(
     left_label: &str,
@@ -165,7 +158,7 @@ pub(in crate::tgbot) fn result_block(result_link: &str) -> String {
     }
 
     format!(
-        "{}\n说明：已上传，但当前 chat 无可跳转消息链接\n定位：{}",
+        "{}\n说明：当前 chat 不提供独立 URL，请通过结果通知的消息引用跳转\n定位：{}",
         section("结果"),
         code(result_link)
     )
@@ -196,8 +189,8 @@ fn escape_link_url(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        code, command_line, field, field_pair, job_ref, link, note, pre_code, progress_bar,
-        progress_bar_percent, result_block, section, source_block, status_job_target, summary_line,
+        code, field, field_pair, job_ref, link, note, pre_code, progress_bar, progress_bar_percent,
+        result_block, section, source_block, status_job_target, summary_line,
     };
 
     // 卡片标记应保持简单稳定，供发送层解析为 TDLib 实体。
@@ -208,7 +201,6 @@ mod tests {
         assert_eq!(note("等待刷新。"), "说明：等待刷新。");
         assert_eq!(job_ref(42), "‹#42›");
         assert_eq!(pre_code("line1\nline2"), "«line1\nline2»");
-        assert_eq!(command_line("详情", "/j st 42"), "详情：‹/j st 42›");
         assert_eq!(progress_bar(5, 10), "||||||||||---------- 50%");
         assert_eq!(progress_bar_percent(84), "|||||||||||||||||--- 84%");
         assert_eq!(

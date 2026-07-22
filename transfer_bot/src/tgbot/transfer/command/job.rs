@@ -76,8 +76,8 @@ pub(in crate::tgbot::transfer::command) fn job_help_summary() -> &'static str {
 pub(in crate::tgbot::transfer::command) fn job_help_intro_lines() -> Vec<String> {
     vec![
         "先选择任务状态，再点任务详情进行暂停、恢复或停止，无需手动输入 job_id。".to_owned(),
-        "单所有者模式可直接控制任意任务。".to_owned(),
-        "已知 job_id 时仍可直接使用 /job 命令。".to_owned(),
+        "已授权用户可直接控制任意任务。".to_owned(),
+        "也可以从任务列表直接进入详情，不需要手动填写 job_id。".to_owned(),
     ]
 }
 
@@ -97,42 +97,8 @@ pub(in crate::tgbot::transfer::command) fn job_help_action_lines() -> Vec<String
             card::code("stop")
         ),
         format!(
-            "{}：查看单任务详情、阶段计数和真实下载进度。",
+            "{}：查看单任务详情、阶段计数以及真实下载/上传进度。",
             card::code("status")
-        ),
-    ]
-}
-
-/// `/job` 菜单页复用的命令示例。
-pub(in crate::tgbot::transfer::command) fn job_menu_command_lines() -> Vec<String> {
-    vec![
-        card::command_line(
-            "详情",
-            format!(
-                "{} status <job_id>",
-                super::common::command_root("job", CommandStyle::Long)
-            ),
-        ),
-        card::command_line(
-            "暂停",
-            format!(
-                "{} pause <job_id>",
-                super::common::command_root("job", CommandStyle::Long)
-            ),
-        ),
-        card::command_line(
-            "恢复",
-            format!(
-                "{} resume <job_id>",
-                super::common::command_root("job", CommandStyle::Long)
-            ),
-        ),
-        card::command_line(
-            "停止",
-            format!(
-                "{} stop <job_id>",
-                super::common::command_root("job", CommandStyle::Long)
-            ),
         ),
     ]
 }

@@ -31,7 +31,7 @@ pub(in crate::tgbot::transfer::command) fn cache_help_summary() -> &'static str 
 
 /// `cache` 菜单页和帮助详情页共用的开场说明。
 pub(in crate::tgbot::transfer::command) fn cache_intro_lines() -> Vec<String> {
-    vec!["默认展示状态概览；page 模式展示最近更新的缓存记录，不执行删除。".to_owned()]
+    vec!["默认展示最近更新的缓存记录并直接分页；概览可查看状态汇总，不执行删除。".to_owned()]
 }
 
 /// `/help cache` 共用的详细说明正文。
@@ -66,7 +66,7 @@ pub(in crate::tgbot::transfer::command) fn build_cache_help_entry_rows()
     vec![vec![
         send::build_callback_button(
             "打开缓存页",
-            &build_cache_summary_callback_data(),
+            &build_cache_default_callback_data(),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         send::build_callback_button(
@@ -82,9 +82,9 @@ pub(super) fn is_cache_callback_data(data: &str) -> bool {
     keyboard::is_cache_callback_data(data)
 }
 
-/// 给菜单页生成缓存概览 callback 数据。
-pub(super) fn build_cache_summary_callback_data() -> String {
-    keyboard::build_cache_view_callback_data(CacheView::Summary, CacheArgs::default().limit, 1)
+/// 给菜单页生成缓存默认入口 callback 数据。
+pub(super) fn build_cache_default_callback_data() -> String {
+    keyboard::build_cache_view_callback_data(CacheView::Page, CacheArgs::default().limit, 1)
 }
 
 /// 在指定上下文上执行 `/cache` 命令。
@@ -143,7 +143,7 @@ pub async fn cache_callback_query_on(
         keyboard,
         client_id,
         "缓存刷新失败",
-        "缓存页已生成，但原消息编辑失败；请复制错误或重新发送 /cache。",
+        "缓存页已生成，但原消息编辑失败；请使用错误卡片上的“菜单”按钮重新进入。",
     )
     .await
 }

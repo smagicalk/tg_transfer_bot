@@ -15,14 +15,17 @@ pub use buttons::{
 };
 pub use error::{edit_interaction_card_or_error, send_interaction_error_card};
 pub use message::{
-    answer_callback_query, edit_card_message_with_inline_keyboard,
-    edit_markdown_message_with_inline_keyboard, observe_message_send_failed_for_client,
-    observe_message_send_succeeded_for_client, send_card_message, send_card_message_with_buttons,
-    send_card_message_with_buttons_returning, send_card_message_with_force_reply_returning,
-    send_card_message_with_remove_keyboard, send_copyable_message,
+    answer_callback_query, delete_chat_reply_markup, delete_message,
+    edit_card_message_with_inline_keyboard, edit_markdown_message_with_inline_keyboard,
+    observe_message_send_failed_for_client, observe_message_send_succeeded_for_client,
+    send_card_message, send_card_message_replying_to, send_card_message_with_buttons,
+    send_card_message_with_buttons_replying_to, send_card_message_with_buttons_returning,
+    send_card_message_with_force_reply_returning, send_card_message_with_remove_keyboard,
+    send_card_message_with_target_chat_request_keyboard_returning,
+    send_card_message_with_user_request_keyboard_returning, send_copyable_message,
     send_copyable_message_with_buttons, send_error_message, send_markdown_message,
     send_markdown_message_with_buttons, send_markdown_message_with_buttons_returning,
     send_markdown_message_with_inline_keyboard, send_text_message, set_reply_markup_enabled,
-    wait_for_sent_message, wait_for_sent_message_id,
+    wait_for_sent_message, wait_for_sent_message_id, wait_for_sent_message_with_timeout,
 };
 pub use panel::{ReplyPanel, ReplyPanelStyle};

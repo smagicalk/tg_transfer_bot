@@ -53,14 +53,17 @@ pub(super) fn parse_admin_input_payload(
         AdminInputAction::TargetsSetDefault | AdminInputAction::TargetsSetAlias => {
             let spec = targets_input_spec_for_admin_action(action)?;
             match action {
-                AdminInputAction::TargetsSetAlias if context_text.is_some() && parts.len() == 1 => {
-                    Some(vec![
-                        "/targets".to_owned(),
-                        spec.subcommand.to_owned(),
-                        context_text?.to_owned(),
-                        parts[0].clone(),
-                    ])
-                }
+                // 修改已有 alias 时，alias 已经锁定在草稿上下文中；只接受新的目标值，
+                // 防止用户误发两个字段后绕过上下文并意外改名。
+                AdminInputAction::TargetsSetAlias if context_text.is_some() => (parts.len() == 1)
+                    .then(|| {
+                        vec![
+                            "/targets".to_owned(),
+                            spec.subcommand.to_owned(),
+                            context_text.expect("context_text checked above").to_owned(),
+                            parts[0].clone(),
+                        ]
+                    }),
                 _ if parts.len() == spec.expected_parts => {
                     let mut command = vec!["/targets".to_owned(), spec.subcommand.to_owned()];
                     command.extend(parts.iter().cloned());
@@ -159,6 +162,17 @@ mod tests {
                 "archive".to_owned(),
                 "123456".to_owned(),
             ])
+        );
+        // 编辑已有 alias 时不接受第二个字段，避免覆盖草稿中锁定的 alias。
+        assert_eq!(
+            parse_admin_input_payload(
+                AdminInputAction::TargetsSetAlias,
+                "other 123456",
+                None,
+                Some("archive"),
+                None
+            ),
+            None
         );
     }
 

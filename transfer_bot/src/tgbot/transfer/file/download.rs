@@ -115,7 +115,21 @@ pub(in crate::tgbot::transfer) async fn ensure_media_downloaded(
 pub(super) async fn prepare_media_file(
     original_file: &tdlib_rs::types::File,
     client_id: i32,
+    cached_meta: Option<&PreparedCacheMeta>,
 ) -> anyhow::Result<(PreparedCacheMeta, tdlib_rs::enums::InputFile)> {
+    if let Some(cached) = cached_meta
+        && file_key_from_file(original_file).as_deref() == Some(cached.file_key.as_str())
+        && std::path::Path::new(&cached.local_path).is_file()
+    {
+        tracing::debug!(file_key = %cached.file_key, "reusing ready local file cache");
+        return Ok((
+            cached.clone(),
+            tdlib_rs::enums::InputFile::Local(tdlib_rs::types::InputFileLocal {
+                path: cached.local_path.clone(),
+            }),
+        ));
+    }
+
     let refreshed = ensure_local_file(original_file.id, client_id).await?;
     let file_key = file_key_from_file(&refreshed)
         .ok_or_else(|| anyhow::anyhow!("file missing remote unique id / remote id"))?;

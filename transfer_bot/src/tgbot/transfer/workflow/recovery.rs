@@ -245,7 +245,7 @@ impl RecoveryStartupSummaries {
 
 /// 构造启动恢复摘要按钮。
 ///
-/// 恢复摘要所有入口都能直接 callback 跳转列表，因此不再提供命令复制按钮。
+/// 恢复摘要所有入口都能直接 callback 跳转列表；命令说明按需打开。
 fn build_recovery_startup_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
         vec![
@@ -265,11 +265,19 @@ fn build_recovery_startup_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboa
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
-        vec![crate::tgbot::send::build_callback_button(
-            "全部任务",
-            &build_downloads_status_button_data("all", 8),
-            tdlib_rs::enums::ButtonStyle::Default,
-        )],
+        vec![
+            crate::tgbot::send::build_callback_button(
+                "全部任务",
+                &build_downloads_status_button_data("all", 8),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+            crate::tgbot::transfer::command::build_view_commands_button(Some("downloads")),
+            crate::tgbot::send::build_callback_button(
+                "菜单",
+                &crate::tgbot::transfer::command::build_menu_home_button_data(),
+                tdlib_rs::enums::ButtonStyle::Default,
+            ),
+        ],
     ]
 }
 
@@ -314,10 +322,7 @@ fn format_recovery_startup_text(summary: &RecoveryStartupSummary) -> String {
         card::section("任务"),
         format!("示例 job：{}", card::code(sample_jobs)),
         card::note(note),
-        card::section("命令"),
-        card::command_line("运行列表", "/downloads run"),
-        card::command_line("暂停列表", "/downloads pause"),
-        card::command_line("全部任务", "/downloads all"),
+        card::note("可直接点击下方按钮查看列表；需要命令时点击“查看命令”。"),
     ]
     .join("\n")
 }
@@ -352,7 +357,8 @@ mod tests {
         assert!(text.contains("bot源：‹1›"));
         assert!(text.contains("user源：‹1›"));
         assert!(text.contains("示例 job：‹#11, #12›"));
-        assert!(text.contains("运行列表：‹/downloads run›"));
+        assert!(!text.contains("/downloads run"));
+        assert!(text.contains("需要命令时点击“查看命令”"));
     }
 
     // 只有停止任务被收敛时，摘要不应误导用户“后台已派发恢复任务”。

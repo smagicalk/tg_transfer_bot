@@ -15,5 +15,5 @@ pub(super) use status::{
 };
 pub(in crate::tgbot::transfer) use success::{
     build_list_menu_row, build_result_message_rows, build_result_navigation_rows,
-    format_result_card_text, normalize_result_messages, send_history_hit_message,
+    format_result_card_text, normalize_result_messages, send_history_hit_message, send_result_card,
 };

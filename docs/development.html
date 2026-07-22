@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="tg_transfer_bot 开发者文档：架构、调用链、状态机、数据库和测试">
+  <title>tg_transfer_bot 开发文档</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <button class="menu-toggle" type="button" aria-label="打开文档目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="brand" href="index.html">
+        <span class="brand-mark" aria-hidden="true">TG</span>
+        <span class="brand-name">tg_transfer_bot</span>
+        <span class="doc-label">开发文档</span>
+      </a>
+      <div class="topbar-meta">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>Rust + TDLib</span>
+        <span>transfer_bot</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar" aria-label="开发文档目录">
+      <p class="nav-title">导航</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="index.html">返回使用文档</a></li>
+      </ul>
+
+      <p class="nav-title">开发内容</p>
+      <ul class="nav-list">
+        <li><a class="nav-link active" href="#overview">开发概览</a></li>
+        <li><a class="nav-link" href="#architecture">架构分层</a></li>
+        <li><a class="nav-link" href="#bootstrap">启动链</a></li>
+        <li><a class="nav-link" href="#updates">Update 分发</a></li>
+        <li><a class="nav-link" href="#interaction">交互开发</a></li>
+        <li><a class="nav-link" href="#workflow">转存状态机</a></li>
+        <li><a class="nav-link" href="#data">数据与缓存</a></li>
+        <li><a class="nav-link" href="#progress">进度与消息</a></li>
+        <li><a class="nav-link" href="#access">权限模型</a></li>
+        <li><a class="nav-link" href="#extension">扩展步骤</a></li>
+        <li><a class="nav-link" href="#testing">测试与调试</a></li>
+      </ul>
+    </aside>
+
+    <button class="backdrop" type="button" aria-label="关闭文档目录"></button>
+
+    <main class="content" id="main">
+      <div class="content-inner">
+        <section class="intro" id="overview">
+          <p class="eyebrow">面向维护者和贡献者</p>
+          <h1>开发文档</h1>
+          <p class="lead">本页描述 tg_transfer_bot 的真实代码边界、运行时数据流和扩展方式。修改功能时，先确定它属于交互层、任务层、持久化层还是运行时上下文。</p>
+          <div class="meta-row" aria-label="开发原则">
+            <span class="meta-item"><span class="meta-swatch" aria-hidden="true"></span>按钮与命令复用同一业务入口</span>
+            <span class="meta-item"><span class="meta-swatch" aria-hidden="true"></span>数据库状态驱动恢复</span>
+            <span class="meta-item"><span class="meta-swatch" aria-hidden="true"></span>先复现再修复</span>
+          </div>
+        </section>
+
+        <section id="architecture">
+          <h2>架构分层</h2>
+          <p class="section-intro">项目不是把 TDLib 调用直接写在按钮 handler 里，而是通过交互、任务、数据和运行时四层传递明确的数据结构。</p>
+          <div class="architecture" aria-label="代码架构分层">
+            <div class="arch-node">
+              <strong>交互层</strong>
+              <span><code>tgbot.rs</code>、<code>command/</code>、<code>send/</code><br>解析消息、callback 和输入状态，只负责展示与控制。</span>
+            </div>
+            <div class="arch-arrow" aria-hidden="true">→</div>
+            <div class="arch-node">
+              <strong>任务层</strong>
+              <span><code>workflow/</code>、<code>spawn.rs</code><br>创建、复用、恢复任务，编排下载、准备、上传和终态。</span>
+            </div>
+            <div class="arch-arrow" aria-hidden="true">→</div>
+            <div class="arch-node">
+              <strong>持久化层</strong>
+              <span><code>store/</code>、<code>db/</code><br>以任务、子项、缓存、结果和运行配置为边界读写数据库。</span>
+            </div>
+          </div>
+
+          <h3>核心共享状态</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>对象</th><th>位置</th><th>用途</th></tr></thead>
+              <tbody>
+                <tr><td><code>AppContext</code></td><td><code>app_context.rs</code></td><td>持有运行时配置、下载/上传进度、single-flight、执行锁、授权集合。</td></tr>
+                <tr><td><code>BotConfig</code></td><td><code>config.rs</code></td><td>启动级配置和从数据库回填的运行态配置。</td></tr>
+                <tr><td><code>RequestActor</code></td><td><code>config.rs</code></td><td>明确当前请求 chat、用户和权限校验边界。</td></tr>
+                <tr><td><code>TransferPlan</code></td><td><code>transfer/types.rs</code></td><td>把源链接、目标和来源 client 组合成可执行计划。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="bootstrap">
+          <h2>启动链</h2>
+          <p class="section-intro">启动顺序不能随意调整：数据库运行态必须先完成 migration 和 seed，再创建 TDLib 接收循环。</p>
+          <div class="code-block">
+            <div class="code-head">transfer_bot/src/lib.rs</div>
+            <button class="copy-button" type="button" aria-label="复制启动链">复制</button>
+            <pre><code>main
+  -> transfer_bot::run()
+     -> parse CLI and config.json
+     -> init tracing
+     -> init business database URL
+     -> run SeaORM migrations
+     -> load or seed runtime config / targets / access
+     -> build AppContext
+     -> create bot and user TDLib clients
+     -> tgbot::receive(app_context, config)</code></pre>
+          </div>
+          <ol>
+            <li><code>config.json</code> 只提供启动级秘密、TDLib 目录、登录方式和默认值。</li>
+            <li><code>bootstrap_runtime_database_state</code> 执行 migration，并读取或 seed 运行配置、目标和授权名单。</li>
+            <li>数据库值回填到 <code>BotConfig</code>，同时写入 <code>AppContext</code> 的运行时状态。</li>
+            <li>TDLib client 就绪后启动恢复、进度刷新和文件 GC 等后台服务。</li>
+          </ol>
+          <div class="callout warning">
+            <strong>不要绕过启动链</strong>
+            测试如果只创建表、不执行 runtime seed，容易出现“测试通过但实际启动缺少默认配置”的假阳性。
+          </div>
+        </section>
+
+        <section id="updates">
+          <h2>Update 分发</h2>
+          <p class="section-intro"><code>tgbot.rs</code> 是 TDLib update 的总入口。每种 update 先按 client_id 和类型分类，再进入对应业务边界。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Update</th><th>处理内容</th><th>关键边界</th></tr></thead>
+              <tbody>
+                <tr><td><code>AuthorizationState</code></td><td>登录状态机</td><td>Bot token 与 User 登录方式不同，但都必须先 ready。</td></tr>
+                <tr><td><code>NewMessage</code></td><td>命令、链接、媒体和回复</td><td>只接受交互 client 的私聊；User client 不处理 Bot 菜单。</td></tr>
+                <tr><td><code>NewCallbackQuery</code></td><td>按钮 callback</td><td>先 ACK，再校验 actor 和输入草稿归属。</td></tr>
+                <tr><td><code>UpdateFile</code></td><td>下载/上传字节进度</td><td>按 client_id + TDLib file id 更新运行时映射。</td></tr>
+                <tr><td><code>MessageSendSucceeded</code></td><td>发送消息确认</td><td>唤醒等待者并登记最终消息媒体 File ID。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-block">
+            <div class="code-head">处理原则</div>
+            <button class="copy-button" type="button" aria-label="复制 Update 处理原则">复制</button>
+            <pre><code>receive loop
+  -> identify client role
+  -> classify update kind
+  -> update runtime progress / message waiter
+  -> authorize actor when interaction is required
+  -> dispatch command or callback
+  -> render one current card when possible</code></pre>
+          </div>
+        </section>
+
+        <section id="interaction">
+          <h2>交互开发</h2>
+          <p class="section-intro">按钮交互和命令必须最终落到同一条业务写入路径。按钮只负责收集输入、确认和导航，不复制命令逻辑。</p>
+          <h3>菜单输入生命周期</h3>
+          <ol>
+            <li>按钮 callback 创建或更新 <code>menu_input_draft</code>，并记录 request chat 与 sender user。</li>
+            <li>发送一条 ForceReply 或原生聊天/用户选择器提示，并记录当前提示消息 ID。</li>
+            <li>用户回复后由 <code>menu/input/state.rs</code> 校验步骤、actor 和超时。</li>
+            <li>输入模块把结构化值交给 <code>simple.rs</code>、<code>target.rs</code> 或 <code>admin.rs</code>。</li>
+            <li>阶段切换时删除过时 picker/card，尽量复用或更新同一条进度消息。</li>
+          </ol>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>需求</th><th>应修改的位置</th><th>不要修改的位置</th></tr></thead>
+              <tbody>
+                <tr><td>新增菜单入口</td><td><code>menu/keyboard/</code>、<code>menu.rs</code></td><td>不要在 update loop 中手写按钮 JSON。</td></tr>
+                <tr><td>新增输入步骤</td><td><code>menu/input/state.rs</code>、对应 input handler</td><td>不要用全局变量保存用户输入。</td></tr>
+                <tr><td>减少消息刷屏</td><td>提示消息 tracker、删除/编辑 helper</td><td>不要在每个阶段无条件 send 新消息。</td></tr>
+                <tr><td>新增命令</td><td>命令模块、统一 command router、help descriptor</td><td>不要让按钮拥有另一套业务语义。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="workflow">
+          <h2>转存状态机</h2>
+          <p class="section-intro">一次转存由主任务和多个子项组成。主任务负责请求级状态，子项负责每条源消息的准备和结果。</p>
+          <div class="flow" aria-label="转存任务状态机">
+            <div class="flow-step"><strong>建立计划</strong><span>解析源、目标和来源 client</span></div>
+            <div class="flow-step"><strong>查重/恢复</strong><span>按 source + target 判断复用、运行中或恢复</span></div>
+            <div class="flow-step"><strong>准备子项</strong><span>读取消息、查缓存、下载并构造输入内容</span></div>
+            <div class="flow-step"><strong>上传</strong><span>登记临时和最终 File ID，更新上传字节</span></div>
+            <div class="flow-step"><strong>终态落库</strong><span>保存结果地址、释放文件引用和进度卡</span></div>
+          </div>
+          <h3>主任务状态</h3>
+          <p><code>pending → running → success / failed / partial</code>；人工停止会经过 <code>cancelling → cancelled</code>，暂停则经过 <code>paused → running</code>。</p>
+          <h3>子项状态</h3>
+          <p><code>pending → preparing → prepared → uploading → success</code>；准备或上传异常进入 <code>failed</code>，用户停止进入 <code>cancelled</code>。恢复对齐后消失的相册项标记为 <code>obsolete</code>。</p>
+          <div class="callout">
+            <strong>控制点</strong>
+            <code>runner.rs</code> 在准备前、下载后、准备后和上传前检查 pause/stop。新增耗时步骤时必须保留这些安全点，否则按钮状态会滞后。
+          </div>
+        </section>
+
+        <section id="data">
+          <h2>数据与缓存</h2>
+          <p class="section-intro">业务数据库和 TDLib 自有数据库分离。业务表用于恢复和可观察性，TDLib 目录只保存 Telegram client 自身状态与媒体文件。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>实体</th><th>作用</th><th>修改注意事项</th></tr></thead>
+              <tbody>
+                <tr><td><code>transfer_job</code></td><td>一次完整转存请求</td><td>状态、去重、结果入口和恢复依据。</td></tr>
+                <tr><td><code>transfer_item</code></td><td>任务中的单条源消息</td><td>子项状态、错误和 file owner。</td></tr>
+                <tr><td><code>file_cache</code></td><td>跨任务媒体去重和延迟删除</td><td>主键是 owner role + file key，引用归零才能进入 GC。</td></tr>
+                <tr><td><code>transfer_result_message</code></td><td>保存一个任务的多个目标消息入口</td><td>album 分组不能只保存首个结果。</td></tr>
+                <tr><td><code>menu_input_draft</code></td><td>持久化未完成交互</td><td>必须绑定 request chat、sender user 和步骤。</td></tr>
+                <tr><td><code>authorized_user</code></td><td>动态授权及名称快照</td><td>权限判断使用 user_id，名称只用于展示。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>缓存命中规则</h3>
+          <ol>
+            <li>从消息提取 TDLib remote unique id，作为稳定 <code>file_key</code>。</li>
+            <li>使用实际源 client 的 role 查询 <code>file_cache</code>，不能跨 Bot/User 复用本地 file id。</li>
+            <li>只有 <code>status=ready</code>、<code>active_refs &gt; 0</code>、<code>local_path</code> 非空且文件真实存在才命中。</li>
+            <li>命中后构造 <code>InputFile::Local</code>；未命中才调用 TDLib 下载。</li>
+            <li>新增缓存状态时同步更新状态模块、GC、健康统计和测试 fixture。</li>
+          </ol>
+        </section>
+
+        <section id="progress">
+          <h2>进度与消息生命周期</h2>
+          <p class="section-intro">下载进度来自 TDLib File 的 local 字段，上传进度来自发送消息后的 remote File。两者都按 client 隔离。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>进度类型</th><th>运行时索引</th><th>常见错误</th></tr></thead>
+              <tbody>
+                <tr><td>下载</td><td><code>(client_id, td_file_id)</code></td><td>把 Bot 和 User 的同一个 file id 当成共享状态。</td></tr>
+                <tr><td>上传</td><td><code>job + item</code> 逻辑项，再反向映射当前 File ID</td><td>临时 File ID 和最终 File ID 被统计成两个文件。</td></tr>
+                <tr><td>发送等待</td><td><code>client_id + chat_id + message_id</code></td><td>发送成功后重复补发第二张结果卡。</td></tr>
+                <tr><td>输入提示</td><td>草稿 key + picker message id</td><td>阶段切换后旧 ForceReply 或 picker 继续留在会话中。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>进度卡优先通过 edit 更新；只有没有可编辑的旧消息时才 send 新卡。最终消息的 File ID 仍需登记，以接收迟到的 <code>UpdateFile</code>。</p>
+        </section>
+
+        <section id="access">
+          <h2>权限模型</h2>
+          <p class="section-intro">权限主体是 Telegram 用户，不是当前群组。所有需要交互的请求都要验证私聊边界和 sender user id。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>主体</th><th>来源</th><th>权限</th></tr></thead>
+              <tbody>
+                <tr><td>Owner</td><td><code>owner_user_id</code></td><td>全部操作，包括授权管理。</td></tr>
+                <tr><td>静态管理员</td><td><code>admin_user_ids</code></td><td>转存、查询、任务和运行态配置。</td></tr>
+                <tr><td>动态管理员</td><td><code>authorized_user</code> 表及 AppContext</td><td>与静态管理员相同，除授权管理外。</td></tr>
+                <tr><td>未授权用户</td><td>不在上述集合</td><td>拒绝交互并返回联系管理员提示。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>新增权限检查时复用 access 模块和 <code>RequestActor</code>。不要根据 chat_id 推断用户身份，也不要让 User client 代替 Bot 处理管理交互。</p>
+        </section>
+
+        <section id="extension">
+          <h2>扩展步骤</h2>
+          <h3>新增一个按钮功能</h3>
+          <ol>
+            <li>在对应 keyboard/spec 模块增加按钮和 callback payload。</li>
+            <li>在 callback router 增加纯决策分支，并先 ACK callback。</li>
+            <li>如果需要输入，创建明确的 draft step 和 actor 校验。</li>
+            <li>把结构化输入转交给现有命令或 store 函数，避免另写一套业务写入。</li>
+            <li>阶段切换时删除过时的 picker/card，并补充按钮布局和路由测试。</li>
+          </ol>
+          <h3>新增一个数据库字段</h3>
+          <ol>
+            <li>更新 SeaORM entity 和 ActiveModel。</li>
+            <li>新增 migration，保证 SQLite/PostgreSQL 都能执行。</li>
+            <li>更新 <code>runtime_schema/</code> 与测试 schema 探针。</li>
+            <li>修改 store 查询、插入、更新和恢复逻辑。</li>
+            <li>加入迁移幂等、旧数据和完整业务链测试。</li>
+          </ol>
+          <h3>新增可观测字段</h3>
+          <p>先确定字段属于持久化快照还是运行时快照，再同步更新 render/text、详情页和首页摘要。不要在展示层临时查询整张数据库表。</p>
+        </section>
+
+        <section id="testing">
+          <h2>测试与调试</h2>
+          <p class="section-intro">修复问题时遵循“复现 → 最小测试 → 修复 → 完整回归”的顺序。测试应描述用户可观察的行为，而不是私有实现细节。</p>
+          <h3>本地检查命令</h3>
+          <div class="code-block">
+            <div class="code-head">PowerShell</div>
+            <button class="copy-button" type="button" aria-label="复制本地检查命令">复制</button>
+            <pre><code>$env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
+cargo fmt --all -- --check
+cargo test -p transfer_bot --lib
+cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
+cargo build -p transfer_bot
+git diff --check</code></pre>
+          </div>
+          <h3>测试分层</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>测试类型</th><th>适用场景</th><th>重点</th></tr></thead>
+              <tbody>
+                <tr><td>纯单元测试</td><td>callback payload、状态决策、文案和键盘布局</td><td>快、确定，不依赖 TDLib。</td></tr>
+                <tr><td>运行时状态测试</td><td>进度 store、single-flight、执行 guard</td><td>并发、client 隔离和清理。</td></tr>
+                <tr><td>数据库测试</td><td>migration、引用计数、任务终态、缓存 GC</td><td>使用测试锁，验证 SQLite 实际 schema。</td></tr>
+                <tr><td>构建检查</td><td>TDLib 链接、依赖和平台兼容</td><td>设置 <code>LOCAL_TDLIB_PATH</code> 后执行。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warning">
+            <strong>不要忽略已有改动</strong>
+            工作区可能同时包含配置、Workflow 或其他交互修改。提交前先看 <code>git status --short</code> 和 <code>git diff --check</code>，不要用 reset 或 checkout 覆盖未确认的文件。
+          </div>
+        </section>
+
+        <footer class="footer">
+          <span>tg_transfer_bot 开发文档 · 与当前 transfer_bot 源码结构同步</span>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

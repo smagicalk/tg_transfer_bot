@@ -207,11 +207,52 @@ pub async fn handle_update(
             return Ok(());
         }
 
-        // 解析发送者 ID，用于所有者私聊校验。
+        // 私聊消息的发送者固定为 User；群聊中的匿名管理员可能以 Chat 身份发送。
         let sender_id = match &message.sender_id {
             tdlib_rs::enums::MessageSender::User(user) => user.user_id,
             tdlib_rs::enums::MessageSender::Chat(chat_id) => chat_id.chat_id,
         };
+
+        // 群聊仅开放“回复某个普通用户 + /auth”这一条 owner 管理捷径。
+        // 权限仍由 auth_command_on 统一校验，非 owner 无法借此扩散授权。
+        if !is_private_interaction_chat(chat_id, sender_id)
+            && is_reply_auth_command(&message.content, message.reply_to.is_some())
+        {
+            let actor = match reply_auth_request_actor(chat_id, &message.sender_id) {
+                Ok(actor) => actor,
+                Err(error) => {
+                    tracing::debug!(
+                        chat_id,
+                        sender_id,
+                        message_id = message.id,
+                        error = %error,
+                        "reply authorization actor could not be verified"
+                    );
+                    send_group_auth_error_message(&error, chat_id, client_id).await?;
+                    return Ok(());
+                }
+            };
+            let result = tgbot::transfer::auth_command_on(
+                app_context.as_ref(),
+                vec!["/auth"],
+                config.as_ref(),
+                &message,
+                actor,
+                client_id,
+            )
+            .await;
+            if let Err(error) = result {
+                tracing::warn!(
+                    chat_id,
+                    sender_id,
+                    message_id = message.id,
+                    error = %error,
+                    "reply authorization command failed"
+                );
+                send_group_auth_error_message(&error, chat_id, client_id).await?;
+            }
+            return Ok(());
+        }
 
         if !is_private_interaction_chat(chat_id, sender_id) {
             tracing::debug!(
@@ -226,13 +267,16 @@ pub async fn handle_update(
             return Ok(());
         }
 
-        let Some(actor) = config.request_actor(chat_id, sender_id) else {
+        let Some(actor) =
+            resolve_request_actor(app_context.as_ref(), config.as_ref(), chat_id, sender_id)
+        else {
             tracing::debug!(
                 chat_id,
                 sender_id,
                 message_id = message.id,
-                "ignored unauthorized interactive message"
+                "rejected unauthorized interactive message"
             );
+            send_unauthorized_interaction_message(chat_id, client_id).await?;
             return Ok(());
         };
         let request_message = message.clone();
@@ -274,16 +318,38 @@ pub async fn handle_update(
                 None
             };
 
-            if first_token_command == Some("/cancel")
-                && tgbot::transfer::cancel_menu_input(chat_id, sender_id, interaction_client_id)
-                    .await?
-            {
-                return Ok(());
+            if first_token_command == Some("/cancel") {
+                let auth_cancelled =
+                    tgbot::transfer::cancel_auth_input(chat_id, sender_id, interaction_client_id)
+                        .await?;
+                let menu_cancelled =
+                    tgbot::transfer::cancel_menu_input(chat_id, sender_id, interaction_client_id)
+                        .await?;
+                if auth_cancelled || menu_cancelled {
+                    return Ok(());
+                }
             }
 
             if text[0].starts_with("/") {
                 let raw_command = text[0];
                 let command = normalize_bot_command(raw_command);
+                if command != "/cancel"
+                    && tgbot::transfer::discard_auth_input_for_command(
+                        chat_id,
+                        sender_id,
+                        interaction_client_id,
+                    )
+                    .await?
+                {
+                    tracing::debug!(
+                        command = raw_command,
+                        normalized_command = command,
+                        chat_id,
+                        sender_id,
+                        message_id = message.id,
+                        "discarded pending auth input because command has priority"
+                    );
+                }
                 if command != "/cancel"
                     && tgbot::transfer::discard_menu_input_for_command(
                         chat_id,
@@ -406,11 +472,25 @@ pub async fn handle_update(
                         )
                         .await
                     }
+                    // /auth 命令入口。
+                    // 仅 owner 可查看和修改数据库动态授权名单。
+                    "/auth" => {
+                        tgbot::transfer::auth_command_on(
+                            app_context.as_ref(),
+                            text,
+                            config.as_ref(),
+                            &request_message,
+                            actor,
+                            interaction_client_id,
+                        )
+                        .await
+                    }
                     // /menu 命令入口。
                     "/menu" => {
                         tgbot::transfer::menu_command_on(
                             app_context.as_ref(),
                             text,
+                            config.as_ref(),
                             actor,
                             interaction_client_id,
                         )
@@ -452,6 +532,22 @@ pub async fn handle_update(
                         "admin command completed"
                     );
                 }
+            } else if tgbot::transfer::handle_auth_text_input_on(
+                app_context.as_ref(),
+                raw_text.as_str(),
+                config.clone(),
+                actor,
+                interaction_client_id,
+            )
+            .await?
+            {
+                tracing::debug!(
+                    chat_id,
+                    sender_id,
+                    message_id = message.id,
+                    "admin text message consumed by auth input"
+                );
+                return Ok(());
             } else if tgbot::transfer::handle_menu_text_input_on(
                 app_context.as_ref(),
                 raw_text.as_str(),
@@ -556,6 +652,46 @@ pub async fn handle_update(
                 );
             }
         } else {
+            if let tdlib_rs::enums::MessageContent::MessageUsersShared(shared) =
+                &request_message.content
+                && tgbot::transfer::handle_auth_shared_user_input(
+                    app_context.as_ref(),
+                    shared,
+                    config.clone(),
+                    chat_id,
+                    sender_id,
+                    interaction_client_id,
+                )
+                .await?
+            {
+                tracing::debug!(
+                    chat_id,
+                    sender_id,
+                    message_id = request_message.id,
+                    user_count = shared.users.len(),
+                    "shared users consumed by auth input"
+                );
+                return Ok(());
+            }
+            if let tdlib_rs::enums::MessageContent::MessageChatShared(shared) =
+                &request_message.content
+                && tgbot::transfer::handle_menu_shared_chat_input(
+                    shared,
+                    chat_id,
+                    sender_id,
+                    interaction_client_id,
+                )
+                .await?
+            {
+                tracing::debug!(
+                    chat_id,
+                    sender_id,
+                    message_id = request_message.id,
+                    target_chat_id = shared.chat.chat_id,
+                    "shared target chat consumed by menu input"
+                );
+                return Ok(());
+            }
             if tgbot::transfer::is_transferable_message(&request_message) {
                 let Some((source_chat_id, source_message_id)) =
                     tgbot::transfer::transferable_message_source_location(&request_message)
@@ -662,7 +798,9 @@ pub async fn handle_update(
             return Ok(());
         }
 
-        let Some(actor) = config.request_actor(
+        let Some(actor) = resolve_request_actor(
+            app_context.as_ref(),
+            config.as_ref(),
             update_callback_query.chat_id,
             update_callback_query.sender_user_id,
         ) else {
@@ -670,8 +808,14 @@ pub async fn handle_update(
                 chat_id = update_callback_query.chat_id,
                 sender_user_id = update_callback_query.sender_user_id,
                 message_id = update_callback_query.message_id,
-                "ignored unauthorized callback query"
+                "rejected unauthorized callback query"
             );
+            crate::tgbot::send::answer_callback_query(
+                update_callback_query.id,
+                Some(unauthorized_interaction_message()),
+                client_id,
+            )
+            .await?;
             return Ok(());
         };
         tracing::debug!(
@@ -701,6 +845,9 @@ pub async fn handle_update(
         app_context
             .download_progress
             .update_download_progress(client_id, &update_file.file);
+        app_context
+            .upload_progress
+            .update_upload_progress(client_id, &update_file.file);
         tracing::trace!(
             role = role.as_str(),
             file_id = update_file.file.id,
@@ -709,6 +856,9 @@ pub async fn handle_update(
             expected_size = update_file.file.expected_size,
             is_downloading_active = update_file.file.local.is_downloading_active,
             is_downloading_completed = update_file.file.local.is_downloading_completed,
+            uploaded_size = update_file.file.remote.uploaded_size,
+            is_uploading_active = update_file.file.remote.is_uploading_active,
+            is_uploading_completed = update_file.file.remote.is_uploading_completed,
             "tdlib file progress updated"
         );
     }
@@ -813,6 +963,80 @@ fn is_private_interaction_chat(chat_id: i64, sender_user_id: i64) -> bool {
     chat_id == sender_user_id
 }
 
+/// 判断消息是否是群聊授权的窄入口；实际 owner 校验由授权命令执行层负责。
+fn is_reply_auth_command(content: &tdlib_rs::enums::MessageContent, has_reply: bool) -> bool {
+    if !has_reply {
+        return false;
+    }
+    let tdlib_rs::enums::MessageContent::MessageText(message) = content else {
+        return false;
+    };
+    let mut tokens = message.text.text.split_whitespace();
+    let Some(command) = tokens.next() else {
+        return false;
+    };
+    tokens.next().is_none() && normalize_bot_command(command) == "/auth"
+}
+
+/// 解析群聊“回复消息 + /auth”的执行者身份。
+///
+/// Telegram 仅在普通身份发言时提供真实 user_id；匿名管理员或“以群组身份发送”
+/// 只会得到 MessageSender::Chat，无法安全映射回某个群主，因此必须明确拒绝。
+fn reply_auth_request_actor(
+    request_chat_id: i64,
+    sender: &tdlib_rs::enums::MessageSender,
+) -> anyhow::Result<crate::config::RequestActor> {
+    let tdlib_rs::enums::MessageSender::User(sender) = sender else {
+        anyhow::bail!(
+            "匿名管理员或群组身份无法验证真实用户 ID；请切换为个人用户身份后重新发送 /auth"
+        );
+    };
+    if sender.user_id <= 0 {
+        anyhow::bail!("发送者没有有效的用户 ID，无法验证 owner 权限");
+    }
+    Ok(crate::config::RequestActor {
+        request_chat_id,
+        user_id: sender.user_id,
+    })
+}
+
+/// 生成群聊回复授权失败提示。
+///
+/// 群聊不支持主菜单 callback，因此这里直接给出身份检查步骤，避免显示无法使用的按钮。
+fn format_group_auth_error(error: &anyhow::Error) -> String {
+    format!(
+        "群聊授权失败：{error:#}\n请使用个人账号身份发送命令，并确认 config.json 中的 owner_user_id 是你的 Telegram 用户 ID。"
+    )
+}
+
+async fn send_group_auth_error_message(
+    error: &anyhow::Error,
+    chat_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    crate::tgbot::send::send_text_message(format_group_auth_error(error), chat_id, client_id).await
+}
+
+/// 统一解析私聊请求身份，静态 owner/admin 与数据库动态授权共用此入口。
+fn resolve_request_actor(
+    app: &crate::app_context::AppContext,
+    config: &crate::config::BotConfig,
+    request_chat_id: i64,
+    sender_user_id: i64,
+) -> Option<crate::config::RequestActor> {
+    config
+        .request_actor(request_chat_id, sender_user_id)
+        .or_else(|| {
+            (sender_user_id > 0
+                && is_private_interaction_chat(request_chat_id, sender_user_id)
+                && app.access_control.is_authorized(sender_user_id))
+            .then_some(crate::config::RequestActor {
+                request_chat_id,
+                user_id: sender_user_id,
+            })
+        })
+}
+
 /// 群聊里只有明显发给 bot 的命令才回复私聊提示，避免 bot 被误加群后刷屏。
 fn should_send_private_only_notice(content: &tdlib_rs::enums::MessageContent) -> bool {
     match content {
@@ -827,6 +1051,19 @@ fn should_send_private_only_notice(content: &tdlib_rs::enums::MessageContent) ->
 async fn send_private_chat_only_message(chat_id: i64, client_id: i32) -> anyhow::Result<()> {
     crate::tgbot::send::send_text_message(
         "当前只支持私聊 bot 使用；目标群请在私聊菜单中选择。".to_owned(),
+        chat_id,
+        client_id,
+    )
+    .await
+}
+
+fn unauthorized_interaction_message() -> &'static str {
+    "无权限，请联系管理员。"
+}
+
+async fn send_unauthorized_interaction_message(chat_id: i64, client_id: i32) -> anyhow::Result<()> {
+    crate::tgbot::send::send_text_message(
+        unauthorized_interaction_message().to_owned(),
         chat_id,
         client_id,
     )
@@ -915,6 +1152,8 @@ fn message_content_kind(content: &tdlib_rs::enums::MessageContent) -> &'static s
         tdlib_rs::enums::MessageContent::MessageVideo(_) => "video",
         tdlib_rs::enums::MessageContent::MessageVideoNote(_) => "video_note",
         tdlib_rs::enums::MessageContent::MessageVoiceNote(_) => "voice_note",
+        tdlib_rs::enums::MessageContent::MessageUsersShared(_) => "users_shared",
+        tdlib_rs::enums::MessageContent::MessageChatShared(_) => "chat_shared",
         _ => "other",
     }
 }
@@ -925,10 +1164,35 @@ mod tests {
 
     use super::{
         command_error_hint, decode_callback_query_payload, extract_direct_transfer_link,
-        is_private_interaction_chat, normalize_bot_command, should_process_interactive_update,
-        should_send_private_only_notice,
+        format_group_auth_error, is_private_interaction_chat, is_reply_auth_command,
+        normalize_bot_command, reply_auth_request_actor, resolve_request_actor,
+        should_process_interactive_update, should_send_private_only_notice,
+        unauthorized_interaction_message,
     };
-    use crate::config::ClientRole;
+    use crate::app_context::AppContext;
+    use crate::config::{BotConfig, ClientRole, RequestActor};
+
+    // 动态授权必须复用私聊权限入口，不能让文本消息和 callback 各自判断一套名单。
+    #[test]
+    fn test_runtime_authorized_user_uses_same_private_chat_gate() {
+        let app = AppContext::default();
+        let config = BotConfig {
+            owner_user_id: 1,
+            ..BotConfig::default()
+        };
+        app.access_control.replace_authorized_user_ids([2]);
+
+        assert_eq!(
+            resolve_request_actor(&app, &config, 2, 2),
+            Some(RequestActor {
+                request_chat_id: 2,
+                user_id: 2,
+            })
+        );
+        assert!(resolve_request_actor(&app, &config, -1002, 2).is_none());
+        assert!(resolve_request_actor(&app, &config, 1, 1).is_some());
+        assert!(resolve_request_actor(&app, &config, 3, 3).is_none());
+    }
 
     // TDLib JSON 协议会用 base64 表示 callback bytes；入口应解回业务短 payload。
     #[test]
@@ -1008,6 +1272,53 @@ mod tests {
         assert!(!is_private_interaction_chat(200, 100));
     }
 
+    // 群聊回复授权必须按发送者 user_id 校验 owner，不能把负数群 ID 当成用户身份。
+    #[test]
+    fn test_reply_auth_request_actor_uses_sender_user_id() {
+        let sender = tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
+            user_id: 123456,
+        });
+
+        assert_eq!(
+            reply_auth_request_actor(-100987654, &sender).unwrap(),
+            RequestActor {
+                request_chat_id: -100987654,
+                user_id: 123456,
+            }
+        );
+    }
+
+    // 匿名管理员 update 只有 chat_id，没有可验证的真实用户 ID，必须给出明确操作提示。
+    #[test]
+    fn test_reply_auth_request_actor_rejects_anonymous_admin() {
+        let sender = tdlib_rs::enums::MessageSender::Chat(tdlib_rs::types::MessageSenderChat {
+            chat_id: -100987654,
+        });
+
+        let error = reply_auth_request_actor(-100987654, &sender).unwrap_err();
+        assert!(error.to_string().contains("匿名管理员"));
+        assert!(error.to_string().contains("用户身份"));
+    }
+
+    // 群聊授权错误不能附带只能在私聊使用的菜单按钮，应直接给出可执行的身份检查步骤。
+    #[test]
+    fn test_group_auth_error_is_actionable_without_private_menu() {
+        let text = format_group_auth_error(&anyhow::anyhow!("仅 owner 可管理授权"));
+
+        assert!(text.contains("仅 owner 可管理授权"));
+        assert!(text.contains("owner_user_id"));
+        assert!(text.contains("个人账号身份"));
+        assert!(!text.contains("打开菜单"));
+    }
+
+    #[test]
+    fn test_unauthorized_interaction_notice_is_actionable() {
+        let message = unauthorized_interaction_message();
+
+        assert!(message.contains("无权限"));
+        assert!(message.contains("管理员"));
+    }
+
     // 群聊里只对命令回复“请私聊”，普通文本和媒体应静默忽略，避免刷屏。
     #[test]
     fn test_private_only_notice_only_for_commands() {
@@ -1034,6 +1345,30 @@ mod tests {
         assert!(should_send_private_only_notice(&command));
         assert!(!should_send_private_only_notice(&text));
         assert!(!should_send_private_only_notice(&non_text));
+    }
+
+    // 群聊只为“回复某人 + /auth”开放窄入口，其他命令仍要求私聊。
+    #[test]
+    fn test_reply_auth_command_is_narrow_group_exception() {
+        let text_content = |text: &str| {
+            tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
+                text: tdlib_rs::types::FormattedText {
+                    text: text.to_owned(),
+                    entities: vec![],
+                },
+                link_preview: None,
+                link_preview_options: None,
+            })
+        };
+
+        assert!(is_reply_auth_command(&text_content("/auth"), true));
+        assert!(is_reply_auth_command(
+            &text_content("/auth@transfer_bot"),
+            true
+        ));
+        assert!(!is_reply_auth_command(&text_content("/auth"), false));
+        assert!(!is_reply_auth_command(&text_content("/auth list"), true));
+        assert!(!is_reply_auth_command(&text_content("hello"), true));
     }
 
     // 单独一条 Telegram 链接文本应直接进入目标选择，不需要先手输 /transfer。
@@ -1147,6 +1482,18 @@ mod tests {
         assert_eq!(hint.title, "源不可访问");
         assert!(hint.advice.contains("备用 user"));
         assert!(hint.advice.contains("备用 user"));
+    }
+
+    // 缺少目标时应直接进入交互式转存，不再要求复制和补全命令模板。
+    #[test]
+    fn test_command_error_hint_for_missing_target_starts_interactive_transfer() {
+        let hint = command_error_hint("not found transfer target");
+
+        assert_eq!(hint.primary_label, "选择目标转存");
+        assert_eq!(
+            hint.primary_action,
+            crate::tgbot::error::CommandErrorPrimaryAction::StartTransfer
+        );
     }
 
     // 未分类错误仍保留通用排查建议。

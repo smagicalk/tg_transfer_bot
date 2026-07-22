@@ -24,6 +24,13 @@ pub(super) fn build_help_callback_data(topic: Option<&str>) -> String {
     keyboard::build_help_callback_data(topic)
 }
 
+/// 给结果、进度和错误卡片生成“查看命令”按钮数据。
+///
+/// 这类卡片不能原地切成帮助页，否则后台刷新会覆盖帮助内容；因此点击后发送独立帮助卡片。
+pub(super) fn build_help_message_callback_data(topic: Option<&str>) -> String {
+    keyboard::build_help_message_callback_data(topic)
+}
+
 /// 给 `/menu` 的帮助页复用 help topic 导航按钮。
 ///
 /// `/menu` 只负责组织菜单页；topic 名称、顺序和 admin-only 可见性由 help 模块统一维护。
@@ -62,12 +69,26 @@ pub async fn help_callback_query(
         }
     };
 
-    let Some(topic) = keyboard::parse_help_callback_data(&payload) else {
-        send::answer_callback_query(update.id, Some("帮助按钮参数无效"), client_id).await?;
-        return Ok(());
-    };
+    let (topic, send_new_message) =
+        if let Some(topic) = keyboard::parse_help_message_callback_data(&payload) {
+            (topic, true)
+        } else if let Some(topic) = keyboard::parse_help_callback_data(&payload) {
+            (topic, false)
+        } else {
+            send::answer_callback_query(update.id, Some("帮助按钮参数无效"), client_id).await?;
+            return Ok(());
+        };
 
-    send::answer_callback_query(update.id, Some("已切换帮助"), client_id).await?;
+    send::answer_callback_query(
+        update.id,
+        Some(if send_new_message {
+            "已发送命令说明"
+        } else {
+            "已切换帮助"
+        }),
+        client_id,
+    )
+    .await?;
     let (text, rows) = match build_help_page(topic) {
         Ok(page) => page,
         Err(err) => {
@@ -75,6 +96,12 @@ pub async fn help_callback_query(
             return Err(err);
         }
     };
+    if send_new_message {
+        return send::ReplyPanel::card(text)
+            .rows(rows)
+            .send(update.chat_id, client_id)
+            .await;
+    }
     let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
     send::edit_interaction_card_or_error(
         text,

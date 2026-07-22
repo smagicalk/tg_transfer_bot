@@ -59,7 +59,11 @@ pub fn receive() -> Option<(Update, i32)> {
     None
 }
 
-pub(crate) async fn send_request(client_id: i32, mut request: Value) -> Value {
+/// 发送一个原始 TDLib JSON 请求并等待响应。
+///
+/// 生成函数通常是首选；调用方只需要少量响应字段、且完整生成类型会造成明显栈压力时，
+/// 可以复用这个底层入口并在业务边界执行轻量反序列化。
+pub async fn send_request(client_id: i32, mut request: Value) -> Value {
     let extra = EXTRA_COUNTER.fetch_add(1, Ordering::Relaxed);
     request["@extra"] = serde_json::to_value(extra).unwrap();
 

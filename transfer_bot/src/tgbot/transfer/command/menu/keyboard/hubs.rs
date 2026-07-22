@@ -23,8 +23,8 @@ pub(super) fn tasks_hub_buttons(
 }
 
 /// 管理 hub 按钮。
-pub(super) fn admin_hub_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    let mut rows = build_hub_button_rows(admin_hub_specs());
+pub(super) fn admin_hub_buttons(is_owner: bool) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut rows = build_hub_button_rows(admin_hub_specs(is_owner));
     rows.push(hub_footer(MenuPage::AdminHub));
     rows
 }
@@ -38,11 +38,7 @@ fn hub_footer(page: MenuPage) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
             MenuPage::Home,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-        menu_nav_button(
-            "帮助",
-            MenuPage::Help,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
+        super::view_commands_button(),
     )
 }
 
@@ -80,5 +76,10 @@ fn build_hub_button(spec: &HubEntrySpec) -> tdlib_rs::types::InlineKeyboardButto
         HubEntryAction::CacheHome => {
             send::build_callback_button(spec.text, &build_cache_button_data(), spec.style.clone())
         }
+        HubEntryAction::AuthHome => send::build_callback_button(
+            spec.text,
+            &super::super::super::auth::build_auth_panel_callback_data(),
+            spec.style.clone(),
+        ),
     }
 }

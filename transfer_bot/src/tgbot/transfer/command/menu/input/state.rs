@@ -31,10 +31,53 @@ static MENU_LAST_TARGETS: LazyLock<std::sync::Mutex<HashMap<DraftKey, i64>>> =
 /// 同时执行，避免确认按钮连点时同一份草稿被消费两次。
 static MENU_DRAFT_ACTIVE_KEYS: LazyLock<std::sync::Mutex<HashSet<DraftKey>>> =
     LazyLock::new(|| std::sync::Mutex::new(HashSet::new()));
+/// 当前草稿对应的原生选聊提示消息。
+///
+/// 选聊键盘只能挂在 bot 新发的消息上；消息 ID 不适合写入现有草稿 schema，
+/// 因此只在进程内短暂保存。用户选中聊天后会立即取出并删除，避免流程卡片堆积。
+static MENU_TARGET_PICKER_MESSAGES: LazyLock<std::sync::Mutex<HashMap<DraftKey, i64>>> =
+    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+/// 当前目标管理动作对应的原生选聊提示消息。
+///
+/// 与转存目标 picker 分开保存，避免一个流程的旧共享聊天结果误删另一种流程的卡片。
+static MENU_ADMIN_PICKER_MESSAGES: LazyLock<std::sync::Mutex<HashMap<DraftKey, i64>>> =
+    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 #[cfg(test)]
 pub(super) use memory::clear_last_targets;
 pub(super) use memory::{acquire_draft_key_guard, last_target, remember_last_target};
+
+/// 记录本次原生选聊提示；返回同一草稿上一次未清理的消息 ID。
+pub(super) fn remember_target_picker_message(key: DraftKey, message_id: i64) -> Option<i64> {
+    let mut guard = MENU_TARGET_PICKER_MESSAGES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.insert(key, message_id)
+}
+
+/// 取出并清除原生选聊提示消息 ID。
+pub(super) fn take_target_picker_message(key: DraftKey) -> Option<i64> {
+    MENU_TARGET_PICKER_MESSAGES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&key)
+}
+
+/// 记录目标管理 picker 消息，并返回同一草稿上一次未清理的消息 ID。
+pub(super) fn remember_admin_picker_message(key: DraftKey, message_id: i64) -> Option<i64> {
+    let mut guard = MENU_ADMIN_PICKER_MESSAGES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.insert(key, message_id)
+}
+
+/// 取出并清除目标管理 picker 消息 ID。
+pub(super) fn take_admin_picker_message(key: DraftKey) -> Option<i64> {
+    MENU_ADMIN_PICKER_MESSAGES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&key)
+}
 
 /// 菜单输入流程。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,14 +94,6 @@ impl MenuInputKind {
         matches!(self, Self::TransferDefault | Self::LookupDefault)
     }
 
-    /// 归一化到实际命令类型。
-    pub(in crate::tgbot::transfer::command::menu) fn command_kind(self) -> Self {
-        match self {
-            Self::Transfer | Self::TransferDefault => Self::Transfer,
-            Self::Lookup | Self::LookupDefault => Self::Lookup,
-        }
-    }
-
     /// 当前流程复用的命令名。
     ///
     /// bot 私聊场景优先展示长命令；短命令仍由上层路由兼容。
@@ -71,8 +106,7 @@ impl MenuInputKind {
 
     /// 目标选择页标题。
     ///
-    /// 这里直接覆盖四种输入类型，不依赖 `command_kind()` 后的不可达分支，避免未来调整
-    /// 快速入口时把页面渲染路径变成运行时 panic。
+    /// 这里直接覆盖四种输入类型，避免未来调整快速入口时把页面渲染路径变成运行时 panic。
     pub(super) fn target_choice_title(self) -> &'static str {
         match self {
             Self::Transfer | Self::TransferDefault => "选择转存目标",
@@ -233,6 +267,20 @@ pub(in crate::tgbot::transfer::command) enum AdminInputAction {
 }
 
 impl AdminInputAction {
+    /// 是否允许通过 Telegram 原生聊天选择器填写目标 chat_id。
+    pub(super) fn uses_chat_picker(self) -> bool {
+        matches!(self, Self::TargetsSetDefault | Self::TargetsSetAlias)
+    }
+
+    /// 原生选聊按钮所属的稳定动作段，避免默认目标和 alias 的旧消息互相串线。
+    fn chat_picker_button_base(self) -> Option<i32> {
+        match self {
+            Self::TargetsSetDefault => Some(10_000_000),
+            Self::TargetsSetAlias => Some(20_000_000),
+            _ => None,
+        }
+    }
+
     /// 当前所有管理输入动作。
     ///
     /// 这个清单主要用于覆盖测试：新增动作时必须同步确认编码、文案和命令规格。
@@ -251,6 +299,30 @@ impl AdminInputAction {
     ];
 }
 
+const ADMIN_CHAT_REQUEST_TOKEN_SLOTS: u64 = 900_000;
+
+/// 根据动作和 picker token 生成一对 Telegram 原生选聊按钮 ID。
+///
+/// token 来自启动本次输入的 callback/message ID，并持久化在草稿的 `context_i64`；
+/// 不新增 schema，同时能拒绝旧 picker 延迟到达时对新草稿的误消费。
+pub(super) fn admin_chat_request_button_ids(
+    action: AdminInputAction,
+    picker_token: Option<i64>,
+) -> Option<(i32, i32)> {
+    let base = action.chat_picker_button_base()?;
+    let token = picker_token?;
+    let slot = (token.unsigned_abs() % ADMIN_CHAT_REQUEST_TOKEN_SLOTS) as i32;
+    let offset = slot * 2;
+    Some((base + offset, base + offset + 1))
+}
+
+/// 判断共享聊天消息是否来自目标管理 picker，而不是转存目标 picker。
+pub(super) fn is_admin_chat_request_button(button_id: i32) -> bool {
+    [10_000_000_i32, 20_000_000_i32]
+        .into_iter()
+        .any(|base| (base..base + (ADMIN_CHAT_REQUEST_TOKEN_SLOTS as i32 * 2)).contains(&button_id))
+}
+
 /// 配置输入动作从 `/config` 字段规格读取文案，保证按钮、help 和 ForceReply 一致。
 fn config_field_spec(
     action: AdminInputAction,
@@ -267,9 +339,9 @@ fn targets_input_spec(
 
 /// 带上下文的管理输入提示元数据。
 ///
-/// targets 的新增路由/别名会先收集 A，再收集目标 B；旧的修改现有项也会把已选中的
-/// request_chat_id 或 alias 放到上下文里。统一在这里渲染提示，避免“继续输入”和“错误重试”
-/// 使用另一套文案。
+/// targets 的新增 alias 会先收集 A，再收集目标 B；修改现有项会保存 alias，
+/// 原生 picker 还会把本次 token 放入草稿。统一在这里渲染提示，避免“继续输入”和
+/// “错误重试”使用另一套文案。
 #[derive(Debug, Clone)]
 pub(super) struct AdminInputPromptMeta {
     pub(super) title: String,
@@ -286,21 +358,21 @@ pub(super) fn admin_input_prompt_meta(
     let (title, detail, placeholder) = match action {
         AdminInputAction::TargetsAliasName => (
             "新增别名".to_owned(),
-            "请先回复别名（A），例如 archive；或发送 /cancel 取消。".to_owned(),
-            "输入 alias，或发送 /cancel".to_owned(),
+            "请先回复别名（A），例如 archive；回复“取消”可退出。".to_owned(),
+            "输入 alias（回复“取消”可退出）".to_owned(),
         ),
         AdminInputAction::TargetsAliasSearch => (
             "搜索别名".to_owned(),
-            "请回复要搜索的别名关键字，例如 archive；或发送 /cancel 取消。".to_owned(),
-            "输入别名关键字，或发送 /cancel".to_owned(),
+            "请回复要搜索的别名关键字，例如 archive；回复“取消”可退出。".to_owned(),
+            "输入别名关键字（回复“取消”可退出）".to_owned(),
         ),
         AdminInputAction::TargetsSetAlias if context_text.is_some() => (
             "修改目标别名".to_owned(),
             format!(
-                "已选 alias：{}。请只回复新的目标私聊 chat_id；或发送 /cancel 取消。",
+                "已选 alias：{}。请选择新的目标群组或频道，也可直接输入 chat_id；输入“取消”可退出。",
                 context_text.expect("context_text checked above")
             ),
-            "输入新的 target_chat_id，或发送 /cancel".to_owned(),
+            "选择聊天或输入新的 target_chat_id".to_owned(),
         ),
         _ => (
             action.input_title().to_owned(),
@@ -353,10 +425,10 @@ impl AdminInputAction {
     pub(super) fn input_detail(self) -> &'static str {
         match self {
             Self::TargetsAliasName => {
-                return "请先回复别名（A），例如 archive；或发送 /cancel 取消。";
+                return "请先回复别名（A），例如 archive；回复“取消”可退出。";
             }
             Self::TargetsAliasSearch => {
-                return "请回复要搜索的别名关键字，例如 archive；或发送 /cancel 取消。";
+                return "请回复要搜索的别名关键字，例如 archive；回复“取消”可退出。";
             }
             _ => {}
         }
@@ -388,8 +460,8 @@ impl AdminInputAction {
     /// 输入框占位文案。
     pub(super) fn input_placeholder(self) -> &'static str {
         match self {
-            Self::TargetsAliasName => return "输入 alias，或发送 /cancel",
-            Self::TargetsAliasSearch => return "输入别名关键字，或发送 /cancel",
+            Self::TargetsAliasName => return "输入 alias（回复“取消”可退出）",
+            Self::TargetsAliasSearch => return "输入别名关键字（回复“取消”可退出）",
             _ => {}
         }
         if let Some(spec) = targets_input_spec(self) {
@@ -468,6 +540,10 @@ pub(super) enum MenuInputStep {
         kind: MenuInputKind,
         source_link: String,
     },
+    ChatPicker {
+        kind: MenuInputKind,
+        source_link: String,
+    },
     Confirm {
         kind: MenuInputKind,
         source_link: String,
@@ -501,6 +577,7 @@ impl MenuInputDraft {
             MenuInputStep::SourceLink { kind } => kind.source_title(),
             MenuInputStep::TargetChoice { .. } => "选择目标",
             MenuInputStep::TargetChat { .. } => "输入目标",
+            MenuInputStep::ChatPicker { .. } => "选择聊天",
             MenuInputStep::Confirm { .. } => "确认执行",
             MenuInputStep::JobId { action } => action.input_title(),
             MenuInputStep::AdminInput { action, .. } => action.input_title(),
@@ -515,6 +592,11 @@ impl MenuInputDraft {
     /// 构造等待手动输入目标的草稿。
     pub(super) fn target_chat(kind: MenuInputKind, source_link: String) -> Self {
         Self::new(MenuInputStep::TargetChat { kind, source_link })
+    }
+
+    /// 构造等待 Telegram 原生共享聊天结果的草稿。
+    pub(super) fn chat_picker(kind: MenuInputKind, source_link: String) -> Self {
+        Self::new(MenuInputStep::ChatPicker { kind, source_link })
     }
 
     /// 构造等待确认执行的草稿。
@@ -582,6 +664,10 @@ impl MenuInputDraft {
                 kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
                 source_link: model.source_link.clone()?,
             },
+            "chat_picker" => MenuInputStep::ChatPicker {
+                kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
+                source_link: model.source_link.clone()?,
+            },
             "confirm" => MenuInputStep::Confirm {
                 kind: MenuInputKind::parse(model.input_kind.as_deref()?)?,
                 source_link: model.source_link.clone()?,
@@ -630,6 +716,13 @@ impl DraftFields {
             },
             MenuInputStep::TargetChat { kind, source_link } => Self {
                 step: "target_chat",
+                input_kind: Some(kind.code()),
+                job_action: None,
+                source_link: Some(source_link),
+                target_chat_id: None,
+            },
+            MenuInputStep::ChatPicker { kind, source_link } => Self {
+                step: "chat_picker",
                 input_kind: Some(kind.code()),
                 job_action: None,
                 source_link: Some(source_link),
@@ -690,6 +783,7 @@ pub(super) enum TargetDraftAdvance {
     SourceLink,
     TargetChoice,
     TargetChat,
+    ChatPicker,
     Confirm { target_chat_id: i64 },
 }
 
@@ -700,6 +794,30 @@ pub(super) enum TargetContextAdvanceResult {
     Active(TargetContext),
     Expired,
     WrongStep,
+}
+
+/// 原生聊天选择器命中的目标管理输入上下文。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AdminInputContext {
+    pub(super) action: AdminInputAction,
+    pub(super) context_text: Option<String>,
+    pub(super) context_i64: Option<i64>,
+}
+
+/// 原生聊天选择器消费目标管理草稿的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum AdminInputContextTakeResult {
+    None,
+    Active(AdminInputContext),
+    Expired,
+    WrongStep,
+}
+
+/// 目标状态推进结果及 UI 清理要求。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TargetContextAdvanceOutcome {
+    pub(super) result: TargetContextAdvanceResult,
+    pub(super) remove_reply_keyboard: bool,
 }
 
 /// 确认执行上下文。
@@ -717,6 +835,13 @@ pub(super) enum ConfirmContextTakeResult {
     Active(ConfirmContext),
     Expired,
     WrongStep,
+}
+
+/// 取消草稿后的 UI 清理信息。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::tgbot::transfer::command::menu) struct MenuInputCancelResult {
+    pub(in crate::tgbot::transfer::command::menu) removed: bool,
+    pub(in crate::tgbot::transfer::command::menu) remove_reply_keyboard: bool,
 }
 
 /// 开始一个菜单输入流程。
@@ -740,17 +865,41 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input(
     chat_id: i64,
     user_id: i64,
 ) -> anyhow::Result<bool> {
+    Ok(cancel_menu_input_with_result(chat_id, user_id)
+        .await?
+        .removed)
+}
+
+/// 原子取消菜单输入，并返回是否需要清理原生 reply keyboard。
+pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input_with_result(
+    chat_id: i64,
+    user_id: i64,
+) -> anyhow::Result<MenuInputCancelResult> {
     let _guard = acquire_draft_key_guard((chat_id, user_id)).await;
     purge_expired().await?;
     let Some(removed) = find_draft_model(chat_id, user_id).await? else {
-        return Ok(false);
+        return Ok(MenuInputCancelResult::default());
     };
+    let remove_reply_keyboard = MenuInputDraft::from_model(&removed).is_some_and(|draft| {
+        matches!(&draft.step, MenuInputStep::ChatPicker { .. })
+            || matches!(
+                &draft.step,
+                MenuInputStep::AdminInput {
+                    action,
+                    context_i64,
+                    ..
+                } if admin_chat_request_button_ids(*action, *context_i64).is_some()
+            )
+    });
     if !delete_draft_if_current(&removed).await? {
         tracing::debug!(chat_id, user_id, "menu input draft cancel lost write race");
-        return Ok(false);
+        return Ok(MenuInputCancelResult::default());
     }
     tracing::debug!(chat_id, user_id, "menu input draft cancelled");
-    Ok(true)
+    Ok(MenuInputCancelResult {
+        removed: true,
+        remove_reply_keyboard,
+    })
 }
 
 /// 取出当前草稿；若草稿过期，则清理后返回过期状态。
@@ -789,9 +938,91 @@ pub(super) async fn take_current_draft(key: DraftKey) -> anyhow::Result<DraftTak
 /// callback 连点时，如果调用方自己 `take_current_draft` 后再 `put_draft`，中间会有短暂空窗；
 /// 另一个 callback 可能误判为“没有待输入”。这里把读取和写回收敛到状态层，保证同进程内
 /// 同一个 chat + user 的目标选择推进串行完成。
+#[cfg(test)]
 pub(super) async fn advance_target_context(
     key: DraftKey,
     advance: TargetDraftAdvance,
+) -> anyhow::Result<TargetContextAdvanceResult> {
+    Ok(advance_target_context_with_cleanup(key, advance)
+        .await?
+        .result)
+}
+
+/// 在原子推进目标状态的同时，报告是否离开了原生聊天选择阶段。
+pub(super) async fn advance_target_context_with_cleanup(
+    key: DraftKey,
+    advance: TargetDraftAdvance,
+) -> anyhow::Result<TargetContextAdvanceOutcome> {
+    let _guard = acquire_draft_key_guard(key).await;
+    purge_expired().await?;
+    let Some(model) = find_draft_model(key.0, key.1).await? else {
+        return Ok(TargetContextAdvanceOutcome {
+            result: TargetContextAdvanceResult::None,
+            remove_reply_keyboard: false,
+        });
+    };
+    if model.expires_at <= now_utc8() {
+        delete_draft(key.0, key.1).await?;
+        purge_expired().await?;
+        return Ok(TargetContextAdvanceOutcome {
+            result: TargetContextAdvanceResult::Expired,
+            remove_reply_keyboard: false,
+        });
+    }
+
+    let Some(draft) = MenuInputDraft::from_model(&model) else {
+        tracing::warn!(
+            chat_id = key.0,
+            user_id = key.1,
+            "menu target draft row is invalid, deleting"
+        );
+        delete_draft(key.0, key.1).await?;
+        return Ok(TargetContextAdvanceOutcome {
+            result: TargetContextAdvanceResult::None,
+            remove_reply_keyboard: false,
+        });
+    };
+    let remove_reply_keyboard = matches!(&draft.step, MenuInputStep::ChatPicker { .. })
+        && !matches!(advance, TargetDraftAdvance::ChatPicker);
+    let Some((kind, source_link)) = target_context_from_step(&draft.step) else {
+        return Ok(TargetContextAdvanceOutcome {
+            result: TargetContextAdvanceResult::WrongStep,
+            remove_reply_keyboard: false,
+        });
+    };
+
+    let next = match advance {
+        TargetDraftAdvance::SourceLink => MenuInputDraft::source_link(kind),
+        TargetDraftAdvance::TargetChoice => {
+            MenuInputDraft::target_choice(kind, source_link.clone())
+        }
+        TargetDraftAdvance::TargetChat => MenuInputDraft::target_chat(kind, source_link.clone()),
+        TargetDraftAdvance::ChatPicker => MenuInputDraft::chat_picker(kind, source_link.clone()),
+        TargetDraftAdvance::Confirm { target_chat_id } => {
+            MenuInputDraft::confirm(kind, source_link.clone(), target_chat_id)
+        }
+    };
+    if !update_draft_if_current(&model, next).await? {
+        tracing::debug!(
+            chat_id = key.0,
+            user_id = key.1,
+            "menu target draft advance lost write race"
+        );
+        return Ok(TargetContextAdvanceOutcome {
+            result: TargetContextAdvanceResult::None,
+            remove_reply_keyboard: false,
+        });
+    }
+    Ok(TargetContextAdvanceOutcome {
+        result: TargetContextAdvanceResult::Active(TargetContext { kind, source_link }),
+        remove_reply_keyboard,
+    })
+}
+
+/// 仅把等待原生选聊的草稿推进到确认页。
+pub(super) async fn advance_shared_target_context(
+    key: DraftKey,
+    target_chat_id: i64,
 ) -> anyhow::Result<TargetContextAdvanceResult> {
     let _guard = acquire_draft_key_guard(key).await;
     purge_expired().await?;
@@ -805,39 +1036,88 @@ pub(super) async fn advance_target_context(
     }
 
     let Some(draft) = MenuInputDraft::from_model(&model) else {
-        tracing::warn!(
-            chat_id = key.0,
-            user_id = key.1,
-            "menu target draft row is invalid, deleting"
-        );
         delete_draft(key.0, key.1).await?;
         return Ok(TargetContextAdvanceResult::None);
     };
-    let Some((kind, source_link)) = target_context_from_step(&draft.step) else {
+    let MenuInputStep::ChatPicker { kind, source_link } = draft.step else {
         return Ok(TargetContextAdvanceResult::WrongStep);
     };
-
-    let next = match advance {
-        TargetDraftAdvance::SourceLink => MenuInputDraft::source_link(kind),
-        TargetDraftAdvance::TargetChoice => {
-            MenuInputDraft::target_choice(kind, source_link.clone())
-        }
-        TargetDraftAdvance::TargetChat => MenuInputDraft::target_chat(kind, source_link.clone()),
-        TargetDraftAdvance::Confirm { target_chat_id } => {
-            MenuInputDraft::confirm(kind, source_link.clone(), target_chat_id)
-        }
-    };
-    if !update_draft_if_current(&model, next).await? {
-        tracing::debug!(
-            chat_id = key.0,
-            user_id = key.1,
-            "menu target draft advance lost write race"
-        );
+    if !update_draft_if_current(
+        &model,
+        MenuInputDraft::confirm(kind, source_link.clone(), target_chat_id),
+    )
+    .await?
+    {
         return Ok(TargetContextAdvanceResult::None);
     }
+
     Ok(TargetContextAdvanceResult::Active(TargetContext {
         kind,
         source_link,
+    }))
+}
+
+/// 原子消费等待原生选聊的目标管理草稿。
+///
+/// 只允许默认目标和目标别名动作；其他管理输入保持原状，避免共享聊天消息
+/// 意外打断数值配置等 ForceReply 流程。
+pub(super) async fn take_shared_admin_input_context(
+    key: DraftKey,
+    button_id: i32,
+) -> anyhow::Result<AdminInputContextTakeResult> {
+    let _guard = acquire_draft_key_guard(key).await;
+    purge_expired().await?;
+    let Some(model) = find_draft_model(key.0, key.1).await? else {
+        return Ok(AdminInputContextTakeResult::None);
+    };
+    if model.expires_at <= now_utc8() {
+        delete_draft(key.0, key.1).await?;
+        purge_expired().await?;
+        return Ok(AdminInputContextTakeResult::Expired);
+    }
+
+    let Some(draft) = MenuInputDraft::from_model(&model) else {
+        tracing::warn!(
+            chat_id = key.0,
+            user_id = key.1,
+            "menu admin input draft row is invalid, deleting"
+        );
+        delete_draft(key.0, key.1).await?;
+        return Ok(AdminInputContextTakeResult::None);
+    };
+    let MenuInputStep::AdminInput {
+        action,
+        context_text,
+        context_i64,
+    } = draft.step
+    else {
+        return Ok(AdminInputContextTakeResult::WrongStep);
+    };
+    if !action.uses_chat_picker() {
+        return Ok(AdminInputContextTakeResult::WrongStep);
+    }
+    let Some((group_button_id, channel_button_id)) =
+        admin_chat_request_button_ids(action, context_i64)
+    else {
+        return Ok(AdminInputContextTakeResult::WrongStep);
+    };
+    if button_id != group_button_id && button_id != channel_button_id {
+        return Ok(AdminInputContextTakeResult::WrongStep);
+    }
+    if !delete_draft_if_current(&model).await? {
+        tracing::debug!(
+            chat_id = key.0,
+            user_id = key.1,
+            admin_action = action.log_name(),
+            "menu admin chat picker consume lost write race"
+        );
+        return Ok(AdminInputContextTakeResult::None);
+    }
+
+    Ok(AdminInputContextTakeResult::Active(AdminInputContext {
+        action,
+        context_text,
+        context_i64,
     }))
 }
 
@@ -951,6 +1231,7 @@ pub(super) fn target_context_from_step(step: &MenuInputStep) -> Option<(MenuInpu
     match step {
         MenuInputStep::TargetChoice { kind, source_link }
         | MenuInputStep::TargetChat { kind, source_link }
+        | MenuInputStep::ChatPicker { kind, source_link }
         | MenuInputStep::Confirm {
             kind, source_link, ..
         } => Some((*kind, source_link.clone())),
@@ -999,6 +1280,36 @@ mod tests {
 
         assert!(cancel_menu_input(900_001, 900_002).await?);
         assert!(!cancel_menu_input(900_001, 900_002).await?);
+        Ok(())
+    }
+
+    // 取消原生聊天选择阶段时，状态层必须通知 UI 移除 reply keyboard。
+    #[tokio::test]
+    async fn test_cancel_menu_input_reports_chat_picker_keyboard() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_049, 900_050);
+        put_draft(
+            key,
+            MenuInputDraft::chat_picker(MenuInputKind::Transfer, "https://t.me/c/1/12".to_owned()),
+        )
+        .await?;
+
+        let result = cancel_menu_input_with_result(key.0, key.1).await?;
+
+        assert!(result.removed);
+        assert!(result.remove_reply_keyboard);
+
+        let admin_key = (900_057, 900_058);
+        // 目标管理 picker 的 reply keyboard 由 token 标识；`None` 表示旧的
+        // ForceReply 草稿，不能误判为仍需移除原生选聊键盘。
+        put_draft(
+            admin_key,
+            MenuInputDraft::admin_input(AdminInputAction::TargetsSetDefault, None, Some(12345)),
+        )
+        .await?;
+        let admin_result = cancel_menu_input_with_result(admin_key.0, admin_key.1).await?;
+        assert!(admin_result.removed);
+        assert!(admin_result.remove_reply_keyboard);
         Ok(())
     }
 
@@ -1346,6 +1657,134 @@ mod tests {
                 }
             }) if stored_source == source_link
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_shared_chat_advances_picker_to_confirm() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_047, 900_048);
+        let source_link = "https://t.me/c/1/11";
+        put_target_choice_draft(key, MenuInputKind::Transfer, source_link.to_owned()).await?;
+
+        assert!(matches!(
+            advance_target_context(key, TargetDraftAdvance::ChatPicker).await?,
+            TargetContextAdvanceResult::Active(_)
+        ));
+        assert!(matches!(
+            peek_current_draft(key).await?,
+            DraftTakeResult::Active(MenuInputDraft {
+                step: MenuInputStep::ChatPicker { .. }
+            })
+        ));
+
+        assert_eq!(
+            advance_shared_target_context(key, -100).await?,
+            TargetContextAdvanceResult::Active(TargetContext {
+                kind: MenuInputKind::Transfer,
+                source_link: source_link.to_owned(),
+            })
+        );
+        assert!(matches!(
+            peek_current_draft(key).await?,
+            DraftTakeResult::Active(MenuInputDraft {
+                step: MenuInputStep::Confirm {
+                    target_chat_id: -100,
+                    ..
+                }
+            })
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_shared_chat_consumes_target_admin_input_with_alias_context() -> anyhow::Result<()>
+    {
+        let _guard = prepare_schema().await?;
+        let key = (900_053, 900_054);
+        let picker_token = 12345;
+        put_draft(
+            key,
+            MenuInputDraft::admin_input(
+                AdminInputAction::TargetsSetAlias,
+                Some("archive".to_owned()),
+                Some(picker_token),
+            ),
+        )
+        .await?;
+        let (group_button_id, _) =
+            admin_chat_request_button_ids(AdminInputAction::TargetsSetAlias, Some(picker_token))
+                .expect("targets alias should support chat picker");
+
+        assert_eq!(
+            take_shared_admin_input_context(key, group_button_id + 100).await?,
+            AdminInputContextTakeResult::WrongStep
+        );
+        assert!(matches!(
+            peek_current_draft(key).await?,
+            DraftTakeResult::Active(_)
+        ));
+
+        assert_eq!(
+            take_shared_admin_input_context(key, group_button_id).await?,
+            AdminInputContextTakeResult::Active(AdminInputContext {
+                action: AdminInputAction::TargetsSetAlias,
+                context_text: Some("archive".to_owned()),
+                context_i64: Some(picker_token),
+            })
+        );
+        assert!(matches!(
+            peek_current_draft(key).await?,
+            DraftTakeResult::None
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_shared_chat_does_not_consume_non_target_admin_input() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_055, 900_056);
+        put_draft(
+            key,
+            MenuInputDraft::admin_input(AdminInputAction::ConfigSetJobConcurrency, None, None),
+        )
+        .await?;
+
+        assert_eq!(
+            take_shared_admin_input_context(key, 10_000_000).await?,
+            AdminInputContextTakeResult::WrongStep
+        );
+        assert!(matches!(
+            peek_current_draft(key).await?,
+            DraftTakeResult::Active(MenuInputDraft {
+                step: MenuInputStep::AdminInput {
+                    action: AdminInputAction::ConfigSetJobConcurrency,
+                    ..
+                }
+            })
+        ));
+        Ok(())
+    }
+
+    // 从原生聊天选择器返回目标页时，状态推进必须要求 UI 移除旧 reply keyboard。
+    #[tokio::test]
+    async fn test_target_advance_reports_leaving_chat_picker() -> anyhow::Result<()> {
+        let _guard = prepare_schema().await?;
+        let key = (900_051, 900_052);
+        put_draft(
+            key,
+            MenuInputDraft::chat_picker(MenuInputKind::Transfer, "https://t.me/c/1/13".to_owned()),
+        )
+        .await?;
+
+        let outcome =
+            advance_target_context_with_cleanup(key, TargetDraftAdvance::TargetChoice).await?;
+
+        assert!(matches!(
+            outcome.result,
+            TargetContextAdvanceResult::Active(_)
+        ));
+        assert!(outcome.remove_reply_keyboard);
         Ok(())
     }
 

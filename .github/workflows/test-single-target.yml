@@ -17,8 +17,8 @@ on:
         default: "ubuntu-24.04"
         type: choice
         options:
-          - alpine-3.22
-          - debian-12
+          - alpine-3.23
+          - debian-13
           - ubuntu-24.04
           - rocky-9
           - windows-2022
@@ -54,14 +54,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: alpine-3.22
-            label: Alpine 3.22 musl x86_64
-            image: alpine:3.22
-            artifact_suffix: linux-x86_64-alpine3.22-test
-          - id: debian-12
-            label: Debian 12 glibc x86_64
-            image: debian:12
-            artifact_suffix: linux-x86_64-debian12-test
+          - id: alpine-3.23
+            label: Alpine 3.23 musl x86_64
+            image: alpine:3.23
+            artifact_suffix: linux-x86_64-alpine3.23-test
+          - id: debian-13
+            label: Debian 13 glibc x86_64
+            image: debian:13
+            artifact_suffix: linux-x86_64-debian13-test
           - id: ubuntu-24.04
             label: Ubuntu 24.04 glibc x86_64
             image: ubuntu:24.04

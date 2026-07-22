@@ -15,8 +15,28 @@ pub(super) struct ExistingCommandContext {
     pub(super) app: std::sync::Arc<crate::app_context::AppContext>,
     pub(super) request_chat_id: i64,
     pub(super) request_message_id: i64,
+    pub(super) origin: ExistingCommandOrigin,
     pub(super) actor: crate::config::RequestActor,
     pub(super) client_id: i32,
+}
+
+/// 现有命令由哪种交互入口触发。
+///
+/// callback 携带的是机器人卡片 ID，可以继续原地编辑；文本输入携带的是用户消息 ID，
+/// 只能作为请求幂等定位，绝不能传给 `editMessageText`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ExistingCommandOrigin {
+    TextInput,
+    CallbackMessage(i64),
+}
+
+impl ExistingCommandOrigin {
+    fn interaction_message_id(self) -> Option<i64> {
+        match self {
+            Self::TextInput => None,
+            Self::CallbackMessage(message_id) => Some(message_id),
+        }
+    }
 }
 
 /// 调用已有命令入口，避免菜单输入流复制转存/查询业务逻辑。
@@ -34,9 +54,12 @@ pub(super) async fn run_existing_command(
                 command_refs,
                 config,
                 ctx.request_chat_id,
-                ctx.request_message_id,
-                ctx.actor,
-                ctx.client_id,
+                transfer_cmd::TransferCommandContext {
+                    request_message_id: ctx.request_message_id,
+                    interaction_message_id: ctx.origin.interaction_message_id(),
+                    actor: ctx.actor,
+                    client_id: ctx.client_id,
+                },
             )
             .await
         }
@@ -93,5 +116,18 @@ mod tests {
         );
         assert_eq!(parse_bot_message_source("bot-message:bad:456"), None);
         assert_eq!(parse_bot_message_source("https://t.me/c/1/2"), None);
+    }
+
+    /// 用户输入消息不可编辑；只有 callback 所在的机器人卡片能作为交互消息。
+    #[test]
+    fn test_existing_command_origin_separates_user_input_from_bot_card() {
+        assert_eq!(
+            ExistingCommandOrigin::TextInput.interaction_message_id(),
+            None
+        );
+        assert_eq!(
+            ExistingCommandOrigin::CallbackMessage(321_912_832).interaction_message_id(),
+            Some(321_912_832)
+        );
     }
 }

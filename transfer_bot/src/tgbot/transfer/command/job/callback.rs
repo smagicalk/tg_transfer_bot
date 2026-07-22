@@ -5,6 +5,7 @@ use crate::tgbot::send;
 use crate::tgbot::transfer::store;
 use crate::tgbot::transfer::workflow;
 
+use super::actions::load_job_status_snapshot;
 use super::args::JobCallbackAction;
 use super::keyboard::{build_job_status_buttons, build_job_stop_confirm_buttons};
 use super::render::{format_job_status_text, format_job_stop_confirm_text};
@@ -140,7 +141,7 @@ async fn edit_job_stop_confirm_message(
     message_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let Some(snapshot) = store::get_job_progress_snapshot_with_context(app, job_id).await? else {
+    let Some(snapshot) = load_job_status_snapshot(app, job_id).await? else {
         anyhow::bail!("job not found: {}", job_id);
     };
     let (text, keyboard) = send::ReplyPanel::card(format_job_stop_confirm_text(&snapshot))
@@ -166,7 +167,7 @@ async fn edit_job_status_message(
     message_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let Some(snapshot) = store::get_job_progress_snapshot_with_context(app, job_id).await? else {
+    let Some(snapshot) = load_job_status_snapshot(app, job_id).await? else {
         anyhow::bail!("job not found: {}", job_id);
     };
     let (text, keyboard) = send::ReplyPanel::card(format_job_status_text(&snapshot))

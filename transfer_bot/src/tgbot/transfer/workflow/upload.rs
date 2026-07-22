@@ -3,12 +3,16 @@
 // - 多条消息使用 send_message_album，超过 Telegram 上限时按 10 条分批发送
 // - 返回每个上传分组的 TDLib 消息 ID，结果链接由 result_link 模块单独生成
 
+use std::time::Duration;
+
 use crate::tgbot::TdError;
 
 use super::super::file::{PreparedUpload, UploadKind};
 
 /// Telegram media group / album 一次最多包含 10 个媒体项。
 const TELEGRAM_ALBUM_MAX_ITEMS: usize = 10;
+/// 媒体上传可能在 TDLib 中长时间处于 sending 状态；必须等最终消息 ID 后再生成结果链接。
+const UPLOAD_FINAL_MESSAGE_ID_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// 上传准备好的消息集合：
 /// - 1 条 => send_message
@@ -19,6 +23,8 @@ const TELEGRAM_ALBUM_MAX_ITEMS: usize = 10;
 /// - 超过 Telegram album 上限时按 10 条一组分批发送，每组仍然是 album。
 /// - 分组会避免最后只剩 1 条，例如 11 条会拆成 9 + 2，而不是 10 + 1。
 pub(super) async fn upload_prepared(
+    app_context: &crate::app_context::AppContext,
+    job_id: i64,
     target_chat_id: i64,
     prepared: &[(i64, PreparedUpload)],
     client_id: i32,
@@ -46,7 +52,31 @@ pub(super) async fn upload_prepared(
         .await
         .map_err(|e| anyhow::Error::new(TdError(e)))?;
         let tdlib_rs::enums::Message::Message(message) = sent;
-        let message = crate::tgbot::send::wait_for_sent_message(message, client_id).await?;
+        register_message_upload_files(
+            app_context,
+            job_id,
+            prepared[0].0,
+            client_id,
+            &message.content,
+        );
+        let message = crate::tgbot::send::wait_for_sent_message_with_timeout(
+            message,
+            client_id,
+            UPLOAD_FINAL_MESSAGE_ID_WAIT_TIMEOUT,
+        )
+        .await?;
+        // TDLib 可能在发送完成后替换媒体 File 对象；最终消息中的 ID 也要登记，
+        // 否则后续 UpdateFile 无法与当前任务关联。
+        register_message_upload_files(
+            app_context,
+            job_id,
+            prepared[0].0,
+            client_id,
+            &message.content,
+        );
+        app_context
+            .upload_progress
+            .mark_upload_item_complete(client_id, job_id, prepared[0].0);
         return Ok(UploadResult {
             entries: vec![UploadedResultEntry {
                 message_id: message.id,
@@ -68,7 +98,9 @@ pub(super) async fn upload_prepared(
     let mut entries = Vec::with_capacity(chunk_sizes.len());
     let mut offset = 0usize;
     for (chunk_index, chunk_size) in chunk_sizes.iter().copied().enumerate() {
-        let chunk = &contents[offset..offset + chunk_size];
+        let chunk_start = offset;
+        let chunk = &contents[chunk_start..chunk_start + chunk_size];
+        let chunk_items = &prepared[chunk_start..chunk_start + chunk_size];
         offset += chunk_size;
 
         tracing::info!(
@@ -90,12 +122,44 @@ pub(super) async fn upload_prepared(
         .await
         .map_err(|e| anyhow::Error::new(TdError(e)))?;
         let tdlib_rs::enums::Messages::Messages(messages) = rs;
+        for (position, message) in messages.messages.iter().enumerate() {
+            let Some(message) = message else {
+                continue;
+            };
+            let Some((item_id, _)) = chunk_items.get(position) else {
+                continue;
+            };
+            register_message_upload_files(
+                app_context,
+                job_id,
+                *item_id,
+                client_id,
+                &message.content,
+            );
+        }
         let msg = messages
             .messages
             .first()
             .and_then(|msg| msg.clone())
             .ok_or_else(|| anyhow::anyhow!("send_message_album returned no message id"))?;
-        let msg = crate::tgbot::send::wait_for_sent_message(msg, client_id).await?;
+        let msg = crate::tgbot::send::wait_for_sent_message_with_timeout(
+            msg,
+            client_id,
+            UPLOAD_FINAL_MESSAGE_ID_WAIT_TIMEOUT,
+        )
+        .await?;
+        register_message_upload_files(
+            app_context,
+            job_id,
+            chunk_items[0].0,
+            client_id,
+            &msg.content,
+        );
+        for (item_id, _) in chunk_items {
+            app_context
+                .upload_progress
+                .mark_upload_item_complete(client_id, job_id, *item_id);
+        }
         entries.push(UploadedResultEntry {
             message_id: msg.id,
             is_album: true,
@@ -106,6 +170,48 @@ pub(super) async fn upload_prepared(
         anyhow::bail!("upload completed without result message id");
     }
     Ok(UploadResult { entries })
+}
+
+/// 从 TDLib 返回的待发送消息中登记上传 file ID。
+///
+/// `InputFile::Local` 没有可用于 UpdateFile 关联的 ID；必须等 sendMessage 返回 Message 后，
+/// 从实际消息内容中读取 TDLib 分配的上传 file ID。
+fn register_message_upload_files(
+    app_context: &crate::app_context::AppContext,
+    job_id: i64,
+    item_id: i64,
+    client_id: i32,
+    content: &tdlib_rs::enums::MessageContent,
+) {
+    for file in message_upload_files(content) {
+        app_context
+            .upload_progress
+            .register_upload_file(client_id, job_id, item_id, file);
+    }
+}
+
+fn message_upload_files(content: &tdlib_rs::enums::MessageContent) -> Vec<&tdlib_rs::types::File> {
+    match content {
+        tdlib_rs::enums::MessageContent::MessageAnimation(message) => {
+            vec![&message.animation.animation]
+        }
+        tdlib_rs::enums::MessageContent::MessageAudio(message) => vec![&message.audio.audio],
+        tdlib_rs::enums::MessageContent::MessageDocument(message) => {
+            vec![&message.document.document]
+        }
+        tdlib_rs::enums::MessageContent::MessagePhoto(message) => message
+            .photo
+            .sizes
+            .iter()
+            .max_by_key(|size| (i64::from(size.width), i64::from(size.height)))
+            .map(|size| vec![&size.photo])
+            .unwrap_or_default(),
+        tdlib_rs::enums::MessageContent::MessageVideo(message) => vec![&message.video.video],
+        tdlib_rs::enums::MessageContent::MessageVoiceNote(message) => {
+            vec![&message.voice_note.voice]
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// 上传结果摘要。
@@ -200,4 +306,32 @@ pub(super) fn validate_album_kinds(kinds: &[UploadKind]) -> anyhow::Result<()> {
 
     // 剩余组合当前允许，主要是 photo/video 混合 album。
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::message_upload_files;
+
+    #[test]
+    fn test_message_upload_files_extracts_document_file_id() {
+        let message = tdlib_rs::types::MessageDocument {
+            document: tdlib_rs::types::Document {
+                file_name: "file.bin".to_owned(),
+                mime_type: "application/octet-stream".to_owned(),
+                minithumbnail: None,
+                thumbnail: None,
+                document: tdlib_rs::types::File {
+                    id: 77,
+                    ..Default::default()
+                },
+            },
+            caption: Default::default(),
+        };
+        let content = tdlib_rs::enums::MessageContent::MessageDocument(message);
+
+        let files = message_upload_files(&content);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].id, 77);
+    }
 }

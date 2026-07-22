@@ -298,6 +298,8 @@ pub struct BotConfigV2 {
     pub config_version: i32,
     #[serde(default)]
     pub owner_user_id: i64,
+    #[serde(default)]
+    pub admin_user_ids: Vec<i64>,
     pub tdlib_defaults: TdlibDefaults,
     #[serde(default)]
     pub storage: StorageConfig,
@@ -383,8 +385,11 @@ impl TransferClientIds {
 // 这里是业务代码读取的“视图”，不再要求和 config.json 结构一一对应。
 #[derive(Debug, Clone, Default)]
 pub struct BotConfig {
-    // 唯一允许与 bot 私聊交互的所有者 Telegram user ID。
+    // 始终允许与 bot 私聊交互的所有者 Telegram user ID。
     pub owner_user_id: i64,
+
+    // 与所有者同权的管理员 Telegram user ID 白名单。
+    pub admin_user_ids: BTreeSet<i64>,
 
     // 机器人业务数据库配置。
     pub storage: StorageConfig,
@@ -474,13 +479,14 @@ impl BotConfig {
     /// 项目明确只支持私聊 bot 交互，不处理群聊命令，避免多人共用一个 chat_id
     /// 时产生任务归属和菜单草稿混乱。
     pub fn request_actor(&self, request_chat_id: i64, sender_user_id: i64) -> Option<RequestActor> {
-        (self.owner_user_id != 0
+        (sender_user_id > 0
             && request_chat_id == sender_user_id
-            && sender_user_id == self.owner_user_id)
-            .then_some(RequestActor {
-                request_chat_id,
-                user_id: sender_user_id,
-            })
+            && (sender_user_id == self.owner_user_id
+                || self.admin_user_ids.contains(&sender_user_id)))
+        .then_some(RequestActor {
+            request_chat_id,
+            user_id: sender_user_id,
+        })
     }
 
     /// 从 v2 配置构造运行时视图。
@@ -491,6 +497,7 @@ impl BotConfig {
         if owner_user_id <= 0 {
             anyhow::bail!("owner_user_id must be positive");
         }
+        let admin_user_ids = config.admin_user_ids.iter().copied().collect();
 
         let mut runtime_clients = HashMap::new();
         runtime_clients.insert(
@@ -522,6 +529,7 @@ impl BotConfig {
 
         Ok(Self {
             owner_user_id,
+            admin_user_ids,
             storage: config.storage,
             targets: config.targets,
             transfer_config: config.transfer_config,
@@ -545,6 +553,9 @@ impl BotConfigV2 {
 
         if self.owner_user_id <= 0 {
             anyhow::bail!("owner_user_id must be positive");
+        }
+        if self.admin_user_ids.iter().any(|user_id| *user_id <= 0) {
+            anyhow::bail!("admin_user_ids must contain only positive IDs");
         }
 
         if self.clients.bot.token.trim().is_empty() {
@@ -726,14 +737,24 @@ mod tests {
     }
 
     #[test]
-    fn test_v2_owner_user_id_is_the_only_private_actor() {
-        let config_text = v2_config_text();
-        let config = BotConfig::from_json_str(config_text).unwrap();
+    fn test_v2_owner_and_admin_user_ids_are_private_actors() {
+        let config_text = v2_config_text().replace(
+            "\"owner_user_id\": 1",
+            "\"owner_user_id\": 1,\n          \"admin_user_ids\": [2, 3]",
+        );
+        let config = BotConfig::from_json_str(&config_text).unwrap();
 
         assert_eq!(config.owner_user_id, 1);
         assert!(config.request_actor(1, 1).is_some());
-        assert!(config.request_actor(2, 2).is_none());
+        assert!(config.request_actor(2, 2).is_some());
+        assert!(config.request_actor(3, 3).is_some());
+        assert!(config.request_actor(4, 4).is_none());
         assert!(config.request_actor(999, 1).is_none());
+    }
+
+    #[test]
+    fn test_default_config_does_not_authorize_zero_actor() {
+        assert!(BotConfig::default().request_actor(0, 0).is_none());
     }
 
     #[test]
@@ -743,6 +764,21 @@ mod tests {
         let err = BotConfig::from_json_str(&config_text).unwrap_err();
 
         assert!(err.to_string().contains("owner_user_id must be positive"));
+    }
+
+    #[test]
+    fn test_v2_rejects_non_positive_admin_user_ids() {
+        let config_text = v2_config_text().replace(
+            "\"owner_user_id\": 1",
+            "\"owner_user_id\": 1,\n          \"admin_user_ids\": [2, 0]",
+        );
+
+        let err = BotConfig::from_json_str(&config_text).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("admin_user_ids must contain only positive IDs")
+        );
     }
 
     // 文件配置只保留启动级字段时仍可启动；targets / transfer_config 后续由数据库运行态接管。

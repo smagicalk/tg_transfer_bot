@@ -239,24 +239,6 @@ pub(crate) fn build_page_command_section() -> String {
     card::section("命令")
 }
 
-/// 运行态管理页统一命令示例区。
-///
-/// 只负责拼接：
-/// - 空行
-/// - `命令` 标题
-/// - 若干示例命令
-///
-/// 每页仍自己决定展示哪些示例，不把业务字段硬抽成一套。
-pub(crate) fn build_command_examples<I, S>(examples: I) -> Vec<String>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<String>,
-{
-    let mut lines = vec![String::new(), build_page_command_section()];
-    lines.extend(examples.into_iter().map(Into::into));
-    lines
-}
-
 /// 运行态管理页帮助用的命令说明 descriptor。
 ///
 /// 当前先只覆盖：
@@ -322,17 +304,15 @@ pub(crate) fn build_runtime_admin_examples_block(
 
 /// 构造运行态管理页的统一落地页文本。
 ///
-/// 适合菜单页这种“先看说明，再看命令/交互/示例”的稳定结构。
+/// 菜单落地页默认只展示字段和交互说明；完整命令通过页面上的“查看命令”按钮打开。
 pub(crate) fn build_runtime_admin_landing_text(
     title: &str,
     intro_lines: impl IntoIterator<Item = String>,
-    descriptor: &RuntimeAdminHelpDescriptor,
+    _descriptor: &RuntimeAdminHelpDescriptor,
 ) -> String {
     let mut lines = build_ready_page_header(title);
     lines.extend(build_runtime_admin_section_block("说明", intro_lines));
-    lines.extend(build_runtime_admin_usage_block(descriptor));
-    lines.extend(build_runtime_admin_interaction_block(descriptor));
-    lines.extend(build_runtime_admin_examples_block(descriptor));
+    lines.push("需要命令时点击“查看命令”。".to_owned());
     lines.join("\n")
 }
 
@@ -386,7 +366,7 @@ pub(crate) fn build_return_menu_row(
     vec![back, menu]
 }
 
-/// 运行态管理页统一“帮助 / 菜单”导航行，直接按 topic 生成帮助按钮。
+/// 运行态管理页统一“查看命令 / 菜单”导航行，直接按 topic 生成帮助按钮。
 ///
 /// 这类页面的 footer 文案结构固定，直接复用统一 helper 可以减少每个模块重复手写按钮创建。
 pub(crate) fn build_runtime_admin_help_menu_row(
@@ -394,7 +374,7 @@ pub(crate) fn build_runtime_admin_help_menu_row(
 ) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
     vec![
         crate::tgbot::send::build_callback_button(
-            "帮助",
+            "查看命令",
             &super::help::build_help_callback_data(Some(help_topic)),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
@@ -475,8 +455,8 @@ pub(crate) fn runtime_admin_edit_error_title(subject: &str) -> String {
 }
 
 /// 统一运行态管理页编辑原消息失败时的副文案。
-pub(crate) fn runtime_admin_edit_error_detail(command: &str) -> String {
-    format!("配置已处理，但原消息编辑失败；请复制错误或重新发送 {command}。")
+pub(crate) fn runtime_admin_edit_error_detail() -> String {
+    "配置已处理，但原消息编辑失败；请使用错误卡片上的“菜单”按钮重新进入。".to_owned()
 }
 
 /// 统一发送运行态管理页的 callback 错误卡片。
@@ -504,7 +484,6 @@ pub(crate) async fn edit_runtime_admin_interaction_card_or_error(
     keyboard: tdlib_rs::types::ReplyMarkupInlineKeyboard,
     client_id: i32,
     subject: &str,
-    retry_command: &str,
 ) -> anyhow::Result<()> {
     crate::tgbot::send::edit_interaction_card_or_error(
         text,
@@ -513,7 +492,7 @@ pub(crate) async fn edit_runtime_admin_interaction_card_or_error(
         keyboard,
         client_id,
         &runtime_admin_edit_error_title(subject),
-        &runtime_admin_edit_error_detail(retry_command),
+        &runtime_admin_edit_error_detail(),
     )
     .await
 }

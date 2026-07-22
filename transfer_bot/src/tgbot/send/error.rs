@@ -1,7 +1,9 @@
 // 统一交互错误卡片。
 // callback 已经 ACK 后不能再次弹提示，因此这里把错误说明和“复制错误”按钮统一封装。
 
-use super::{ReplyPanel, build_copy_button, edit_card_message_with_inline_keyboard};
+use super::{
+    ReplyPanel, build_callback_button, build_copy_button, edit_card_message_with_inline_keyboard,
+};
 use crate::tgbot::transfer::card;
 
 /// 编辑交互卡片；如果原消息编辑失败，则发送独立错误卡片。
@@ -38,7 +40,7 @@ pub async fn send_interaction_error_card(
 ) -> anyhow::Result<()> {
     let error_text = err.to_string();
     let result = ReplyPanel::card(interaction_error_text(title, detail, &error_text))
-        .row(copy_error_row(&error_text))
+        .row(interaction_error_action_row(&error_text))
         .send(request_chat_id, client_id)
         .await;
     if let Err(send_err) = &result {
@@ -68,6 +70,7 @@ fn interaction_error_text(title: &str, detail: &str, error_text: &str) -> String
 }
 
 /// 构造统一的“复制错误”按钮。
+#[cfg(test)]
 fn copy_error_row(error_text: &str) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
     vec![build_copy_button(
         "复制错误",
@@ -76,9 +79,26 @@ fn copy_error_row(error_text: &str) -> Vec<tdlib_rs::types::InlineKeyboardButton
     )]
 }
 
+/// 交互错误保留“查看命令 / 菜单 / 复制错误”三个恢复入口。
+fn interaction_error_action_row(error_text: &str) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
+    vec![
+        crate::tgbot::transfer::build_view_commands_button(None),
+        build_callback_button(
+            "菜单",
+            &crate::tgbot::transfer::build_menu_home_button_data_for_outer(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        build_copy_button(
+            "复制错误",
+            error_text,
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{copy_error_row, interaction_error_text};
+    use super::{copy_error_row, interaction_error_action_row, interaction_error_text};
 
     // 交互错误卡片应稳定保留状态、原因和错误块。
     #[test]
@@ -98,5 +118,15 @@ mod tests {
 
         assert_eq!(row.len(), 1);
         assert_eq!(row[0].text, "复制错误");
+    }
+
+    #[test]
+    fn test_interaction_error_action_row_has_recovery_entries() {
+        let row = interaction_error_action_row("db timeout");
+
+        assert_eq!(row.len(), 3);
+        assert_eq!(row[0].text, "查看命令");
+        assert_eq!(row[1].text, "菜单");
+        assert_eq!(row[2].text, "复制错误");
     }
 }

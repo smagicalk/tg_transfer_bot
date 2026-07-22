@@ -29,6 +29,23 @@ pub(super) fn build_menu_buttons(
         page,
         recent_jobs,
         draft_summary,
+        true,
+    )
+}
+
+#[cfg(test)]
+fn build_menu_buttons_for_actor(
+    page: MenuPage,
+    recent_jobs: &[store::JobProgressSnapshot],
+    draft_summary: Option<&MenuDraftSummary>,
+    is_owner: bool,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    build_menu_buttons_on(
+        crate::app_context::app_context().as_ref(),
+        page,
+        recent_jobs,
+        draft_summary,
+        is_owner,
     )
 }
 
@@ -38,11 +55,12 @@ pub(super) fn build_menu_buttons_on(
     page: MenuPage,
     recent_jobs: &[store::JobProgressSnapshot],
     draft_summary: Option<&MenuDraftSummary>,
+    is_owner: bool,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     match page {
         MenuPage::Home => home_buttons(recent_jobs, draft_summary),
         MenuPage::TasksHub => tasks_hub_buttons(recent_jobs),
-        MenuPage::AdminHub => admin_hub_buttons(),
+        MenuPage::AdminHub => admin_hub_buttons(is_owner),
         MenuPage::Downloads => downloads_buttons(),
         MenuPage::Jobs => jobs_buttons(),
         MenuPage::Lookup => lookup_buttons(),
@@ -66,11 +84,7 @@ fn downloads_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
             MenuPage::Home,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-        menu_nav_button(
-            "帮助",
-            MenuPage::Help,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
+        view_commands_button(),
     ));
     rows
 }
@@ -89,11 +103,7 @@ fn jobs_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
             MenuPage::Home,
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-        menu_nav_button(
-            "帮助",
-            MenuPage::Help,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
+        view_commands_button(),
     ));
     rows
 }
@@ -124,13 +134,18 @@ fn lookup_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
                 MenuPage::Home,
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
-            menu_nav_button(
-                "帮助",
-                MenuPage::Help,
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
+            view_commands_button(),
         ),
     ]
+}
+
+/// 打开完整命令中心；日常菜单页不直接展示命令正文。
+fn view_commands_button() -> tdlib_rs::types::InlineKeyboardButton {
+    send::build_callback_button(
+        "查看命令",
+        &super::super::build_help_button_data(None),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )
 }
 
 /// 帮助页按钮。
@@ -192,7 +207,7 @@ mod tests {
         assert_eq!(rows[0][1].text, "指定目标");
         assert_eq!(rows[1][0].text, "任务");
         assert_eq!(rows[1][1].text, "管理");
-        assert_eq!(rows[1][2].text, "帮助");
+        assert_eq!(rows[1][2].text, "查看命令");
         assert!(
             !rows
                 .iter()
@@ -209,7 +224,7 @@ mod tests {
         let rows = build_menu_buttons(MenuPage::Home, &[], None);
         assert_eq!(rows[1][0].text, "任务");
         assert_eq!(rows[1][1].text, "管理");
-        assert_eq!(rows[1][2].text, "帮助");
+        assert_eq!(rows[1][2].text, "查看命令");
         assert_eq!(rows[2][0].text, "刷新");
     }
 
@@ -339,7 +354,7 @@ mod tests {
         assert_eq!(rows[0][0].text, "快速转存");
         assert_eq!(rows[1][0].text, "任务");
         assert_eq!(rows[1][1].text, "管理");
-        assert_eq!(rows[1][2].text, "帮助");
+        assert_eq!(rows[1][2].text, "查看命令");
         assert_eq!(rows[2][0].text, "刷新");
         assert_eq!(rows[2].len(), 1);
         assert_eq!(rows.len(), 3);
@@ -367,7 +382,7 @@ mod tests {
 
         assert_eq!(downloads[4][0].text, "刷新");
         assert_eq!(downloads[4][1].text, "首页");
-        assert_eq!(downloads[4][2].text, "帮助");
+        assert_eq!(downloads[4][2].text, "查看命令");
 
         assert_eq!(help[4][0].text, "刷新");
         assert_eq!(help[4][1].text, "首页");
@@ -403,6 +418,13 @@ mod tests {
 
         assert_eq!(rows[0][0].text, "继续输入：快速转存");
         assert_eq!(rows[0][1].text, "取消输入");
+        let labels = rows
+            .iter()
+            .flatten()
+            .map(|button| button.text.as_str())
+            .collect::<Vec<_>>();
+        assert!(!labels.contains(&"快速转存"));
+        assert!(!labels.contains(&"指定目标"));
 
         let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &rows[0][0].r#type
         else {
@@ -464,12 +486,13 @@ mod tests {
             "文件缓存",
             "运行配置",
             "目标配置",
+            "授权管理",
         ] {
             assert!(labels.contains(&expected), "missing help topic: {expected}");
         }
     }
 
-    // 单所有者帮助页展示全部保留主题。
+    // 授权用户帮助页展示全部保留主题。
     #[test]
     fn test_help_buttons_include_management_topics() {
         let rows = build_menu_buttons(MenuPage::Help, &[], None);
@@ -574,7 +597,7 @@ mod tests {
         assert!(!labels.contains(&"复制当前列表"));
     }
 
-    // 两个 hub 的 footer 统一为“刷新当前页 -> 首页 -> 帮助”，减少跨页记忆成本。
+    // 两个 hub 的 footer 统一为“刷新当前页 -> 首页 -> 查看命令”，减少跨页记忆成本。
     #[test]
     fn test_hub_footers_use_same_hierarchy() {
         let tasks = build_menu_buttons(MenuPage::TasksHub, &[], None);
@@ -586,21 +609,21 @@ mod tests {
         ] {
             assert_eq!(footer[0].text, "刷新");
             assert_eq!(footer[1].text, "首页");
-            assert_eq!(footer[2].text, "帮助");
+            assert_eq!(footer[2].text, "查看命令");
         }
     }
 
-    // 首页不应同时出现两个“帮助”按钮。
+    // 首页只保留一个“查看命令”入口。
     #[test]
-    fn test_home_buttons_have_single_help_entry() {
+    fn test_home_buttons_have_single_command_entry() {
         let rows = build_menu_buttons(MenuPage::Home, &[], None);
-        let help_count = rows
+        let command_count = rows
             .iter()
             .flatten()
-            .filter(|button| button.text == "帮助")
+            .filter(|button| button.text == "查看命令")
             .count();
 
-        assert_eq!(help_count, 1);
+        assert_eq!(command_count, 1);
     }
 
     // 有最近任务时，任务 hub 不应同时出现“最近任务”和“查看最近任务”两个列表入口。
@@ -623,19 +646,45 @@ mod tests {
     fn test_admin_hub_buttons() {
         use base64::{Engine as _, engine::general_purpose};
 
-        let rows = build_menu_buttons(MenuPage::AdminHub, &[], None);
+        let rows = build_menu_buttons_for_actor(MenuPage::AdminHub, &[], None, true);
         let labels = rows
             .iter()
             .flatten()
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        for expected in ["运行配置", "目标配置", "运行健康", "文件缓存"] {
+        for expected in ["运行配置", "目标配置", "运行健康", "文件缓存", "授权管理"]
+        {
             assert!(
                 labels.contains(&expected),
                 "missing admin hub button: {expected}"
             );
         }
+
+        let non_owner_rows = build_menu_buttons_for_actor(MenuPage::AdminHub, &[], None, false);
+        assert!(
+            !non_owner_rows
+                .iter()
+                .flatten()
+                .any(|button| button.text == "授权管理")
+        );
+
+        let auth_button = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "授权管理")
+            .expect("missing authorization management button");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &auth_button.r#type
+        else {
+            panic!("authorization management should use callback");
+        };
+        let decoded = String::from_utf8(
+            general_purpose::STANDARD
+                .decode(&callback.data)
+                .expect("callback should be base64"),
+        )
+        .expect("callback should be utf8");
+        assert_eq!(decoded, "au:refresh");
 
         let button = rows
             .iter()
@@ -698,6 +747,7 @@ mod tests {
             job: store::JobProgressJob {
                 id: 42,
                 target_chat_id: -100,
+                result_message_link: None,
                 status: status.to_owned(),
                 total_items: 1,
                 last_error: None,
@@ -715,6 +765,10 @@ mod tests {
             active_downloaded_bytes: 0,
             active_download_total_bytes: 0,
             has_unknown_download_total: false,
+            active_upload_files: 0,
+            active_uploaded_bytes: 0,
+            active_upload_total_bytes: 0,
+            has_unknown_upload_total: false,
         }
     }
 }
