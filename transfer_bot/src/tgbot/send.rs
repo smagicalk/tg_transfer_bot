@@ -15,7 +15,7 @@ pub use buttons::{
 };
 pub use error::{edit_interaction_card_or_error, send_interaction_error_card};
 pub use message::{
-    answer_callback_query, delete_chat_reply_markup, delete_message,
+    SentMessageReceipt, answer_callback_query, delete_chat_reply_markup, delete_message,
     edit_card_message_with_inline_keyboard, edit_markdown_message_with_inline_keyboard,
     observe_message_send_failed_for_client, observe_message_send_succeeded_for_client,
     send_card_message, send_card_message_replying_to, send_card_message_with_buttons,

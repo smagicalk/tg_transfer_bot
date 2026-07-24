@@ -8,11 +8,87 @@ use std::time::Duration;
 use crate::tgbot::TdError;
 
 use super::super::file::{PreparedUpload, UploadKind};
+use super::super::store;
 
 /// Telegram media group / album 一次最多包含 10 个媒体项。
 const TELEGRAM_ALBUM_MAX_ITEMS: usize = 10;
 /// 媒体上传可能在 TDLib 中长时间处于 sending 状态；必须等最终消息 ID 后再生成结果链接。
 const UPLOAD_FINAL_MESSAGE_ID_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
+const UPLOAD_CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+fn is_upload_control_status(status: &str) -> bool {
+    matches!(
+        status,
+        store::JOB_STATUS_PAUSED
+            | store::JOB_STATUS_CANCELLING
+            | store::JOB_STATUS_CANCEL_FINALIZING
+            | store::JOB_STATUS_CANCELLED
+    )
+}
+
+/// 上传等待期间也轮询任务控制状态。
+///
+/// `send_message` 会先返回临时消息，真正的文件上传在 TDLib 内部继续进行；
+/// 只等待最终消息 ID 会让暂停/停止看起来失效。控制状态出现后删除仍处于
+/// pending 的临时消息，随后由工作流把任务收敛到 paused/cancelled。
+async fn wait_for_sent_message_with_control(
+    message: tdlib_rs::types::Message,
+    client_id: i32,
+    timeout: Duration,
+    job_id: i64,
+    target_chat_id: i64,
+    pending_message_ids: &[i64],
+) -> anyhow::Result<tdlib_rs::types::Message> {
+    let wait = crate::tgbot::send::wait_for_sent_message_with_timeout(message, client_id, timeout);
+    tokio::pin!(wait);
+
+    loop {
+        tokio::select! {
+            result = &mut wait => {
+                let result = result?;
+                let Some(status) = store::get_job_status(job_id).await? else {
+                    anyhow::bail!("job not found after upload: {}", job_id);
+                };
+                if is_upload_control_status(&status) {
+                    delete_upload_messages(target_chat_id, client_id, job_id, &[result.id]).await;
+                    anyhow::bail!("transfer job control requested after upload: {}", status);
+                }
+                return Ok(result);
+            },
+            _ = tokio::time::sleep(UPLOAD_CONTROL_POLL_INTERVAL) => {
+                let Some(status) = store::get_job_status(job_id).await? else {
+                    anyhow::bail!("job not found while waiting for upload: {}", job_id);
+                };
+                if is_upload_control_status(&status) {
+                    delete_upload_messages(target_chat_id, client_id, job_id, pending_message_ids).await;
+                    anyhow::bail!("transfer job control requested during upload: {}", status);
+                }
+            }
+        }
+    }
+}
+
+async fn delete_upload_messages(
+    target_chat_id: i64,
+    client_id: i32,
+    job_id: i64,
+    message_ids: &[i64],
+) {
+    for message_id in message_ids {
+        if let Err(err) =
+            tdlib_rs::functions::delete_messages(target_chat_id, vec![*message_id], true, client_id)
+                .await
+        {
+            tracing::debug!(
+                job_id,
+                message_id,
+                error_code = err.code,
+                error_message = %err.message,
+                "upload message could not be deleted after control request"
+            );
+        }
+    }
+}
 
 /// 上传准备好的消息集合：
 /// - 1 条 => send_message
@@ -59,10 +135,14 @@ pub(super) async fn upload_prepared(
             client_id,
             &message.content,
         );
-        let message = crate::tgbot::send::wait_for_sent_message_with_timeout(
+        let pending_message_id = message.id;
+        let message = wait_for_sent_message_with_control(
             message,
             client_id,
             UPLOAD_FINAL_MESSAGE_ID_WAIT_TIMEOUT,
+            job_id,
+            target_chat_id,
+            &[pending_message_id],
         )
         .await?;
         // TDLib 可能在发送完成后替换媒体 File 对象；最终消息中的 ID 也要登记，
@@ -142,10 +222,18 @@ pub(super) async fn upload_prepared(
             .first()
             .and_then(|msg| msg.clone())
             .ok_or_else(|| anyhow::anyhow!("send_message_album returned no message id"))?;
-        let msg = crate::tgbot::send::wait_for_sent_message_with_timeout(
+        let pending_message_ids = messages
+            .messages
+            .iter()
+            .filter_map(|message| message.as_ref().map(|message| message.id))
+            .collect::<Vec<_>>();
+        let msg = wait_for_sent_message_with_control(
             msg,
             client_id,
             UPLOAD_FINAL_MESSAGE_ID_WAIT_TIMEOUT,
+            job_id,
+            target_chat_id,
+            &pending_message_ids,
         )
         .await?;
         register_message_upload_files(
@@ -310,7 +398,18 @@ pub(super) fn validate_album_kinds(kinds: &[UploadKind]) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::message_upload_files;
+    use super::{is_upload_control_status, message_upload_files};
+
+    #[test]
+    fn test_upload_control_status_interrupts_pending_upload() {
+        assert!(is_upload_control_status("paused"));
+        assert!(is_upload_control_status("cancelling"));
+        assert!(is_upload_control_status("cancel_finalizing"));
+        assert!(is_upload_control_status("cancelled"));
+        assert!(!is_upload_control_status("pending"));
+        assert!(!is_upload_control_status("running"));
+        assert!(!is_upload_control_status("success"));
+    }
 
     #[test]
     fn test_message_upload_files_extracts_document_file_id() {

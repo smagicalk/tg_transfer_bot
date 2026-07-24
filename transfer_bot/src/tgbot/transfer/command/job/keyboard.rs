@@ -8,7 +8,6 @@ use super::super::build_view_commands_button;
 use super::super::downloads::build_downloads_return_list_callback_data;
 use super::super::menu::build_menu_home_callback_data;
 use super::args::{JobCallbackAction, build_job_callback_data};
-use super::build_job_stop_execute_callback_data;
 use super::status_meta::job_status_meta;
 
 /// 构造单任务详情按钮。
@@ -82,50 +81,13 @@ pub(super) fn build_job_status_buttons(
     rows
 }
 
-/// 构造停止确认页按钮。
-///
-/// “确认停止”单独占一行，避免和返回按钮挤在一起导致误触。
-pub(super) fn build_job_stop_confirm_buttons(
-    snapshot: &JobProgressSnapshot,
-) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    let job_id = snapshot.job.id;
-    let status = snapshot.job.status.as_str();
-    vec![
-        vec![send::build_callback_button(
-            "确认停止",
-            &build_job_stop_execute_callback_data(job_id),
-            tdlib_rs::enums::ButtonStyle::Danger,
-        )],
-        vec![
-            send::build_callback_button(
-                "返回详情",
-                &build_job_callback_data(JobCallbackAction::Status, job_id),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_callback_button(
-                "返回列表",
-                &build_downloads_return_list_callback_data(status, 8),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-        vec![
-            build_view_commands_button(Some("job")),
-            send::build_callback_button(
-                "菜单",
-                &build_menu_home_callback_data(),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-        ],
-    ]
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{build_job_status_buttons, build_job_stop_confirm_buttons, job_status_meta};
+    use super::{build_job_status_buttons, job_status_meta};
     use crate::tgbot::transfer::store;
     use base64::{Engine as _, engine::general_purpose};
 
-    // 运行中任务详情应把停止按钮导向确认页，避免误触后直接停止。
+    // 运行中任务详情的停止按钮一次点击即可请求停止。
     #[test]
     fn test_build_job_status_buttons_for_running() {
         let buttons = build_job_status_buttons(&snapshot_with_status(store::JOB_STATUS_RUNNING));
@@ -204,23 +166,6 @@ mod tests {
             buttons[0][0].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Url(_)
         ));
-    }
-
-    // 停止确认页里只有“确认停止”会执行真实 stop，返回按钮只刷新详情或列表。
-    #[test]
-    fn test_build_job_stop_confirm_buttons() {
-        let buttons =
-            build_job_stop_confirm_buttons(&snapshot_with_status(store::JOB_STATUS_RUNNING));
-
-        assert_eq!(buttons[0][0].text, "确认停止");
-        assert_eq!(buttons[0][0].style, tdlib_rs::enums::ButtonStyle::Danger);
-        assert_eq!(decoded_callback_data(&buttons[0][0]), "j:s:42");
-        assert_eq!(buttons[1][0].text, "返回详情");
-        assert_eq!(decoded_callback_data(&buttons[1][0]), "j:st:42");
-        assert_eq!(buttons[1][1].text, "返回列表");
-        assert_eq!(buttons[2][0].text, "查看命令");
-        assert_eq!(buttons[2][1].text, "菜单");
-        assert_eq!(buttons.len(), 3);
     }
 
     fn decoded_callback_data(button: &tdlib_rs::types::InlineKeyboardButton) -> String {

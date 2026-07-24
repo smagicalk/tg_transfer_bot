@@ -3,6 +3,9 @@
 
 use super::types::{DownloadSeed, PreparedCacheMeta};
 use crate::tgbot::TdError;
+use crate::tgbot::transfer::store;
+
+const DOWNLOAD_CONTROL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// 从消息内容提取稳定 file_key（优先 remote.unique_id）。
 pub(in crate::tgbot::transfer) fn extract_file_key(
@@ -81,6 +84,7 @@ pub(in crate::tgbot::transfer) fn extract_download_seed(
 pub(in crate::tgbot::transfer) async fn ensure_media_downloaded(
     message: &tdlib_rs::types::Message,
     client_id: i32,
+    job_id: i64,
 ) -> anyhow::Result<()> {
     let file_id = match &message.content {
         tdlib_rs::enums::MessageContent::MessageAnimation(animation) => {
@@ -105,7 +109,7 @@ pub(in crate::tgbot::transfer) async fn ensure_media_downloaded(
         return Ok(());
     };
 
-    let _ = ensure_local_file(file_id, client_id).await?;
+    let _ = ensure_local_file_with_control(file_id, client_id, Some(job_id)).await?;
     Ok(())
 }
 
@@ -192,6 +196,14 @@ fn primary_file_from_message(message: &tdlib_rs::types::Message) -> Option<tdlib
 /// - 若本地已存在直接返回
 /// - 否则执行同步下载并刷新文件状态
 async fn ensure_local_file(file_id: i32, client_id: i32) -> anyhow::Result<tdlib_rs::types::File> {
+    ensure_local_file_with_control(file_id, client_id, None).await
+}
+
+async fn ensure_local_file_with_control(
+    file_id: i32,
+    client_id: i32,
+    job_id: Option<i64>,
+) -> anyhow::Result<tdlib_rs::types::File> {
     let mut current = get_file_by_id(file_id, client_id).await?;
     if current.local.is_downloading_completed && !current.local.path.is_empty() {
         tracing::debug!(file_id, "tdlib file already available locally");
@@ -204,9 +216,46 @@ async fn ensure_local_file(file_id: i32, client_id: i32) -> anyhow::Result<tdlib
         expected_size = current.expected_size,
         "tdlib file download started"
     );
-    let downloaded = tdlib_rs::functions::download_file(current.id, 32, 0, 0, true, client_id)
-        .await
-        .map_err(|e| anyhow::Error::new(TdError(e)))?;
+    let download = tdlib_rs::functions::download_file(current.id, 32, 0, 0, true, client_id);
+    tokio::pin!(download);
+    let downloaded = loop {
+        if let Some(job_id) = job_id {
+            tokio::select! {
+                result = &mut download => break result.map_err(|e| anyhow::Error::new(TdError(e)))?,
+                _ = tokio::time::sleep(DOWNLOAD_CONTROL_POLL_INTERVAL) => {
+                    let Some(status) = store::get_job_status(job_id).await? else {
+                        anyhow::bail!("job not found while downloading: {}", job_id);
+                    };
+                    if matches!(
+                        status.as_str(),
+                        store::JOB_STATUS_PAUSED
+                            | store::JOB_STATUS_CANCELLING
+                            | store::JOB_STATUS_CANCEL_FINALIZING
+                            | store::JOB_STATUS_CANCELLED
+                    ) {
+                        if let Err(err) = tdlib_rs::functions::cancel_download_file(
+                            current.id,
+                            false,
+                            client_id,
+                        )
+                        .await
+                        {
+                            tracing::debug!(
+                                job_id,
+                                file_id = current.id,
+                                error_code = err.code,
+                                error_message = %err.message,
+                                "tdlib cancelDownloadFile returned error"
+                            );
+                        }
+                        anyhow::bail!("transfer job control requested during download: {}", status);
+                    }
+                }
+            }
+        } else {
+            break download.await.map_err(|e| anyhow::Error::new(TdError(e)))?;
+        }
+    };
     let tdlib_rs::enums::File::File(file_after_download) = downloaded;
     current = file_after_download;
 

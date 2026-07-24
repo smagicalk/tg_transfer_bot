@@ -4,7 +4,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::progress::{edit_transfer_progress_for_outcome, update_transfer_progress_message};
+use super::progress::{
+    RecoveryProgressUpdate, edit_transfer_progress_for_outcome, update_recovery_progress_message,
+    update_transfer_progress_message,
+};
 use super::{types, workflow};
 
 mod result;
@@ -146,12 +149,15 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
     });
 }
 
-/// 派发启动恢复任务。
-/// 恢复结果会主动发回原请求 chat，避免“恢复了但用户完全感知不到”。
+/// 派发恢复任务。
+///
+/// 手动恢复可传入原任务详情消息 ID，整个恢复周期会编辑该消息；启动恢复没有
+/// 可编辑的原消息，仍以独立结果通知收尾。
 pub(in crate::tgbot::transfer) fn spawn_recovery_job(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: crate::db::transfer_job::Model,
     client_ids: crate::config::TransferClientIds,
+    progress_message_id: Option<i64>,
 ) {
     tokio::spawn(async move {
         let notify_chat_id = job.request_chat_id;
@@ -162,8 +168,37 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
             job_id,
             notify_chat_id,
             target_chat_id,
+            progress_message_id,
             "recovery job queued"
         );
+        let progress_done = Arc::new(AtomicBool::new(false));
+        let progress_handle = progress_message_id.map(|message_id| {
+            let app_context = app_context.clone();
+            let source_link = source_link.clone();
+            let progress_done = progress_done.clone();
+            tracing::debug!(
+                job_id,
+                notify_chat_id,
+                target_chat_id,
+                progress_message_id = message_id,
+                "recovery progress updater started"
+            );
+            tokio::spawn(async move {
+                update_recovery_progress_message(
+                    app_context,
+                    RecoveryProgressUpdate {
+                        job_id,
+                        source_link,
+                        target_chat_id,
+                        notify_chat_id,
+                        message_id,
+                        client_id: client_ids.interaction,
+                        done: progress_done,
+                    },
+                )
+                .await;
+            })
+        });
         let _permit = app_context.transfer_runtime.acquire_transfer_slot().await;
         tracing::info!(
             job_id,
@@ -173,6 +208,50 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
         );
 
         let result = workflow::resume_one_job(app_context.clone(), job, client_ids).await;
+        progress_done.store(true, Ordering::SeqCst);
+        if let Some(handle) = progress_handle {
+            handle.abort();
+            let _ = handle.await;
+            tracing::debug!(
+                job_id,
+                notify_chat_id,
+                target_chat_id,
+                "recovery progress updater stopped"
+            );
+        }
+
+        if let Some(message_id) = progress_message_id {
+            if let Err(err) = edit_transfer_progress_for_outcome(
+                &source_link,
+                target_chat_id,
+                &result,
+                notify_chat_id,
+                message_id,
+                client_ids.interaction,
+            )
+            .await
+            {
+                tracing::warn!(job_id, error = %err, "edit final recovery progress failed");
+            }
+            if let Err(err) = &result {
+                tracing::error!(
+                    job_id,
+                    notify_chat_id,
+                    target_chat_id,
+                    error = %err,
+                    "recovery job finished with error"
+                );
+            } else {
+                tracing::info!(
+                    job_id,
+                    notify_chat_id,
+                    target_chat_id,
+                    "recovery job finished"
+                );
+            }
+            return;
+        }
+
         // result 会被发送函数消费；先保存错误摘要，避免为了日志克隆完整结果。
         let result_error = result.as_ref().err().map(|err| format!("{:#}", err));
         let send_result = send_recovery_outcome(

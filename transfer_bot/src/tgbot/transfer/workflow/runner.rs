@@ -194,10 +194,19 @@ async fn run_job_inner_once(
                 // TDLib 的 file id/local path 隶属于具体 client，bot/user 不能共享同一个下载 future。
                 let singleflight_key = format!("{}:{}", job.source_client_role, seed.file_key);
                 let download_result = queue::run_singleflight(singleflight_key, || async {
-                    file::ensure_media_downloaded(msg, source_client_id).await
+                    file::ensure_media_downloaded(msg, source_client_id, job.id).await
                 })
                 .await;
                 if let Err(err) = download_result {
+                    if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
+                        tracing::info!(
+                            job_id = job.id,
+                            item_id = item.id,
+                            outcome = ?outcome,
+                            "transfer job download interrupted by control"
+                        );
+                        return Ok(outcome);
+                    }
                     let err_str = format!("{:#}", err);
                     tracing::warn!(
                         job_id = job.id,
@@ -365,6 +374,11 @@ async fn run_job_inner_once(
     );
 
     // guard 覆盖上传与最终状态落库；任何成功或错误返回都会清理运行时 file_id 映射。
+    // 恢复任务可能来自进程重启或上一次中断，先清除同 job 的陈旧 file_id/字节快照，
+    // 避免新一轮上传从旧进度起算。
+    app_context
+        .upload_progress
+        .clear_job(client_ids.upload, job.id);
     let _upload_progress_guard = app_context
         .upload_progress
         .job_guard(client_ids.upload, job.id);
@@ -434,6 +448,17 @@ async fn run_job_inner_once(
             })
         }
         Err(err) => {
+            // 上传等待会在 pause/stop 时主动返回；必须先交给控制状态收敛，
+            // 不能把用户控制误记成上传失败，更不能随后覆盖成 success。
+            if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
+                tracing::info!(
+                    job_id = job.id,
+                    target_chat_id = job.target_chat_id,
+                    outcome = ?outcome,
+                    "transfer upload interrupted by job control"
+                );
+                return Ok(outcome);
+            }
             let err_str = format!("{:#}", err);
             tracing::error!(
                 job_id = job.id,

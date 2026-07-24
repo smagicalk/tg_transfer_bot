@@ -845,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn upload_progress_store_aggregates_by_job_and_clears_after_finish() {
+    fn upload_progress_store_clears_stale_snapshot_before_restart() {
         let store = UploadProgressStore::default();
         let mut first = test_file(51, 0, 1000, false, false);
         first.remote.is_uploading_active = true;
@@ -870,6 +870,20 @@ mod tests {
 
         store.clear_job(10, 7);
         assert!(store.get_job_upload_progress(10, 7).is_none());
+
+        // 暂停后恢复会创建一轮新的 TDLib 上传；只能从新文件快照重新计数。
+        let mut restarted = test_file(53, 0, 2000, false, false);
+        restarted.remote.is_uploading_active = true;
+        restarted.remote.uploaded_size = 100;
+        store.register_upload_file(10, 7, 101, &restarted);
+
+        let restarted_progress = store
+            .get_job_upload_progress(10, 7)
+            .expect("restarted job upload progress");
+        assert_eq!(restarted_progress.active_files, 1);
+        assert_eq!(restarted_progress.uploaded_size, 100);
+        assert_eq!(restarted_progress.total_size, 2000);
+        assert!(!restarted_progress.has_unknown_total);
     }
 
     // TDLib 可能在消息发送完成后替换 File ID；同一上传项只能计数一次。

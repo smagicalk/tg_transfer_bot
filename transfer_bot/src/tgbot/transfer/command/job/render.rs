@@ -105,33 +105,6 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
     lines.join("\n")
 }
 
-/// 构造停止确认卡片。
-///
-/// 这个页面只用于按钮流程：列表、最近任务或详情页先打开确认页，用户再次点击后才真正停止任务。
-pub(super) fn format_job_stop_confirm_text(snapshot: &JobProgressSnapshot) -> String {
-    let total = snapshot.job.total_items.max(0);
-    let finished = snapshot.success_count + snapshot.failed_count + snapshot.cancelled_count;
-    let mut lines = build_ready_page_header("确认停止任务");
-    lines.extend([
-        card::summary_line(
-            "stop-confirm",
-            Some(snapshot.job.id),
-            snapshot.job.target_chat_id,
-        ),
-        card::section("当前状态"),
-        card::field("状态", &snapshot.job.status),
-        card::field("总进度", format!("{}/{}", finished, total)),
-        card::field("完成率", card::progress_bar(finished.into(), total.into())),
-        card::section("影响"),
-        card::note("停止后会请求取消任务；未完成文件引用会释放，后续按删除队列配置延迟清理。"),
-        card::note("如果只是临时不想继续，请优先使用“暂停”。"),
-    ]);
-    lines.push(card::note(
-        "确认无误后点击“确认停止”；需要命令时点击“查看命令”。",
-    ));
-    lines.join("\n")
-}
-
 /// 渲染单任务详情里的真实下载进度。
 pub(super) fn format_job_live_download(snapshot: &JobProgressSnapshot) -> String {
     let prefix = format!("{} 个文件", snapshot.active_download_files);
@@ -198,7 +171,7 @@ pub(super) fn format_job_live_upload(snapshot: &JobProgressSnapshot) -> String {
 mod tests {
     use super::{
         format_job_action_text, format_job_live_download, format_job_live_upload,
-        format_job_status_text, format_job_stop_confirm_text,
+        format_job_status_text,
     };
     use crate::tgbot::transfer::store;
 
@@ -265,22 +238,6 @@ mod tests {
         assert!(text.contains("定位：‹chat_id=-5221439438 message_id=318767104›"));
         assert!(text.contains("Telegram 普通群、私聊等目标不提供可点击的消息链接"));
         assert!(text.contains("任务已结束，不能再暂停或停止"));
-    }
-
-    // 停止确认页必须把影响说清楚，命令说明通过按钮按需打开。
-    #[test]
-    fn test_format_job_stop_confirm_text() {
-        let snapshot = snapshot_with_status(store::JOB_STATUS_RUNNING);
-        let text = format_job_stop_confirm_text(&snapshot);
-
-        assert!(text.contains("确认停止任务"));
-        assert!(text.contains("状态：‹stop-confirm›"));
-        assert!(text.contains("job：‹#42›"));
-        assert!(text.contains("目标：‹-100›"));
-        assert!(text.contains("停止后会请求取消任务"));
-        assert!(text.contains("如果只是临时不想继续，请优先使用“暂停”。"));
-        assert!(!text.contains("/job stop 42"));
-        assert!(text.contains("需要命令时点击“查看命令”"));
     }
 
     // 真实下载摘要应和下载列表保持同一风格。

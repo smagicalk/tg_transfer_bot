@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use super::content::{build_card_formatted_text, parse_markdown_text};
 use super::is_reply_markup_enabled;
-use super::state::{wait_for_sent_message, wait_for_sent_message_id};
+use super::state::{SentMessageReceipt, wait_for_sent_message_id, wait_for_sent_message_receipt};
 use crate::tgbot::TdError;
 
 /// 新发送消息到达最终 ID 后，TDLib 仍可能短暂返回 `Message can't be edited`。
@@ -37,7 +37,7 @@ pub(in crate::tgbot::send::message) async fn send_formatted_text_message_returni
     chat_id: i64,
     reply_markup: Option<tdlib_rs::enums::ReplyMarkup>,
     client_id: i32,
-) -> anyhow::Result<tdlib_rs::types::Message> {
+) -> anyhow::Result<SentMessageReceipt> {
     send_formatted_text_message_returning_with_reply_to(
         text,
         chat_id,
@@ -55,7 +55,7 @@ pub(in crate::tgbot::send::message) async fn send_formatted_text_message_returni
     reply_to: Option<tdlib_rs::enums::InputMessageReplyTo>,
     reply_markup: Option<tdlib_rs::enums::ReplyMarkup>,
     client_id: i32,
-) -> anyhow::Result<tdlib_rs::types::Message> {
+) -> anyhow::Result<SentMessageReceipt> {
     let reply_markup_enabled = is_reply_markup_enabled();
     let (text, reply_markup) = apply_reply_markup_capability(
         text,
@@ -96,10 +96,10 @@ pub(in crate::tgbot::send::message) async fn send_formatted_text_message_returni
     tracing::debug!(
         chat_id = message.chat_id,
         message_id = message.id,
-        is_temporary = message.sending_state.is_some(),
+        is_temporary = message.is_temporary,
         "tdlib sendMessage initial response received"
     );
-    wait_for_sent_message(message, client_id).await
+    wait_for_sent_message_receipt(message, client_id).await
 }
 
 /// 发送文本消息，可选附带 inline keyboard。
@@ -628,69 +628,13 @@ fn build_input_message_text_value(text: tdlib_rs::types::FormattedText) -> serde
 }
 
 /// 轻量解析 `sendMessage` 返回的 message。
-fn parse_sent_message_lite(
-    response: serde_json::Value,
-) -> anyhow::Result<tdlib_rs::types::Message> {
+fn parse_sent_message_lite(response: serde_json::Value) -> anyhow::Result<SentMessageReceipt> {
     let lite: SentMessageLite = serde_json::from_value(response)?;
-    Ok(build_minimal_sent_message(lite))
-}
-
-/// 把轻量消息转成现有等待状态模块需要的 TDLib message。
-fn build_minimal_sent_message(lite: SentMessageLite) -> tdlib_rs::types::Message {
-    tdlib_rs::types::Message {
+    Ok(SentMessageReceipt {
         id: lite.id,
-        sender_id: tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
-            user_id: 0,
-        }),
         chat_id: lite.chat_id,
-        sending_state: lite.sending_state.map(|_| {
-            tdlib_rs::enums::MessageSendingState::Pending(
-                tdlib_rs::types::MessageSendingStatePending { sending_id: 0 },
-            )
-        }),
-        scheduling_state: None,
-        is_outgoing: true,
-        is_pinned: false,
-        is_from_offline: false,
-        can_be_saved: true,
-        has_timestamped_media: false,
-        is_channel_post: false,
-        is_paid_star_suggested_post: false,
-        is_paid_ton_suggested_post: false,
-        contains_unread_mention: false,
-        date: 0,
-        edit_date: 0,
-        forward_info: None,
-        import_info: None,
-        interaction_info: None,
-        unread_reactions: vec![],
-        fact_check: None,
-        suggested_post_info: None,
-        reply_to: None,
-        topic_id: None,
-        self_destruct_type: None,
-        self_destruct_in: 0.0,
-        auto_delete_in: 0.0,
-        via_bot_user_id: 0,
-        sender_business_bot_user_id: 0,
-        sender_boost_count: 0,
-        sender_tag: String::new(),
-        paid_message_star_count: 0,
-        author_signature: String::new(),
-        media_album_id: 0,
-        effect_id: 0,
-        restriction_info: None,
-        summary_language_code: String::new(),
-        content: tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
-            text: tdlib_rs::types::FormattedText {
-                text: String::new(),
-                entities: vec![],
-            },
-            link_preview: None,
-            link_preview_options: None,
-        }),
-        reply_markup: None,
-    }
+        is_temporary: lite.sending_state.is_some(),
+    })
 }
 
 /// 判断 TDLib 是否因为消息 ID 仍是临时 ID 而找不到消息。
@@ -1219,8 +1163,7 @@ mod tests {
 
         assert_eq!(message.id, -9223372036854775808);
         assert_eq!(message.chat_id, 7814816521);
-        assert!(message.sending_state.is_some());
-        assert!(message.reply_markup.is_none());
+        assert!(message.is_temporary);
     }
 
     // TDLib 发送成功 update 会带回完整 message；这里覆盖 help-like reply markup 的解析。

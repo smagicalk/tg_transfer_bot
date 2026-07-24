@@ -64,7 +64,7 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
             "schedule recover job"
         );
         summaries.add_recoverable(&job);
-        super::super::spawn_recovery_job(app_context.clone(), job, client_ids);
+        super::super::spawn_recovery_job(app_context.clone(), job, client_ids, None);
     }
     summaries.send(client_ids.interaction).await;
     Ok(())

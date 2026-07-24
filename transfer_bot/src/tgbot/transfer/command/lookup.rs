@@ -422,7 +422,7 @@ mod tests {
         assert!(text.contains("可直接点击下方“重新转存”"));
     }
 
-    // lookup 命中运行中任务时，应给暂停 callback 和停止确认 callback，而不是只能复制命令。
+    // lookup 命中运行中任务时，应给暂停 callback 和一次点击停止 callback，而不是只能复制命令。
     #[test]
     fn test_build_lookup_active_control_buttons_for_running() {
         let buttons = build_lookup_active_control_buttons(42, "running");

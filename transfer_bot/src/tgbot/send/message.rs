@@ -20,8 +20,9 @@ pub use raw::{
     edit_markdown_message_with_inline_keyboard,
 };
 pub use state::{
-    observe_message_send_failed_for_client, observe_message_send_succeeded_for_client,
-    wait_for_sent_message, wait_for_sent_message_id, wait_for_sent_message_with_timeout,
+    SentMessageReceipt, observe_message_send_failed_for_client,
+    observe_message_send_succeeded_for_client, wait_for_sent_message, wait_for_sent_message_id,
+    wait_for_sent_message_with_timeout,
 };
 
 /// 设置当前发送层是否允许携带 reply_markup。
@@ -80,7 +81,7 @@ pub async fn send_markdown_message_with_buttons_returning(
     chat_id: i64,
     rows: Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>,
     client_id: i32,
-) -> anyhow::Result<tdlib_rs::types::Message> {
+) -> anyhow::Result<SentMessageReceipt> {
     let formatted_text = parse_markdown_text(text, client_id).await?;
     send_formatted_text_message_returning(
         formatted_text,
@@ -246,7 +247,7 @@ pub async fn send_card_message_with_buttons_returning(
     chat_id: i64,
     rows: Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>,
     client_id: i32,
-) -> anyhow::Result<tdlib_rs::types::Message> {
+) -> anyhow::Result<SentMessageReceipt> {
     let formatted_text = build_card_formatted_text(text)?;
     send_formatted_text_message_returning(
         formatted_text,
@@ -267,7 +268,7 @@ pub async fn send_card_message_with_force_reply_returning(
     chat_id: i64,
     placeholder: &str,
     client_id: i32,
-) -> anyhow::Result<tdlib_rs::types::Message> {
+) -> anyhow::Result<SentMessageReceipt> {
     let formatted_text = build_card_formatted_text(text)?;
     send_formatted_text_message_returning(
         formatted_text,
@@ -290,7 +291,7 @@ pub async fn send_card_message_with_target_chat_request_keyboard_returning(
     group_button_id: i32,
     channel_button_id: i32,
     client_id: i32,
-) -> anyhow::Result<tdlib_rs::types::Message> {
+) -> anyhow::Result<SentMessageReceipt> {
     let formatted_text = build_card_formatted_text(text)?;
     send_formatted_text_message_returning(
         formatted_text,
@@ -312,7 +313,7 @@ pub async fn send_card_message_with_user_request_keyboard_returning(
     chat_id: i64,
     button_id: i32,
     client_id: i32,
-) -> anyhow::Result<tdlib_rs::types::Message> {
+) -> anyhow::Result<SentMessageReceipt> {
     let formatted_text = build_card_formatted_text(text)?;
     send_formatted_text_message_returning(
         formatted_text,

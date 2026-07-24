@@ -172,6 +172,7 @@ pub(super) async fn resume_job_on(
             app_context,
             job.clone(),
             super::super::super::transfer_client_ids()?,
+            None,
         );
     }
     tracing::info!(
