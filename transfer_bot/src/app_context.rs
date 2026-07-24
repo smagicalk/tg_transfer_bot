@@ -628,7 +628,7 @@ impl InflightDownloadRegistry {
         let mut rx = match role {
             InflightDownloadRole::Executor(mut execute_guard) => {
                 let result = task().await;
-                let send_value = result.as_ref().map(|_| ()).map_err(|e| format!("{:#}", e));
+                let send_value = result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}"));
                 if let Err(err) = &send_value {
                     tracing::warn!(
                         file_key = %execute_guard.file_key,
@@ -654,7 +654,7 @@ impl InflightDownloadRegistry {
                     return value
                         .as_ref()
                         .map(|_| ())
-                        .map_err(|e| anyhow::anyhow!("{}", e));
+                        .map_err(|e| anyhow::anyhow!("{e}"));
                 }
             }
 

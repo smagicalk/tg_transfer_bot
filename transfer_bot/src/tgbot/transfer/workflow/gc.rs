@@ -107,9 +107,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(
                 continue;
             };
             match tdlib_rs::functions::delete_file(file_id, client_id).await {
-                Ok(_) => {
-                    cleanup_confirmed = true;
-                }
+                Ok(_) => {}
                 Err(err) => {
                     tracing::warn!(
                         "delete_file from tdlib failed, file_key={}, file_id={}, err={:?}",
