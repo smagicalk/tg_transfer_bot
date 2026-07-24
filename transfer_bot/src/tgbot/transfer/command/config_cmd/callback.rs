@@ -107,8 +107,8 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         short_label: "并发",
         input_label: "设并发",
         input_title: "设置并发",
-        input_detail: "请回复并发数，范围 1-32；或发送 /cancel 取消。",
-        input_placeholder: "输入并发数，或发送 /cancel",
+        input_detail: "请回复并发数，范围 1-32；回复“取消”可退出。",
+        input_placeholder: "输入并发数（回复“取消”可退出）",
         example_value: 4,
         admin_input_action: AdminInputAction::ConfigSetJobConcurrency,
     },
@@ -119,8 +119,8 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         short_label: "删除",
         input_label: "设删除",
         input_title: "设置删除延迟",
-        input_detail: "请回复删除延迟分钟数，范围 0-1440；或发送 /cancel 取消。",
-        input_placeholder: "输入分钟数，或发送 /cancel",
+        input_detail: "请回复删除延迟分钟数，范围 0-1440；回复“取消”可退出。",
+        input_placeholder: "输入分钟数（回复“取消”可退出）",
         example_value: 3,
         admin_input_action: AdminInputAction::ConfigSetFileDeleteDelayMinutes,
     },
@@ -131,8 +131,8 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         short_label: "GC",
         input_label: "设GC",
         input_title: "设置 GC 间隔",
-        input_detail: "请回复 GC 扫描间隔秒数，范围 5-3600；或发送 /cancel 取消。",
-        input_placeholder: "输入秒数，或发送 /cancel",
+        input_detail: "请回复 GC 扫描间隔秒数，范围 5-3600；回复“取消”可退出。",
+        input_placeholder: "输入秒数（回复“取消”可退出）",
         example_value: 30,
         admin_input_action: AdminInputAction::ConfigSetFileGcIntervalSeconds,
     },
@@ -143,8 +143,8 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         short_label: "进度",
         input_label: "设进度",
         input_title: "设置进度刷新间隔",
-        input_detail: "请回复进度刷新秒数，范围 1-60；或发送 /cancel 取消。",
-        input_placeholder: "输入秒数，或发送 /cancel",
+        input_detail: "请回复进度刷新秒数，范围 1-60；回复“取消”可退出。",
+        input_placeholder: "输入秒数（回复“取消”可退出）",
         example_value: 3,
         admin_input_action: AdminInputAction::ConfigSetProgressEditIntervalSeconds,
     },
@@ -155,8 +155,8 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         short_label: "分页",
         input_label: "设分页",
         input_title: "设置分页大小",
-        input_detail: "请回复分页大小，范围 1-20；或发送 /cancel 取消。",
-        input_placeholder: "输入分页大小，或发送 /cancel",
+        input_detail: "请回复分页大小，范围 1-20；回复“取消”可退出。",
+        input_placeholder: "输入分页大小（回复“取消”可退出）",
         example_value: 10,
         admin_input_action: AdminInputAction::ConfigSetDownloadsDefaultPageSize,
     },
@@ -167,8 +167,8 @@ pub(in crate::tgbot::transfer::command) const CONFIG_FIELD_SPECS: &[ConfigFieldS
         short_label: "超时",
         input_label: "设超时",
         input_title: "设置菜单超时",
-        input_detail: "请回复菜单超时秒数，范围 30-86400；或发送 /cancel 取消。",
-        input_placeholder: "输入超时秒数，或发送 /cancel",
+        input_detail: "请回复菜单超时秒数，范围 30-86400；回复“取消”可退出。",
+        input_placeholder: "输入超时秒数（回复“取消”可退出）",
         example_value: 900,
         admin_input_action: AdminInputAction::ConfigSetMenuInputTimeoutSeconds,
     },
@@ -494,7 +494,7 @@ mod tests {
         assert!(!rows.iter().flatten().any(|button| button.text == "并发 +1"));
         assert!(!rows.iter().flatten().any(|button| button.text == "设并发"));
         let footer = rows.last().expect("config page should have footer");
-        assert_eq!(footer[0].text, "帮助");
+        assert_eq!(footer[0].text, "查看命令");
         assert_eq!(footer[1].text, "菜单");
     }
 }

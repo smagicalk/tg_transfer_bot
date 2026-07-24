@@ -252,17 +252,20 @@ async fn register_bot_commands_once(client_id: i32) {
 
 /// 构造 bot 命令列表。
 ///
-/// Telegram 命令本身不能带 `/`，这里只注册长命令，避免菜单中出现重复短别名。
+/// 日常操作仍以交互菜单为主；这里注册完整命令是为了保留 Telegram 输入 `/`
+/// 时的原生命令提示，不会把命令说明重新写回普通消息卡片。
 fn bot_command_definitions() -> Vec<tdlib_rs::types::BotCommand> {
     vec![
         bot_command("menu", "打开交互菜单"),
-        bot_command("transfer", "转存链接或回复消息"),
+        bot_command("transfer", "转存消息或相册"),
         bot_command("lookup", "查询历史转存结果"),
-        bot_command("downloads", "查看任务列表和下载进度"),
-        bot_command("job", "查看或控制任务"),
+        bot_command("downloads", "查看转存任务列表"),
+        bot_command("job", "查看或控制指定任务"),
+        bot_command("targets", "管理默认目标和别名"),
         bot_command("config", "查看或调整运行配置"),
-        bot_command("health", "查看运行健康状态"),
+        bot_command("health", "查看运行状态"),
         bot_command("cache", "查看文件缓存"),
+        bot_command("auth", "管理授权用户（仅 owner）"),
         bot_command("help", "查看命令帮助"),
     ]
 }
@@ -414,30 +417,35 @@ mod tests {
         ));
     }
 
-    // 注册给 Telegram 的命令不能带 `/`，且短命令和长命令都需要保留。
+    // Telegram 斜杠菜单应覆盖路由支持的命令；普通回复是否展示命令由消息卡片单独控制。
     #[test]
-    fn test_bot_command_definitions_cover_long_commands() {
+    fn test_bot_command_definitions_expose_all_supported_commands() {
         let commands = bot_command_definitions();
         let names = commands
             .iter()
             .map(|command| command.command.as_str())
-            .collect::<BTreeSet<_>>();
+            .collect::<Vec<_>>();
 
-        for expected in [
-            "menu",
-            "transfer",
-            "lookup",
-            "downloads",
-            "job",
-            "config",
-            "health",
-            "cache",
-            "help",
-        ] {
-            assert!(names.contains(expected), "missing command {expected}");
-        }
-
-        assert_eq!(names.len(), commands.len());
+        assert_eq!(
+            names,
+            vec![
+                "menu",
+                "transfer",
+                "lookup",
+                "downloads",
+                "job",
+                "targets",
+                "config",
+                "health",
+                "cache",
+                "auth",
+                "help",
+            ]
+        );
+        assert_eq!(
+            names.iter().copied().collect::<BTreeSet<_>>().len(),
+            names.len()
+        );
         for command in commands {
             assert!(!command.command.starts_with('/'));
             assert!(

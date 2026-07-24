@@ -2,6 +2,7 @@
 // - 按命令职责拆分子模块
 // - 对外保持统一导出，避免上层调用方感知文件结构变化
 
+mod auth;
 mod cache;
 pub(super) mod common;
 mod config_cmd;
@@ -14,6 +15,11 @@ mod menu;
 mod targets;
 mod transfer_cmd;
 
+pub(in crate::tgbot) use auth::{
+    auth_callback_query_on, auth_command_on, handle_auth_shared_user_input,
+    handle_auth_text_input_on,
+};
+pub(in crate::tgbot) use auth::{cancel_auth_input, discard_auth_input_for_command};
 pub(in crate::tgbot) use cache::cache_command_on;
 pub(in crate::tgbot) use config_cmd::config_command_on;
 pub(in crate::tgbot) use downloads::downloads_command_on;
@@ -22,11 +28,11 @@ pub use help::help_command;
 pub use job::job_command;
 pub(in crate::tgbot) use job::job_command_on;
 pub(in crate::tgbot) use lookup::lookup_command_on;
-pub(in crate::tgbot) use menu::handle_menu_text_input_on;
 pub(in crate::tgbot) use menu::menu_command_on;
 pub(in crate::tgbot) use menu::start_transfer_target_choice_from_bot_message;
 pub(in crate::tgbot) use menu::start_transfer_target_choice_from_link_message;
 pub use menu::{cancel_menu_input, discard_menu_input, discard_menu_input_for_command};
+pub(in crate::tgbot) use menu::{handle_menu_shared_chat_input, handle_menu_text_input_on};
 pub(in crate::tgbot) use targets::targets_command_on;
 pub(in crate::tgbot) use transfer_cmd::transfer_command_on;
 pub(in crate::tgbot) use transfer_cmd::transferable_message_source_location;
@@ -107,6 +113,22 @@ pub(in crate::tgbot) fn build_help_button_data(topic: Option<&str>) -> String {
     help::build_help_callback_data(topic)
 }
 
+/// 给结果、进度和错误卡片生成“查看命令”按钮数据。
+pub(in crate::tgbot) fn build_help_message_button_data(topic: Option<&str>) -> String {
+    help::build_help_message_callback_data(topic)
+}
+
+/// 构造不会覆盖原卡片的“查看命令”按钮。
+pub(in crate::tgbot) fn build_view_commands_button(
+    topic: Option<&str>,
+) -> tdlib_rs::types::InlineKeyboardButton {
+    crate::tgbot::send::build_callback_button(
+        "查看命令",
+        &build_help_message_button_data(topic),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )
+}
+
 /// 给外层错误卡片生成“返回菜单”按钮数据。
 pub(in crate::tgbot) fn build_menu_home_button_data_for_outer() -> String {
     menu::build_menu_home_callback_data()
@@ -129,12 +151,14 @@ pub(in crate::tgbot::transfer) fn build_health_button_data() -> String {
 
 /// 给菜单页生成“文件缓存”按钮数据。
 pub(in crate::tgbot::transfer) fn build_cache_button_data() -> String {
-    cache::build_cache_summary_callback_data()
+    cache::build_cache_default_callback_data()
 }
 
 /// callback payload 路由。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CallbackRoute {
+    Retransfer,
+    Auth,
     Help,
     Lookup,
     Downloads,
@@ -179,6 +203,10 @@ pub(in crate::tgbot) async fn transfer_callback_query_on(
     );
 
     match route {
+        CallbackRoute::Retransfer => {
+            transfer_cmd::retransfer_callback_query_on(app, update, config, client_id).await
+        }
+        CallbackRoute::Auth => auth_callback_query_on(app, update, config, actor, client_id).await,
         CallbackRoute::Help => help::help_callback_query(update, actor, client_id).await,
         CallbackRoute::Lookup => {
             lookup::lookup_callback_query_on(app, update, config, actor, client_id).await
@@ -224,6 +252,16 @@ pub(in crate::tgbot) async fn transfer_callback_query_on(
 /// 根据 callback payload 前缀分类路由。
 fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> CallbackRoute {
     match payload {
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if transfer_cmd::is_retransfer_callback_data(&data.data) =>
+        {
+            CallbackRoute::Retransfer
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if auth::is_auth_callback_data(&data.data) =>
+        {
+            CallbackRoute::Auth
+        }
         tdlib_rs::enums::CallbackQueryPayload::Data(data)
             if help::is_help_callback_data(&data.data) =>
         {
@@ -286,6 +324,14 @@ mod tests {
     // callback 分发只看短前缀，具体参数合法性由各命令模块自行校验。
     #[test]
     fn test_classify_callback_route() {
+        assert_eq!(
+            classify_callback_route(&payload("tr:again")),
+            CallbackRoute::Retransfer
+        );
+        assert_eq!(
+            classify_callback_route(&payload("au:refresh")),
+            CallbackRoute::Auth
+        );
         assert_eq!(
             classify_callback_route(&payload("h:transfer")),
             CallbackRoute::Help
@@ -392,6 +438,7 @@ mod tests {
     #[test]
     fn test_callback_prefixes_are_unique_by_route() {
         let samples = [
+            ("au:add", CallbackRoute::Auth),
             ("h:transfer", CallbackRoute::Help),
             ("lk:rt", CallbackRoute::Lookup),
             ("d:f:run:8:1", CallbackRoute::Downloads),

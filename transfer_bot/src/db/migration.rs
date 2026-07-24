@@ -6,6 +6,8 @@ use sea_orm_migration::prelude::*;
 
 mod m20260616_000001_initial_schema;
 mod m20260616_000002_add_transfer_job_success_lookup_idx;
+mod m20260719_000003_create_authorized_user;
+mod m20260720_000004_add_authorized_user_profile;
 pub(crate) mod runtime_schema;
 
 /// SeaORM migration 注册器。
@@ -17,6 +19,8 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20260616_000001_initial_schema::Migration),
             Box::new(m20260616_000002_add_transfer_job_success_lookup_idx::Migration),
+            Box::new(m20260719_000003_create_authorized_user::Migration),
+            Box::new(m20260720_000004_add_authorized_user_profile::Migration),
         ]
     }
 }

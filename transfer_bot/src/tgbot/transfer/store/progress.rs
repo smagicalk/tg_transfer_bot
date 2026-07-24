@@ -39,6 +39,7 @@ pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
         .filter(db::transfer_job::Column::ResultMessageLink.is_not_null());
     let row = query
         .order_by_desc(db::transfer_job::Column::FinishedAt)
+        .order_by_desc(db::transfer_job::Column::Id)
         .into_tuple::<(i64, i64, Option<i64>, Option<String>)>()
         .one(db_conn)
         .await?;
@@ -81,35 +82,6 @@ pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
         .map_err(Into::into)
 }
 
-/// 按 `source_link + target_chat_id` 查找最近进行中任务的 ID。
-///
-/// 进度面板每几秒轮询一次，只需要 job_id 再读取轻量进度快照，避免频繁读取 transfer_job 全字段。
-pub(in crate::tgbot::transfer) async fn find_active_job_id_by_source_target(
-    source_link: &str,
-    target_chat_id: i64,
-) -> anyhow::Result<Option<i64>> {
-    let db_conn = db::get_db().await?;
-    let query = db::transfer_job::Entity::find()
-        .select_only()
-        .column(db::transfer_job::Column::Id)
-        .filter(db::transfer_job::Column::SourceLink.eq(source_link.to_owned()))
-        .filter(db::transfer_job::Column::TargetChatId.eq(target_chat_id))
-        .filter(
-            Condition::any()
-                .add(db::transfer_job::Column::Status.eq(JOB_STATUS_PENDING))
-                .add(db::transfer_job::Column::Status.eq(JOB_STATUS_RUNNING))
-                .add(db::transfer_job::Column::Status.eq(JOB_STATUS_PAUSED))
-                .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCELLING))
-                .add(db::transfer_job::Column::Status.eq(JOB_STATUS_CANCEL_FINALIZING)),
-        );
-    query
-        .order_by_desc(db::transfer_job::Column::CreatedAt)
-        .into_tuple::<i64>()
-        .one(db_conn)
-        .await
-        .map_err(Into::into)
-}
-
 /// 查询最近任务。
 pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
     app_context: &crate::app_context::AppContext,
@@ -122,6 +94,7 @@ pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
         .column(db::transfer_job::Column::Status)
         .column(db::transfer_job::Column::TotalItems)
         .column(db::transfer_job::Column::TargetChatId)
+        .column(db::transfer_job::Column::ResultMessageLink)
         .column(db::transfer_job::Column::LastError)
         .column(db::transfer_job::Column::CreatedAt)
         .column(db::transfer_job::Column::UpdatedAt);
@@ -134,6 +107,7 @@ pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
             i32,
             i64,
             Option<String>,
+            Option<String>,
             chrono::DateTime<chrono::FixedOffset>,
             chrono::DateTime<chrono::FixedOffset>,
         )>()
@@ -141,12 +115,22 @@ pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
         .await?
         .into_iter()
         .map(
-            |(id, status, total_items, target_chat_id, last_error, created_at, updated_at)| {
+            |(
+                id,
+                status,
+                total_items,
+                target_chat_id,
+                result_message_link,
+                last_error,
+                created_at,
+                updated_at,
+            )| {
                 JobProgressJob {
                     id,
                     status,
                     total_items,
                     target_chat_id,
+                    result_message_link,
                     last_error,
                     created_at,
                     updated_at,
@@ -176,17 +160,28 @@ pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_context(
         .column(db::transfer_job::Column::Status)
         .column(db::transfer_job::Column::TotalItems)
         .column(db::transfer_job::Column::TargetChatId)
+        .column(db::transfer_job::Column::ResultMessageLink)
         .column(db::transfer_job::Column::LastError)
         .column(db::transfer_job::Column::CreatedAt)
         .column(db::transfer_job::Column::UpdatedAt)
         .filter(db::transfer_job::Column::Id.eq(job_id));
 
-    let Some((id, status, total_items, target_chat_id, last_error, created_at, updated_at)) = query
+    let Some((
+        id,
+        status,
+        total_items,
+        target_chat_id,
+        result_message_link,
+        last_error,
+        created_at,
+        updated_at,
+    )) = query
         .into_tuple::<(
             i64,
             String,
             i32,
             i64,
+            Option<String>,
             Option<String>,
             chrono::DateTime<chrono::FixedOffset>,
             chrono::DateTime<chrono::FixedOffset>,
@@ -201,6 +196,7 @@ pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_context(
         status,
         total_items,
         target_chat_id,
+        result_message_link,
         last_error,
         created_at,
         updated_at,
@@ -290,6 +286,10 @@ async fn build_job_progress_snapshots(
                 active_downloaded_bytes: 0,
                 active_download_total_bytes: 0,
                 has_unknown_download_total: false,
+                active_upload_files: 0,
+                active_uploaded_bytes: 0,
+                active_upload_total_bytes: 0,
+                has_unknown_upload_total: false,
             },
         );
     }
@@ -342,6 +342,26 @@ async fn build_job_progress_snapshots(
                 snapshot.active_download_total_bytes += total_size.max(0);
             } else {
                 snapshot.has_unknown_download_total = true;
+            }
+        }
+    }
+
+    // 上传 file ID 由目标发送 client 产生，直接按 job 聚合运行时快照；它与源文件缓存
+    // 的 owner/client/file_id 无关，不能复用上面的下载关联逻辑。
+    if let Some(upload_client_id) = app_context
+        .transfer_runtime
+        .transfer_client_ids()
+        .map(|client_ids| client_ids.upload)
+    {
+        for snapshot in count_map.values_mut() {
+            if let Some(progress) = app_context
+                .upload_progress
+                .get_job_upload_progress(upload_client_id, snapshot.job.id)
+            {
+                snapshot.active_upload_files = progress.active_files;
+                snapshot.active_uploaded_bytes = progress.uploaded_size;
+                snapshot.active_upload_total_bytes = progress.total_size;
+                snapshot.has_unknown_upload_total = progress.has_unknown_total;
             }
         }
     }

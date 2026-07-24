@@ -36,6 +36,7 @@ fn test_format_transfer_waiting_text() {
         target_chat_id: -100,
         request_chat_id: 10,
         request_message_id: 20,
+        force_retransfer: false,
     });
 
     assert!(text.contains("转存进度 · 等待"));
@@ -62,17 +63,30 @@ fn test_format_transfer_progress_text_card_layout() {
     assert!(text.contains("成功/失败：‹1/0›"));
     assert!(text.contains("真实下载：1 个文件 1.0 KB/2.0 KB"));
     assert!(text.contains("||||||||||---------- 50%"));
-    assert!(text.contains("■ 命令"));
-    assert!(text.contains("详情：‹/job status 42›"));
-    assert!(text.contains("暂停：‹/job pause 42›"));
-    assert!(text.contains("停止：‹/job stop 42›"));
-    assert!(text.contains("列表：‹/downloads run›"));
-    assert!(text.contains("查询：‹/lookup https://t.me/c/1/2 -100›"));
+    assert!(!text.contains("■ 命令"));
+    assert!(!text.contains("/job status 42"));
+    assert!(!text.contains("/job pause 42"));
+    assert!(!text.contains("/job stop 42"));
+    assert!(text.contains("需要命令时点击“查看命令”"));
 }
 
-// 控制态正文也要包含命令，避免用户号模式隐藏按钮后无法操作。
+// 主进度卡必须展示真实上传字节，不能只在任务详情页显示。
 #[test]
-fn test_format_transfer_control_text_contains_commands() {
+fn test_format_transfer_progress_text_shows_live_upload_progress() {
+    let mut snapshot = snapshot_with_status(store::JOB_STATUS_RUNNING);
+    snapshot.active_upload_files = 1;
+    snapshot.active_uploaded_bytes = 50 * 1024 * 1024;
+    snapshot.active_upload_total_bytes = 100 * 1024 * 1024;
+
+    let text = format_transfer_progress_text(&snapshot, "https://t.me/c/1/2");
+
+    assert!(text.contains("真实上传：1 个文件 50.0 MB/100.0 MB"));
+    assert!(text.contains("50%"));
+}
+
+// 控制态正文默认隐藏命令，恢复入口由按钮提供。
+#[test]
+fn test_format_transfer_control_text_hides_commands() {
     let text = format_transfer_control_text(
         "相同链接正在转存中",
         "running",
@@ -83,13 +97,12 @@ fn test_format_transfer_control_text_contains_commands() {
     );
 
     assert!(text.contains("状态：‹running›  job：‹#42›  目标：‹-100›"));
-    assert!(text.contains("■ 命令"));
-    assert!(text.contains("详情：‹/job status 42›"));
-    assert!(text.contains("暂停：‹/job pause 42›"));
-    assert!(text.contains("停止：‹/job stop 42›"));
-    assert!(text.contains("列表：‹/downloads run›"));
-    assert!(text.contains("重转：‹/transfer https://t.me/c/1/2 -100›"));
-    assert!(!text.contains("恢复：‹/job resume 42›"));
+    assert!(!text.contains("■ 命令"));
+    assert!(!text.contains("/job status 42"));
+    assert!(!text.contains("/job pause 42"));
+    assert!(!text.contains("/job stop 42"));
+    assert!(!text.contains("/transfer https://t.me/c/1/2 -100"));
+    assert!(text.contains("需要命令时点击“查看命令”"));
 }
 
 // 最终结果按钮应按成功/失败切换列表筛选命令。
@@ -105,8 +118,10 @@ fn test_build_transfer_result_keyboard_uses_result_state_filter() {
 
     assert_eq!(success_keyboard.rows[2][0].text, "查看完成列表");
     assert_eq!(fail_keyboard.rows[0][0].text, "查看失败列表");
-    assert_eq!(success_keyboard.rows[2][1].text, "菜单");
-    assert_eq!(fail_keyboard.rows[0][1].text, "菜单");
+    assert_eq!(success_keyboard.rows[2][1].text, "查看命令");
+    assert_eq!(success_keyboard.rows[2][2].text, "菜单");
+    assert_eq!(fail_keyboard.rows[0][1].text, "查看命令");
+    assert_eq!(fail_keyboard.rows[0][2].text, "菜单");
     assert!(matches!(
         success_keyboard.rows[2][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
@@ -130,7 +145,8 @@ fn test_build_transfer_result_keyboard_skips_locator_button() {
     assert_eq!(keyboard.rows.len(), 2);
     assert_eq!(keyboard.rows[0][0].text, "查看任务详情");
     assert_eq!(keyboard.rows[1][0].text, "查看完成列表");
-    assert_eq!(keyboard.rows[1][1].text, "菜单");
+    assert_eq!(keyboard.rows[1][1].text, "查看命令");
+    assert_eq!(keyboard.rows[1][2].text, "菜单");
 }
 
 // HTTP(S) 结果链接保留“打开转存消息”按钮，由 Telegram 客户端负责跳转。
@@ -153,6 +169,8 @@ fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
     assert_eq!(keyboard.rows[0].len(), 1);
     assert_eq!(keyboard.rows[1][0].text, "查看任务详情");
     assert_eq!(keyboard.rows[2][0].text, "查看完成列表");
+    assert_eq!(keyboard.rows[2][1].text, "查看命令");
+    assert_eq!(keyboard.rows[2][2].text, "菜单");
     assert!(matches!(
         first.r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Url(_)
@@ -179,7 +197,8 @@ fn test_build_transfer_progress_keyboard_has_callback_buttons() {
     );
     assert_eq!(decoded_callback_data(&keyboard.rows[0][2]), "j:sc:42");
     assert_eq!(keyboard.rows[1][0].text, "查看运行列表");
-    assert_eq!(keyboard.rows[1][1].text, "菜单");
+    assert_eq!(keyboard.rows[1][1].text, "查看命令");
+    assert_eq!(keyboard.rows[1][2].text, "菜单");
     assert!(matches!(
         keyboard.rows[1][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
@@ -243,18 +262,20 @@ fn test_build_transfer_progress_keyboard_for_cancelled_job() {
     assert_eq!(keyboard.rows[0][0].text, "查看任务详情");
     assert_eq!(keyboard.rows[0].len(), 1);
     assert_eq!(keyboard.rows[1][0].text, "查看已停列表");
-    assert_eq!(keyboard.rows[1][1].text, "菜单");
+    assert_eq!(keyboard.rows[1][1].text, "查看命令");
+    assert_eq!(keyboard.rows[1][2].text, "菜单");
     assert_eq!(keyboard.rows.len(), 2);
 }
 
-// 等待阶段还没有 job_id，只展示列表和菜单，不能因主操作重排生成空行。
+// 等待阶段还没有 job_id，只展示列表、命令和菜单，不能因主操作重排生成空行。
 #[test]
 fn test_build_transfer_progress_keyboard_without_job_has_navigation_only() {
     let keyboard = build_transfer_progress_keyboard(None, None, "https://t.me/c/1/2", -100);
 
     assert_eq!(keyboard.rows.len(), 1);
     assert_eq!(keyboard.rows[0][0].text, "查看运行列表");
-    assert_eq!(keyboard.rows[0][1].text, "菜单");
+    assert_eq!(keyboard.rows[0][1].text, "查看命令");
+    assert_eq!(keyboard.rows[0][2].text, "菜单");
 }
 
 // 构造最小进度快照，避免文本测试依赖数据库。
@@ -264,6 +285,7 @@ fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
         job: store::JobProgressJob {
             id: 42,
             target_chat_id: -100,
+            result_message_link: None,
             status: status.to_owned(),
             total_items: 3,
             last_error: None,
@@ -281,6 +303,10 @@ fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
         active_downloaded_bytes: 0,
         active_download_total_bytes: 0,
         has_unknown_download_total: false,
+        active_upload_files: 0,
+        active_uploaded_bytes: 0,
+        active_upload_total_bytes: 0,
+        has_unknown_upload_total: false,
     }
 }
 

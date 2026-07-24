@@ -6,8 +6,8 @@ use crate::tgbot::send::{ReplyPanel, build_callback_button, build_copy_button};
 use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::{self as transfer_mod};
 use crate::tgbot::transfer::{
-    build_help_button_data, build_menu_home_button_data_for_outer,
-    build_menu_new_transfer_button_data_for_outer,
+    build_help_message_button_data, build_menu_home_button_data_for_outer,
+    build_menu_new_transfer_button_data_for_outer, build_view_commands_button,
 };
 
 #[derive(Debug)]
@@ -43,7 +43,7 @@ pub(crate) struct CommandErrorHint {
 pub(crate) enum CommandErrorPrimaryAction {
     OpenHelp,
     OpenMenu,
-    CopyPrimaryCommand,
+    StartTransfer,
 }
 
 /// 命令错误分类到“下一步操作”的映射。
@@ -59,7 +59,7 @@ struct CommandErrorAction {
 
 /// 回复未知命令，避免用户输入错误时只在日志里可见。
 pub(crate) async fn send_unknown_command_message(
-    command: &str,
+    _command: &str,
     chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
@@ -68,18 +68,19 @@ pub(crate) async fn send_unknown_command_message(
             "未知命令".to_owned(),
             format!("状态：{}", card::code("invalid-command")),
             card::DIVIDER.to_owned(),
-            card::section("输入"),
-            card::command_line("命令", command),
             card::section("下一步"),
-            card::command_line("帮助", "/help"),
+            card::note("日常操作请使用交互菜单；需要命令时点击“查看命令”。"),
         ]
         .join("\n"),
     )
-    .row(vec![build_callback_button(
-        "打开帮助",
-        &crate::tgbot::transfer::build_help_button_data(None),
-        tdlib_rs::enums::ButtonStyle::Primary,
-    )])
+    .row(vec![
+        build_view_commands_button(None),
+        build_callback_button(
+            "打开菜单",
+            &build_menu_home_button_data_for_outer(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+    ])
     .send(chat_id, client_id)
     .await
 }
@@ -101,8 +102,6 @@ pub(crate) async fn send_command_error_message(
             hint.title.to_owned(),
             format!("状态：{}", card::code(hint.status)),
             card::DIVIDER.to_owned(),
-            card::section("输入"),
-            card::command_line("命令", command),
             card::section("原因"),
             hint.reason.to_owned(),
             card::section("建议"),
@@ -110,18 +109,13 @@ pub(crate) async fn send_command_error_message(
             card::section("错误"),
             card::pre_code(&error_text),
             card::section("下一步"),
-            card::command_line(hint.primary_label, hint.primary_command),
-            card::command_line("帮助", hint.help_command),
+            card::note("优先使用下方按钮继续操作；命令说明仅在点击后显示。"),
         ]
         .join("\n"),
     )
     .row(vec![
         build_primary_action_button(&hint),
-        build_copy_button(
-            "复制帮助",
-            hint.help_command,
-            tdlib_rs::enums::ButtonStyle::Default,
-        ),
+        build_view_commands_button(help_topic_from_command(hint.help_command)),
         build_copy_button(
             "复制错误",
             &error_text,
@@ -162,13 +156,13 @@ pub(crate) fn command_error_hint(error_text: &str) -> CommandErrorHint {
 fn command_error_action(kind: transfer_mod::TransferErrorKind) -> CommandErrorAction {
     match kind {
         transfer_mod::TransferErrorKind::MissingTarget => CommandErrorAction {
-            primary_label: "转存模板",
-            primary_command: "/transfer <link> <target_chat_id>",
-            primary_action: CommandErrorPrimaryAction::CopyPrimaryCommand,
+            primary_label: "选择目标转存",
+            primary_command: "/transfer",
+            primary_action: CommandErrorPrimaryAction::StartTransfer,
             help_command: "/help transfer",
         },
         transfer_mod::TransferErrorKind::InvalidArgs => CommandErrorAction {
-            primary_label: "转存帮助",
+            primary_label: "查看转存命令",
             primary_command: "/help transfer",
             primary_action: CommandErrorPrimaryAction::OpenHelp,
             help_command: "/help",
@@ -181,7 +175,7 @@ fn command_error_action(kind: transfer_mod::TransferErrorKind) -> CommandErrorAc
             help_command: "/help transfer",
         },
         _ => CommandErrorAction {
-            primary_label: "帮助",
+            primary_label: "查看命令",
             primary_command: "/help",
             primary_action: CommandErrorPrimaryAction::OpenHelp,
             help_command: "/help",
@@ -194,7 +188,7 @@ fn build_primary_action_button(hint: &CommandErrorHint) -> tdlib_rs::types::Inli
     match hint.primary_action {
         CommandErrorPrimaryAction::OpenHelp => build_callback_button(
             hint.primary_label,
-            &build_help_button_data(None),
+            &build_help_message_button_data(help_topic_from_command(hint.primary_command)),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
         CommandErrorPrimaryAction::OpenMenu => build_callback_button(
@@ -202,17 +196,25 @@ fn build_primary_action_button(hint: &CommandErrorHint) -> tdlib_rs::types::Inli
             &build_menu_home_button_data_for_outer(),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
-        CommandErrorPrimaryAction::CopyPrimaryCommand => build_copy_button(
+        CommandErrorPrimaryAction::StartTransfer => build_callback_button(
             hint.primary_label,
-            hint.primary_command,
+            &build_menu_new_transfer_button_data_for_outer(),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
     }
 }
 
+/// 从 `/help <topic>` 中提取帮助主题；`/help` 本身对应命令目录。
+fn help_topic_from_command(command: &str) -> Option<&str> {
+    command
+        .strip_prefix("/help")
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
+}
+
 /// 自动转存媒体失败时给出可执行提示。
 ///
-/// 最常见原因是当前请求 chat 没配置默认 target；用户可以直接回复这条媒体发送 `/transfer <target>`。
+/// 最常见原因是当前请求 chat 没配置默认 target；引导用户回到交互式目标选择。
 pub(crate) async fn send_auto_transfer_hint_message(
     err: &anyhow::Error,
     chat_id: i64,
@@ -229,10 +231,6 @@ pub(crate) async fn send_auto_transfer_hint_message(
                 "这条转发消息没有可稳定还原的原始 message_id，不能安全地作为转存源。".to_owned(),
                 card::section("建议"),
                 "请改用原始消息链接，或重新开始转存后发送一条 bot 可见媒体。".to_owned(),
-                card::section("命令"),
-                card::command_line("开始转存", "/transfer"),
-                card::command_line("帮助", "/help transfer"),
-                card::command_line("菜单", "/menu"),
             ]
             .join("\n"),
         )
@@ -242,11 +240,7 @@ pub(crate) async fn send_auto_transfer_hint_message(
                 &build_menu_new_transfer_button_data_for_outer(),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
-            build_callback_button(
-                "打开帮助",
-                &build_help_button_data(Some("transfer")),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
+            build_view_commands_button(Some("transfer")),
         ])
         .row(vec![build_callback_button(
             "打开菜单",
@@ -265,16 +259,23 @@ pub(crate) async fn send_auto_transfer_hint_message(
             card::section("原因"),
             card::pre_code(error_text),
             card::section("下一步"),
-            "请回复要转存的媒体消息，并发送下面命令。".to_owned(),
-            card::command_line("指定目标", "/transfer <target_chat_id_or_alias>"),
+            "点击“开始转存”，按提示重新选择来源和目标。".to_owned(),
         ]
         .join("\n"),
     )
-    .row(vec![build_copy_button(
-        "复制 /transfer",
-        "/transfer <target_chat_id_or_alias>",
-        tdlib_rs::enums::ButtonStyle::Primary,
-    )])
+    .row(vec![
+        build_callback_button(
+            "开始转存",
+            &build_menu_new_transfer_button_data_for_outer(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        build_view_commands_button(Some("transfer")),
+        build_callback_button(
+            "打开菜单",
+            &build_menu_home_button_data_for_outer(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ])
     .send(chat_id, client_id)
     .await
 }

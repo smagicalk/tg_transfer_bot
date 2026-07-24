@@ -9,7 +9,7 @@
 - 支持进度卡片、任务列表、暂停/恢复/停止和历史查询；按钮停止会先进入确认页。
 - 支持 bot 优先读取源，失败时回退到 user client。
 - 支持菜单输入草稿持久化，未完成交互可在重启后继续。
-- 采用单所有者私聊模式，仅处理 `owner_user_id` 本人的消息和按钮。
+- 采用授权私聊模式，支持 `owner_user_id`、`admin_user_ids` 和数据库动态授权名单。
 
 ## 适用场景
 
@@ -22,8 +22,9 @@
 - `/transfer` 转存单条消息、相册或回复的 bot 可见媒体。
 - `/menu` 卡片式入口，覆盖转存、查询、任务控制、配置、健康和缓存。
 - `/downloads` 查看任务列表、状态筛选、分页和真实下载进度。
-- `/lookup` 按源链接查询已成功转存结果。
+- `/lookup` 按源链接查询已成功转存结果，并返回 URL 或 Telegram 消息引用入口。
 - `/job` 手动暂停、恢复、停止任务；按钮入口的停止动作会二次确认。
+- `/auth` 打开 owner 专用授权面板，可查看管理员名称、选择 Telegram 用户、输入 ID 或删除动态管理员；修改后立即生效并持久化。
 - `/targets` 管理默认目标和目标别名。
 - `/config` 动态调整已开放的转存运行时参数并写入数据库。
 - `/health` 查看运行健康、并发和缓存摘要。
@@ -73,6 +74,7 @@ $env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
 - `clients.bot.token`
 - `clients.bot.tdlib.database_encryption_key`
 - `owner_user_id`
+- `admin_user_ids`（可选，其他同权管理员的 Telegram 用户 ID）
 
 ### 3. 启动
 
@@ -87,11 +89,13 @@ cargo run -p transfer_bot -- -c config.json
 - `bot` client 会使用 `token` 登录。
 - 程序会自动执行数据库 migration；SQLite 文件库会自动创建运行目录。
 
-首次启动后，用 `owner_user_id` 对应账号私聊 bot 并打开 `/menu`，按下面顺序完成运行态检查：
+首次启动后，用 `owner_user_id` 或 `admin_user_ids` 中的账号私聊 bot 并打开 `/menu`，按下面顺序完成运行态检查：
 
 1. `目标配置`：按需配置默认目标或目标别名；不配置时默认目标就是当前私聊。
 2. `运行配置`：按需要调整并发、删除延迟、分页和菜单超时。
 3. `运行健康`、`文件缓存`：确认后台任务和文件状态正常。
+
+需要增加使用者时，由 owner 发送 `/auth`，点击“添加管理员”，再选择 Telegram 用户或输入用户 ID。动态授权和名称快照会写入业务数据库，重启后自动恢复；`/auth add <user_id>` 仍作为命令行兜底。
 
 `targets` 是可选运行态配置；不设置默认目标时，快速转存会回落到当前私聊。
 
@@ -116,8 +120,8 @@ cargo run -p transfer_bot -- -c config.json
 
 当前正式发布目标：
 
-- `linux-x86_64-alpine3.22`
-- `linux-x86_64-debian12`
+- `linux-x86_64-alpine3.23`
+- `linux-x86_64-debian13`
 - `linux-x86_64-ubuntu24.04`
 - `linux-x86_64-rocky9`
 - `windows-x86_64-msvc`
@@ -127,8 +131,8 @@ cargo run -p transfer_bot -- -c config.json
 在 GitHub Actions 页面手动运行后可选：
 
 - `target`
-  - `alpine-3.22`
-  - `debian-12`
+  - `alpine-3.23`
+  - `debian-13`
   - `ubuntu-24.04`
   - `rocky-9`
   - `windows-2022`
@@ -149,10 +153,11 @@ cargo run -p transfer_bot -- -c config.json
 ### 配置分层
 
 - `tdlib_defaults`：user/bot 共用的 TDLib 公共参数。
-- `storage`：业务数据库位置，保存任务、缓存、恢复和菜单草稿。
+- `storage`：业务数据库位置，保存任务、缓存、恢复、菜单草稿和动态授权名单。
 - `clients.user` / `clients.bot`：两个 Telegram client 的本地目录和登录方式。
 - `workflow`：上传使用哪个 client。
-- `owner_user_id`：唯一允许与 bot 交互的 Telegram 用户 ID。
+- `owner_user_id`：必填的所有者 Telegram 用户 ID。
+- `admin_user_ids`：可选的同权管理员 Telegram 用户 ID 白名单。
 - 运行参数和目标配置以数据库为准，通过 `/config`、`/targets` 或菜单管理。
 
 ### 关键字段
@@ -160,7 +165,8 @@ cargo run -p transfer_bot -- -c config.json
 | 字段 | 说明 |
 | --- | --- |
 | `config_version` | 当前配置版本，现为 `2` |
-| `owner_user_id` | 唯一所有者用户 ID；必须大于 `0` |
+| `owner_user_id` | 所有者用户 ID；必须大于 `0`，始终拥有完整权限 |
+| `admin_user_ids` | 其他同权管理员用户 ID 数组；ID 必须大于 `0`，可为空 |
 | `storage.database_url` | 业务数据库连接串，支持 `sqlite://...`、`postgres://...`、`postgresql://...` |
 | `clients.user.login_info` | user 登录方式，支持 `OCR`、`PHONE` |
 | `clients.bot.token` | BotFather 生成的 bot token |
@@ -172,6 +178,7 @@ cargo run -p transfer_bot -- -c config.json
 | --- | --- |
 | 默认目标、目标别名 | `/targets show`、`/targets ...` 或菜单“管理 -> 目标配置” |
 | 并发、文件清理、分页、菜单输入超时 | `/config show`、`/config ...` 或菜单“管理 -> 运行配置” |
+| 动态授权用户 | 仅 owner 使用 `/auth` 交互面板；也可使用 `/auth list`、`/auth add <user_id>`、`/auth del <user_id>` |
 
 ### 推荐 workflow
 
@@ -193,28 +200,28 @@ cargo run -p transfer_bot -- -c config.json
 
 重复转存的业务语义固定是 `source_link + target_chat_id`，不区分上传端。
 
-### 所有者边界与目标解析
+### 管理员边界与目标解析
 
 只有同时满足以下条件的交互才会被处理：
 
 - `chat_id == sender_user_id`
-- `sender_user_id == owner_user_id`
+- `sender_user_id == owner_user_id`，或 `admin_user_ids` / 数据库动态授权名单包含该用户 ID
 
-也就是说，项目只接受所有者本人的 bot 私聊；群聊、频道和其他用户消息均忽略。
+也就是说，项目只接受已授权用户的 bot 私聊；群聊、频道不执行命令，未授权私聊会收到“无权限，请联系管理员”提示。
 
 交互边界：
 
 - 本项目不支持在群聊里发命令或点击交互按钮。
 - 目标群只作为转存目的地出现，需要在私聊菜单里选择或通过命令参数指定。
-- 目标选择只使用 inline 按钮、已有别名或手动输入 private chat ID。
+- 目标选择支持 Telegram 原生群组/频道选择器，也可使用当前私聊、默认目标、已有别名或手动输入 chat ID。
 
-所有者可查看和控制数据库中的全部任务。链接源优先由 bot 读取；bot 无法读取或准备文件时，会尝试 TDLib `user` client fallback。
+所有已授权用户均可使用转存、查询和任务管理功能；只有 `owner_user_id` 可以执行 `/auth`，避免其他用户继续扩散权限。链接源优先由 bot 读取；bot 无法读取或准备文件时，会尝试 TDLib `user` client fallback。
 
 `/transfer` 未显式传目标时，目标 chat 的解析顺序是：
 
 1. 命令参数里显式给出的数字 chat ID 或 `targets.aliases` 别名。
 2. `targets.default_chat_id`。
-3. 未配置默认目标时回落到当前所有者私聊。
+3. 未配置默认目标时回落到当前管理员私聊。
 
 ### 本地状态文件
 
@@ -228,7 +235,7 @@ cargo run -p transfer_bot -- -c config.json
 
 ## 常用命令
 
-所有命令仅对 `owner_user_id` 开放：
+所有命令仅对静态或动态授权用户开放；其中 `/auth` 仅 owner 可执行：
 
 | 命令 | 作用 |
 | --- | --- |
@@ -238,6 +245,7 @@ cargo run -p transfer_bot -- -c config.json
 | `/lookup <link> [target]` | 查询历史成功转存结果 |
 | `/downloads [filter] [limit] [page]` | 查看全部任务列表和下载进度 |
 | `/job <pause|resume|stop|status> <job_id>` | 控制任务 |
+| `/auth [list|add <user_id>|del <user_id>]` | 打开管理员列表和交互式添加/删除面板；参数命令保留为兜底（仅 owner） |
 | `/config [show|reset|set <key> <value>]` | 查看、重置或调整已开放的运行时参数 |
 | `/targets [show|reset|set-default|set-alias|del-alias]` | 管理默认目标和目标别名 |
 | `/health` | 查看健康状态、并发和缓存摘要 |
@@ -295,16 +303,18 @@ cargo run -p transfer_bot -- -c config.json
 -> 如果存在未完成输入，首页顶部显示“继续输入 / 取消输入”
 -> 首页：开始转存 / 快速转存
 -> 导航：任务 / 管理 / 帮助
--> 管理：运行配置 / 目标配置 / 运行健康 / 文件缓存
+-> 管理：运行配置 / 目标配置 / 授权管理（仅 owner）/ 运行健康 / 文件缓存
 ```
 
 当前转存向导是 3 步：
 
 ```text
 1/3 等待源链接
-2/3 选择目标（上次目标 / 当前私聊或默认目标 / 别名 / 手动输入）
+2/3 选择目标（选择聊天 / 上次目标 / 当前私聊或默认目标 / 别名 / 手动输入）
 3/3 确认执行
 ```
+
+转存完成后的跳转入口按 Telegram 能力区分：频道和超级群提供 `https://t.me/...` 按钮；私聊和 basic group 没有独立消息 URL，结果通知会原生回复目标消息，点击消息引用即可跳转，并保留 `chat_id/message_id` 定位作为降级信息。
 
 `快速转存` 和 `快速查询` 会优先使用默认目标；如果没有显式默认目标，会直接回落到当前私聊。
 
@@ -321,11 +331,15 @@ cargo run -p transfer_bot -- -c config.json
 ```text
 目标配置
 - 刷新 / 重置默认 / 恢复私聊默认：直接 callback 执行
-- 设默认：回复目标 private chat_id
-- 设路由：先回复 request_chat_id，再回复 target_chat_id
-- 设别名：先回复 alias，再回复 target_chat_id
-- 现有路由 / 现有别名：先点编号进入详情，再改目标 / 设默认 / 删除
+- 设默认：使用 Telegram 原生按钮选择群组或频道，也可直接输入 target_chat_id
+- 设别名：先回复 alias，再选择目标聊天或输入 target_chat_id
+- 现有别名：先点编号进入详情，再改目标 / 设默认 / 删除
 - 别名搜索：先输入关键字，再在搜索结果里点编号进入详情
+
+授权管理（仅 owner）
+- 添加管理员：点击按钮后选择 Telegram 用户，也可手动输入 user_id
+- 快捷授权：回复对方消息并发送 /auth
+- 管理员列表：显示名称、username 和 user_id，可点击按钮撤销动态授权
 
 运行配置
 - 可先点字段详情：并发 / 删除 / GC / 进度 / 分页 / 超时
@@ -337,10 +351,13 @@ cargo run -p transfer_bot -- -c config.json
 
 ```text
 - 发送 /cancel 可取消
+- 原生选择器也可直接点“取消”
 - 超时后会提示输入已过期
 - 重新打开 /menu 可继续输入
 - 中途发送其他命令时，命令优先
 ```
+
+Telegram 的 `/` 命令菜单仍会注册完整命令，方便需要时直接调用；普通状态卡片默认不展开命令文本，可点击“查看命令”后再查看。
 
 两个运行态配置页统一按钮层级为：
 
@@ -375,7 +392,7 @@ cargo run -p transfer_bot -- -c config.json
 
 ```text
 1. 启动程序，等待 bot 和 user 都登录完成。
-2. 使用 `owner_user_id` 对应账号私聊 bot。
+2. 使用 `owner_user_id` 或 `admin_user_ids` 中的账号私聊 bot。
 3. 进入 目标配置：
    - 默认目标和别名都是可选项
    - 不配置默认目标时，转存目标默认回落到当前私聊
@@ -390,7 +407,7 @@ cargo run -p transfer_bot -- -c config.json
 如果你删除了业务数据库但保留了 `tg/user`、`tg/bot` 的 TDLib 数据目录，重新启动后的恢复方式也是同一套：
 
 ```text
-1. 保留 config.json 中的 `owner_user_id`。
+1. 保留 config.json 中的 `owner_user_id` 和 `admin_user_ids`。
 2. 重新启动程序。
 3. 按需重新配置 targets / config。
 4. 旧任务、缓存和运行态配置会丢失；TDLib 登录态和本地媒体目录仍保留。
@@ -543,9 +560,10 @@ cargo run -p transfer_bot -- -c config.json.enc decrypt <password>
 postgresql://user:pass@127.0.0.1:5432/transfer
 ```
 
-程序启动时会执行 SeaORM migration，后续表结构升级走版本化迁移。当前已包含初始 schema migration 和一个针对成功结果复用查询的增量索引 migration。
+程序启动时会执行 SeaORM migration，后续表结构升级走版本化迁移。当前包含初始 schema、成功结果复用索引、动态授权表及管理员资料字段 migration。
 运行时调参使用数据库中的 `transfer_runtime_config` 单行配置表；`config.json` 不再保存这些可变运行参数。
 `targets` 使用 `transfer_target_config` 和 `transfer_target_alias` 两张表。旧数据库中的 `transfer_target_route` 历史表不会自动删除，但运行时不再读写，新数据库也不再创建。
+动态授权使用 `authorized_user` 表，并保存可选的 Telegram 显示名称和用户名快照；启动时一次性加载权限到内存，授权面板和 `/auth add`、`/auth del` 会同时更新数据库和当前进程状态。
 
 真实启动链会按这个顺序处理业务数据库：
 
@@ -554,6 +572,7 @@ postgresql://user:pass@127.0.0.1:5432/transfer
 2. ensure_runtime_schema
 3. ensure_transfer_runtime_config
 4. ensure_targets_runtime_config
+5. list_authorized_user_ids
 ```
 
 PostgreSQL 路径同时验证表结构以及转存、目标运行态配置的首次 seed 与回读。
@@ -576,6 +595,7 @@ PostgreSQL 注意点：
 - `transfer_result_message`：结果入口记录。
 - `file_cache`：文件缓存、引用计数、删除状态。
 - `menu_input_draft`：菜单输入草稿和超时信息。
+- `authorized_user`：owner 动态授权的 Telegram 用户。
 
 TDLib 的 `tg/user/db`、`tg/bot/db` 是 Telegram client 自身状态库，不等同于业务库。
 
@@ -667,7 +687,7 @@ cargo test -p transfer_bot test_postgres_migration_and_insert_when_env_is_presen
 最近一次完整验证结果：
 
 - `cargo check -p transfer_bot` 通过
-- `cargo test -p transfer_bot` 通过，`381 passed`
+- `cargo test --workspace` 通过，`404 passed`
 - `cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings` 通过
 
 注意：运行测试会重新生成 `transfer_bot/db.test.sqlite`。如果希望工作区里不保留业务数据库，测试结束后需要手动删除它。

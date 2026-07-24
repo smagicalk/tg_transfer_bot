@@ -4,7 +4,7 @@ use crate::config::{ClientRole, RequestActor};
 
 /// 源输入类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SourceKind {
+pub(crate) enum SourceKind {
     /// 命令里提供 Telegram 消息链接。
     Link,
     /// 命令回复 bot 当前聊天中的一条消息。
@@ -46,7 +46,7 @@ pub(super) fn client_role_from_str(value: &str) -> Option<ClientRole> {
 
 /// 一次转存任务的输入参数。
 #[derive(Debug, Clone)]
-pub(super) struct TransferPlan {
+pub(crate) struct TransferPlan {
     /// 发起本任务的所有者上下文。
     pub actor: RequestActor,
     /// 源链接（爬取入口）。
@@ -69,6 +69,8 @@ pub(super) struct TransferPlan {
     pub request_chat_id: i64,
     /// 请求侧：发起命令的 message_id。
     pub request_message_id: i64,
+    /// 用户已明确确认忽略历史成功结果并重新转存。
+    pub force_retransfer: bool,
 }
 
 /// 链接抓取后的源消息集合。

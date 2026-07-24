@@ -57,6 +57,10 @@ const HELP_DETAIL_TOPIC_SPECS: &[HelpDetailTopicSpec] = &[
         runtime_admin: None,
     },
     HelpDetailTopicSpec {
+        topic: "auth",
+        runtime_admin: None,
+    },
+    HelpDetailTopicSpec {
         topic: "config",
         runtime_admin: Some(RuntimeAdminHelpTopic::Config),
     },
@@ -130,11 +134,18 @@ const HELP_INDEX_ADMIN_ROW_ONE: [HelpTopicButtonSpec; 3] = [
     },
 ];
 
-const HELP_INDEX_ADMIN_ROW_TWO: [HelpTopicButtonSpec; 1] = [HelpTopicButtonSpec {
-    label: "目标配置",
-    topic: "targets",
-    primary: false,
-}];
+const HELP_INDEX_ADMIN_ROW_TWO: [HelpTopicButtonSpec; 2] = [
+    HelpTopicButtonSpec {
+        label: "目标配置",
+        topic: "targets",
+        primary: false,
+    },
+    HelpTopicButtonSpec {
+        label: "授权管理",
+        topic: "auth",
+        primary: false,
+    },
+];
 
 const HELP_INDEX_ADMIN_ROWS: [&[HelpTopicButtonSpec]; 2] =
     [&HELP_INDEX_ADMIN_ROW_ONE, &HELP_INDEX_ADMIN_ROW_TWO];
@@ -148,6 +159,7 @@ const HELP_INDEX_EXAMPLE_TOPICS: &[&str] = &[
     "help",
     "config",
     "targets",
+    "auth",
     "health",
     "cache",
 ];
@@ -189,6 +201,7 @@ pub(super) fn normalize_help_topic(command_name: &str) -> anyhow::Result<&'stati
         "transfer" => Ok("transfer"),
         "lookup" => Ok("lookup"),
         "cache" | "file" | "files" => Ok("cache"),
+        "auth" => Ok("auth"),
         "config" => Ok("config"),
         "targets" => Ok("targets"),
         "downloads" | "download" => Ok("downloads"),
@@ -213,5 +226,13 @@ mod tests {
             Some(RuntimeAdminHelpTopic::Targets)
         );
         assert_eq!(runtime_admin_help_topic("downloads"), None);
+    }
+
+    #[test]
+    fn test_auth_help_topic_is_available() -> anyhow::Result<()> {
+        assert_eq!(normalize_help_topic("auth")?, "auth");
+        assert_eq!(normalize_help_topic("/auth")?, "auth");
+        assert!(help_detail_topic_spec("auth").is_some());
+        Ok(())
     }
 }

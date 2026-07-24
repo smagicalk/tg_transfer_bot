@@ -9,8 +9,7 @@ use crate::tgbot::send;
 use super::super::super::common::resolve_target_chat_id_on;
 use super::super::callback;
 use super::super::text::{
-    build_confirm_command_preview, build_menu_context_lines, build_menu_step_state_line,
-    build_menu_target_step_state_line,
+    build_menu_context_lines, build_menu_step_state_line, build_menu_target_step_state_line,
 };
 use super::state::{MenuInputKind, last_target};
 
@@ -66,7 +65,7 @@ pub(super) async fn edit_target_choice_prompt(
         keyboard,
         ctx.client_id,
         "目标选择刷新失败",
-        "目标选择页已生成，但原消息编辑失败；请复制错误或重新打开 /menu。",
+        "目标选择页已生成，但原消息编辑失败；请使用错误卡片上的“菜单”按钮重新进入。",
     )
     .await
 }
@@ -76,13 +75,21 @@ pub(super) async fn send_confirm_prompt(
     kind: MenuInputKind,
     source_link: &str,
     target_chat_id: i64,
+    target_chat_title: Option<&str>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    send::ReplyPanel::card(build_confirm_text(kind, source_link, target_chat_id))
-        .rows(confirm_button_rows())
-        .send(request_chat_id, client_id)
-        .await
+    let target_chat_title =
+        resolve_target_chat_title(target_chat_id, target_chat_title, client_id).await;
+    send::ReplyPanel::card(build_confirm_text(
+        kind,
+        source_link,
+        target_chat_id,
+        target_chat_title.as_deref(),
+    ))
+    .rows(confirm_button_rows())
+    .send(request_chat_id, client_id)
+    .await
 }
 
 /// 编辑当前消息为确认卡片。
@@ -94,10 +101,15 @@ pub(super) async fn edit_confirm_prompt(
     message_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let (text, keyboard) =
-        send::ReplyPanel::card(build_confirm_text(kind, source_link, target_chat_id))
-            .rows(confirm_button_rows())
-            .into_card_parts()?;
+    let target_chat_title = resolve_target_chat_title(target_chat_id, None, client_id).await;
+    let (text, keyboard) = send::ReplyPanel::card(build_confirm_text(
+        kind,
+        source_link,
+        target_chat_id,
+        target_chat_title.as_deref(),
+    ))
+    .rows(confirm_button_rows())
+    .into_card_parts()?;
     send::edit_interaction_card_or_error(
         text,
         request_chat_id,
@@ -105,9 +117,39 @@ pub(super) async fn edit_confirm_prompt(
         keyboard,
         client_id,
         "确认页刷新失败",
-        "确认页已生成，但原消息编辑失败；请复制错误或重新打开 /menu。",
+        "确认页已生成，但原消息编辑失败；请使用错误卡片上的“菜单”按钮重新进入。",
     )
     .await
+}
+
+/// 解析确认页使用的聊天标题；原生选聊返回值优先，TDLib 查询作为其他入口的补充。
+async fn resolve_target_chat_title(
+    target_chat_id: i64,
+    preferred_title: Option<&str>,
+    client_id: i32,
+) -> Option<String> {
+    if let Some(title) = preferred_title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+    {
+        return Some(title.to_owned());
+    }
+
+    let chat = match tdlib_rs::functions::get_chat(target_chat_id, client_id).await {
+        Ok(chat) => chat,
+        Err(err) => {
+            tracing::debug!(
+                target_chat_id,
+                error_code = err.code,
+                error_message = %err.message,
+                "target chat title is unavailable"
+            );
+            return None;
+        }
+    };
+    let tdlib_rs::enums::Chat::Chat(chat) = chat;
+    let title = chat.title.trim();
+    (!title.is_empty()).then(|| title.to_owned())
 }
 
 /// 在指定上下文上构造目标选择按钮。
@@ -169,11 +211,18 @@ pub(super) fn build_target_choice_buttons_on(
         .collect::<Vec<_>>();
     rows.extend(alias_buttons.chunks(2).map(<[_]>::to_vec));
 
-    rows.push(vec![send::build_callback_button(
-        "手动输入",
-        &callback::target_manual_callback_data(),
-        tdlib_rs::enums::ButtonStyle::Default,
-    )]);
+    rows.push(vec![
+        send::build_callback_button(
+            "选择聊天",
+            &callback::target_request_chat_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Primary,
+        ),
+        send::build_callback_button(
+            "手动输入",
+            &callback::target_manual_callback_data(),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+    ]);
     rows.push(vec![send::build_callback_button(
         "取消",
         &callback::cancel_input_callback_data(),
@@ -263,14 +312,20 @@ fn build_target_choice_text_lines(kind: MenuInputKind, source_link: &str) -> Vec
     lines.extend(build_menu_context_lines(Some(source_link), None));
     lines.extend([
         crate::tgbot::transfer::card::section("目标方式"),
-        "可以直接使用当前私聊、点已有别名/上次目标，或手动输入 private chat_id/alias。".to_owned(),
-        format!("取消：{}", crate::tgbot::transfer::card::code("/cancel")),
+        "优先点“选择聊天”使用 Telegram 原生选择器；也可使用当前私聊、已有别名/上次目标或手动输入。"
+            .to_owned(),
+        "取消：点击“取消”按钮，或回复“取消”结束当前流程。".to_owned(),
     ]);
     lines
 }
 
 /// 确认卡片正文。
-fn build_confirm_text(kind: MenuInputKind, source_link: &str, target_chat_id: i64) -> String {
+fn build_confirm_text(
+    kind: MenuInputKind,
+    source_link: &str,
+    target_chat_id: i64,
+    target_chat_title: Option<&str>,
+) -> String {
     let mut lines = vec![
         kind.confirm_title().to_owned(),
         build_menu_target_step_state_line("waiting-confirm", target_chat_id, "3/3"),
@@ -280,16 +335,16 @@ fn build_confirm_text(kind: MenuInputKind, source_link: &str, target_chat_id: i6
         Some(source_link),
         Some(target_chat_id),
     ));
+    if let Some(title) = target_chat_title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+    {
+        lines.push(crate::tgbot::transfer::card::field("目标名称", title));
+    }
     lines.extend([
-        crate::tgbot::transfer::card::section("命令预览"),
-        crate::tgbot::transfer::card::code(build_confirm_command_preview(
-            kind,
-            source_link,
-            target_chat_id,
-        )),
         crate::tgbot::transfer::card::section("下一步"),
         "确认无误后点击“执行”；来源或目标不对时，可使用下方按钮返回修改。".to_owned(),
-        format!("取消：{}", crate::tgbot::transfer::card::code("/cancel")),
+        "取消：点击“取消”按钮，或回复“取消”结束当前流程。".to_owned(),
     ]);
     lines.join("\n")
 }
@@ -381,6 +436,7 @@ mod tests {
         assert_eq!(rows[0][0].text, "默认目标");
         assert!(labels.contains(&"当前私聊"));
         assert!(labels.contains(&"archive"));
+        assert!(labels.contains(&"选择聊天"));
         assert!(labels.contains(&"手动输入"));
         assert_eq!(rows.last().expect("should have cancel row")[0].text, "取消");
 
@@ -396,6 +452,19 @@ mod tests {
         let decoded = String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap())
             .expect("callback should be utf8");
         assert_eq!(decoded, "m:ta:61001");
+
+        let chat_picker = rows
+            .iter()
+            .flatten()
+            .find(|button| button.text == "选择聊天")
+            .expect("native chat picker should exist");
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &chat_picker.r#type
+        else {
+            panic!("chat picker entry must be callback");
+        };
+        let decoded = String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap())
+            .expect("callback should be utf8");
+        assert_eq!(decoded, "m:tp");
     }
 
     // 快速入口仍应使用和实际命令一致的目标标题和确认标题。
@@ -413,6 +482,20 @@ mod tests {
     #[test]
     fn test_default_target_button_label_uses_private_chat_name() {
         assert_eq!(default_target_button_label(10001, 10001), "当前私聊");
+    }
+
+    // 确认页应同时展示 Telegram 聊天名称和 chat_id，避免只看数字无法复核目标。
+    #[test]
+    fn test_build_confirm_text_shows_target_chat_title() {
+        let text = build_confirm_text(
+            MenuInputKind::Transfer,
+            "https://t.me/c/1/2",
+            -100123,
+            Some("归档群"),
+        );
+
+        assert!(text.contains("目标名称：‹归档群›"));
+        assert!(text.contains("目标：‹-100123›"));
     }
 
     // 已确认过的目标应作为上次目标优先展示，并避免和默认目标重复出现。

@@ -1,3 +1,4 @@
+pub(crate) mod access;
 pub mod app_context;
 pub mod cli;
 pub mod config;
@@ -24,6 +25,7 @@ pub const TOKIO_WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
 pub(crate) struct SeededRuntimeState {
     pub(crate) transfer_config: crate::config::TransferConfig,
     pub(crate) targets_config: TargetsConfig,
+    pub(crate) authorized_user_ids: std::collections::BTreeSet<i64>,
 }
 
 /// 启动期真实使用的数据库初始化链。
@@ -63,17 +65,20 @@ pub(crate) async fn bootstrap_runtime_database_state_on(
     let targets_config =
         crate::tgbot::transfer::ensure_targets_runtime_config_on(db, targets_config_default)
             .await?;
+    let authorized_user_ids = crate::access::list_authorized_user_ids_on(db).await?;
 
     tracing::info!(
         database_backend = dialect,
         runtime_job_concurrency = transfer_config.job_concurrency,
         runtime_target_default_chat_id = targets_config.default_chat_id,
+        authorized_user_count = authorized_user_ids.len(),
         "runtime database state loaded"
     );
 
     Ok(SeededRuntimeState {
         transfer_config,
         targets_config,
+        authorized_user_ids,
     })
 }
 
@@ -141,6 +146,7 @@ pub async fn run() -> anyhow::Result<()> {
     tracing::info!(
         login_mode,
         owner_user_id = config.owner_user_id,
+        admin_user_count = config.admin_user_ids.len(),
         target_default_chat_id = config.targets.default_chat_id,
         target_alias_count = config.targets.aliases.len(),
         upload_client = config.workflow.upload_client.as_str(),
@@ -154,6 +160,7 @@ pub async fn run() -> anyhow::Result<()> {
     config.transfer_config = seeded_runtime.transfer_config.clone();
     let targets_config = seeded_runtime.targets_config.clone();
     config.targets = targets_config.clone();
+    let authorized_user_ids = seeded_runtime.authorized_user_ids;
     tracing::info!(
         job_concurrency = config.transfer_config.job_concurrency,
         file_delete_delay_minutes = config.transfer_config.file_delete_delay_minutes,
@@ -163,10 +170,14 @@ pub async fn run() -> anyhow::Result<()> {
         menu_input_timeout_seconds = config.transfer_config.menu_input_timeout_seconds,
         target_default_chat_id = targets_config.default_chat_id,
         target_alias_count = targets_config.aliases.len(),
+        authorized_user_count = authorized_user_ids.len(),
         "runtime transfer config loaded from database"
     );
 
     let app_context = crate::app_context::app_context();
+    app_context
+        .access_control
+        .replace_authorized_user_ids(authorized_user_ids);
     app_context.send_capabilities.set_reply_markup_enabled(true);
     tracing::info!(
         enabled = app_context.send_capabilities.reply_markup_enabled(),

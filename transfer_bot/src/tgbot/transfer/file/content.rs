@@ -10,11 +10,12 @@ use super::types::{PreparedUpload, UploadKind};
 pub(in crate::tgbot::transfer) async fn prepare_upload_content(
     message: &tdlib_rs::types::Message,
     client_id: i32,
+    cached_meta: Option<&super::types::PreparedCacheMeta>,
 ) -> anyhow::Result<PreparedUpload> {
     match &message.content {
         tdlib_rs::enums::MessageContent::MessageAnimation(animation) => {
             let (prepared_file, local_input) =
-                prepare_media_file(&animation.animation.animation, client_id).await?;
+                prepare_media_file(&animation.animation.animation, client_id, cached_meta).await?;
             let content = tdlib_rs::enums::InputMessageContent::InputMessageAnimation(
                 tdlib_rs::types::InputMessageAnimation {
                     animation: local_input,
@@ -43,7 +44,8 @@ pub(in crate::tgbot::transfer) async fn prepare_upload_content(
                 .max_by_key(|s| (s.width as i64) * (s.height as i64))
                 .ok_or_else(|| anyhow::anyhow!("photo has no available size"))?;
 
-            let (prepared_file, local_input) = prepare_media_file(&best.photo, client_id).await?;
+            let (prepared_file, local_input) =
+                prepare_media_file(&best.photo, client_id, cached_meta).await?;
             let content = tdlib_rs::enums::InputMessageContent::InputMessagePhoto(
                 tdlib_rs::types::InputMessagePhoto {
                     photo: local_input,
@@ -67,7 +69,7 @@ pub(in crate::tgbot::transfer) async fn prepare_upload_content(
         }
         tdlib_rs::enums::MessageContent::MessageVideo(video) => {
             let (prepared_file, local_input) =
-                prepare_media_file(&video.video.video, client_id).await?;
+                prepare_media_file(&video.video.video, client_id, cached_meta).await?;
             let content = tdlib_rs::enums::InputMessageContent::InputMessageVideo(
                 tdlib_rs::types::InputMessageVideo {
                     video: local_input,
@@ -95,7 +97,7 @@ pub(in crate::tgbot::transfer) async fn prepare_upload_content(
         }
         tdlib_rs::enums::MessageContent::MessageDocument(document) => {
             let (prepared_file, local_input) =
-                prepare_media_file(&document.document.document, client_id).await?;
+                prepare_media_file(&document.document.document, client_id, cached_meta).await?;
             let content = tdlib_rs::enums::InputMessageContent::InputMessageDocument(
                 tdlib_rs::types::InputMessageDocument {
                     document: local_input,
@@ -113,7 +115,7 @@ pub(in crate::tgbot::transfer) async fn prepare_upload_content(
         }
         tdlib_rs::enums::MessageContent::MessageAudio(audio) => {
             let (prepared_file, local_input) =
-                prepare_media_file(&audio.audio.audio, client_id).await?;
+                prepare_media_file(&audio.audio.audio, client_id, cached_meta).await?;
             let content = tdlib_rs::enums::InputMessageContent::InputMessageAudio(
                 tdlib_rs::types::InputMessageAudio {
                     audio: local_input,
@@ -133,7 +135,7 @@ pub(in crate::tgbot::transfer) async fn prepare_upload_content(
         }
         tdlib_rs::enums::MessageContent::MessageVoiceNote(voice) => {
             let (prepared_file, local_input) =
-                prepare_media_file(&voice.voice_note.voice, client_id).await?;
+                prepare_media_file(&voice.voice_note.voice, client_id, cached_meta).await?;
             let content = tdlib_rs::enums::InputMessageContent::InputMessageVoiceNote(
                 tdlib_rs::types::InputMessageVoiceNote {
                     voice_note: local_input,

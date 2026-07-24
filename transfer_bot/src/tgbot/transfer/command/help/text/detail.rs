@@ -9,6 +9,7 @@ use super::super::super::config_cmd::{
     config_help_descriptor, config_intro_lines, config_summary_lines,
 };
 use super::super::super::{
+    auth::build_auth_help_detail_text,
     cache::build_cache_help_detail_text,
     downloads::build_downloads_help_detail_text,
     health::build_health_help_detail_text,
@@ -35,6 +36,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_detail_text(
         "lookup" => build_lookup_help_detail_text(),
         "health" => build_health_help_detail_text(),
         "cache" => build_cache_help_detail_text(),
+        "auth" => build_auth_help_detail_text(),
         "downloads" => build_downloads_help_detail_text(),
         "job" => build_job_help_detail_text(),
         "menu" => build_menu_help_detail_text(),
@@ -100,7 +102,7 @@ fn runtime_admin_detail_spec(topic: RuntimeAdminHelpTopic) -> RuntimeAdminDetail
 
 #[cfg(test)]
 mod config_detail_tests {
-    use super::build_runtime_admin_topic_detail;
+    use super::{build_help_detail_text, build_runtime_admin_topic_detail};
     use crate::tgbot::transfer::command::help::topic::RuntimeAdminHelpTopic;
 
     #[test]
@@ -117,5 +119,16 @@ mod config_detail_tests {
 
         assert!(targets.contains("■ 输入入口"));
         assert!(targets.contains("/targets set-default 123456789"));
+    }
+
+    #[test]
+    fn test_auth_help_detail_is_owner_only_and_complete() -> anyhow::Result<()> {
+        let text = build_help_detail_text("auth")?;
+
+        assert!(text.contains("仅 owner"));
+        assert!(text.contains("/auth list"));
+        assert!(text.contains("/auth add <user_id>"));
+        assert!(text.contains("/auth del <user_id>"));
+        Ok(())
     }
 }

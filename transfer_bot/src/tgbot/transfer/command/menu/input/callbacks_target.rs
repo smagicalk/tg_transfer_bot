@@ -10,10 +10,11 @@ use super::super::text::{
     build_menu_recovery_text, build_step_prompt_text, build_step_prompt_with_context,
     build_target_input_prompt_text,
 };
-use super::flow::{ExistingCommandContext, run_existing_command};
+use super::flow::{ExistingCommandContext, ExistingCommandOrigin, run_existing_command};
 use super::state::{
     ConfirmContextTakeResult, DraftKey, TargetContext, TargetContextAdvanceResult,
-    TargetDraftAdvance, advance_target_context, remember_last_target, take_confirm_context,
+    TargetDraftAdvance, advance_target_context_with_cleanup, remember_last_target,
+    take_confirm_context,
 };
 use super::target::{
     TargetPromptContext, edit_confirm_prompt, edit_target_choice_prompt, resolve_default_target_on,
@@ -198,6 +199,56 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_manual_callback_qu
     Ok(())
 }
 
+/// 处理“选择聊天”按钮，切换到 Telegram 原生群组/频道选择器。
+pub(in crate::tgbot::transfer::command::menu) async fn target_request_chat_callback_query(
+    callback_query_id: i64,
+    chat_id: i64,
+    message_id: i64,
+    sender_user_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let ctx = TargetCallbackContext::new(
+        callback_query_id,
+        chat_id,
+        message_id,
+        sender_user_id,
+        client_id,
+    );
+    let Some(context) = advance_target_context_for_callback(
+        ctx.draft_key(),
+        TargetDraftAdvance::ChatPicker,
+        callback_query_id,
+        chat_id,
+        "没有等待选择目标的输入",
+        client_id,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+
+    ctx.answer("请选择目标聊天").await?;
+    edit_target_input_waiting_card(
+        ctx.chat_id,
+        ctx.message_id,
+        ctx.client_id,
+        "2/3",
+        "等待选择聊天",
+        "请使用输入框下方的 Telegram 原生按钮选择群组或频道。",
+        &context.source_link,
+    )
+    .await;
+    super::send_target_chat_picker_prompt(
+        ctx.chat_id,
+        ctx.sender_user_id,
+        &context.source_link,
+        Some(ctx.message_id),
+        ctx.client_id,
+    )
+    .await?;
+    Ok(())
+}
+
 /// 处理“确认页执行”按钮。
 #[allow(clippy::too_many_arguments)]
 pub(in crate::tgbot::transfer::command::menu) async fn target_confirm_callback_query(
@@ -245,6 +296,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_confirm_callback_q
             app: std::sync::Arc::new(app.clone()),
             request_chat_id: chat_id,
             request_message_id: message_id,
+            origin: ExistingCommandOrigin::CallbackMessage(message_id),
             actor,
             client_id,
         },
@@ -317,7 +369,7 @@ fn target_advance_callback_decision(
             callback_tip: "输入已过期",
             title: "输入已过期",
             status: "expired",
-            detail: "上一次菜单输入已超过有效时间，请重新打开 /menu。",
+            detail: "上一次菜单输入已超过有效时间，请返回菜单重新开始。",
         },
         TargetContextAdvanceResult::None => TargetAdvanceCallbackDecision::Recover {
             callback_tip: missing_tip,
@@ -412,7 +464,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_source_back_callba
         ctx.client_id,
         context.kind.source_step_label(),
         "等待源链接",
-        "请回复新的源链接，或发送 /cancel 取消。",
+        "请回复新的源链接，回复“取消”可退出。",
     )
     .await;
     send::send_card_message_with_force_reply_returning(
@@ -422,7 +474,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn target_source_back_callba
             context.kind.source_detail(),
         ),
         ctx.chat_id,
-        "输入源链接，或发送 /cancel",
+        "输入源链接（回复“取消”可退出）",
         ctx.client_id,
     )
     .await?;
@@ -438,9 +490,27 @@ pub(super) async fn advance_target_context_for_callback(
     missing_tip: &'static str,
     client_id: i32,
 ) -> anyhow::Result<Option<TargetContext>> {
-    match target_advance_callback_decision(advance_target_context(key, advance).await?, missing_tip)
-    {
-        TargetAdvanceCallbackDecision::Continue(context) => Ok(Some(context)),
+    let outcome = advance_target_context_with_cleanup(key, advance).await?;
+    match target_advance_callback_decision(outcome.result, missing_tip) {
+        TargetAdvanceCallbackDecision::Continue(context) => {
+            if outcome.remove_reply_keyboard {
+                let cleared = super::clear_native_picker_messages(chat_id, key.1, client_id).await;
+                if !cleared {
+                    // 进程重启后 tracker 可能丢失；此时发送一条最小兜底消息移除 chat 级键盘。
+                    send::send_card_message_with_remove_keyboard(
+                        build_menu_recovery_text(
+                            "聊天选择已关闭",
+                            "continued",
+                            "已离开原生聊天选择器，继续当前目标流程。",
+                        ),
+                        chat_id,
+                        client_id,
+                    )
+                    .await?;
+                }
+            }
+            Ok(Some(context))
+        }
         TargetAdvanceCallbackDecision::Recover {
             callback_tip,
             title,

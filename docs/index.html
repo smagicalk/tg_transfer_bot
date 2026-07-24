@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="tg_transfer_bot 部署、配置、交互流程和维护文档">
+  <meta name="color-scheme" content="light dark">
+  <title>tg_transfer_bot 文档</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到正文</a>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <button class="menu-toggle" type="button" aria-label="打开文档目录" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a class="brand" href="#overview">
+        <span class="brand-mark" aria-hidden="true">TG</span>
+        <span class="brand-name">tg_transfer_bot</span>
+        <span class="doc-label">文档</span>
+      </a>
+      <div class="topbar-meta">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>配置版本 2</span>
+        <span>TDLib + Rust</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar" aria-label="文档目录">
+      <p class="nav-title">开始使用</p>
+      <ul class="nav-list">
+        <li><a class="nav-link active" href="#overview">项目概览</a></li>
+        <li><a class="nav-link" href="#quick-start">快速启动</a></li>
+        <li><a class="nav-link" href="#interaction">主要交互</a></li>
+      </ul>
+
+      <p class="nav-title">配置与运维</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" href="#configuration">配置文件</a></li>
+        <li><a class="nav-link" href="#permissions">权限边界</a></li>
+        <li><a class="nav-link" href="#commands">命令参考</a></li>
+        <li><a class="nav-link" href="#runtime">运行机制</a></li>
+        <li><a class="nav-link" href="development.html">开发文档</a></li>
+        <li><a class="nav-link" href="#troubleshooting">日志排查</a></li>
+      </ul>
+    </aside>
+
+    <button class="backdrop" type="button" aria-label="关闭文档目录"></button>
+
+    <main class="content" id="main">
+      <div class="content-inner">
+        <section class="intro" id="overview">
+          <p class="eyebrow">Telegram 媒体转存与任务管理</p>
+          <h1>tg_transfer_bot</h1>
+          <p class="lead">基于 TDLib 的长期运行型转存服务。通过私聊按钮完成源消息选择、目标选择、进度跟踪、结果跳转、任务恢复和权限管理。</p>
+          <div class="meta-row" aria-label="项目状态">
+            <span class="meta-item"><span class="meta-swatch" aria-hidden="true"></span>单条与相册转存</span>
+            <span class="meta-item"><span class="meta-swatch" aria-hidden="true"></span>下载缓存与断点恢复</span>
+            <span class="meta-item"><span class="meta-swatch" aria-hidden="true"></span>Owner 与动态授权</span>
+          </div>
+        </section>
+
+        <section aria-labelledby="capabilities-title">
+          <h2 id="capabilities-title">主要能力</h2>
+          <p class="section-intro">交互入口以按钮为主，命令保留为快速入口和故障兜底。</p>
+          <div class="cards">
+            <article class="card">
+              <span class="card-index">TRANSFER</span>
+              <h3>转存与结果跳转</h3>
+              <p>支持链接、回复媒体、直接发送媒体和相册；完成后保存目标消息地址。</p>
+            </article>
+            <article class="card">
+              <span class="card-index">PROGRESS</span>
+              <h3>单消息进度卡</h3>
+              <p>选项、排队、下载、上传和结果尽量更新在同一条消息中，减少刷屏。</p>
+            </article>
+            <article class="card">
+              <span class="card-index">CACHE</span>
+              <h3>本地文件缓存</h3>
+              <p>按 TDLib client 隔离缓存；本地文件仍存在时直接复用并跳过下载。</p>
+            </article>
+            <article class="card">
+              <span class="card-index">RECOVERY</span>
+              <h3>任务恢复</h3>
+              <p>任务、子项、结果和输入草稿持久化，重启后继续处理未完成任务。</p>
+            </article>
+            <article class="card">
+              <span class="card-index">ACCESS</span>
+              <h3>交互式授权</h3>
+              <p>Owner 可选择 Telegram 用户、输入 ID、查看管理员名称并撤销动态授权。</p>
+            </article>
+            <article class="card">
+              <span class="card-index">CONTROL</span>
+              <h3>任务控制</h3>
+              <p>支持状态筛选、详情、暂停、恢复和二次确认停止。</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="quick-start">
+          <h2>快速启动</h2>
+          <p class="section-intro">以下命令适用于 Windows PowerShell。构建前需要准备可用的 TDLib，并让目录包含 <code>include</code>、<code>lib</code> 和 <code>bin/tdjson.dll</code>。</p>
+
+          <h3>1. 设置 TDLib 路径</h3>
+          <div class="code-block">
+            <div class="code-head">PowerShell</div>
+            <button class="copy-button" type="button" aria-label="复制 TDLib 路径命令">复制</button>
+            <pre><code>$env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"</code></pre>
+          </div>
+
+          <h3>2. 准备配置</h3>
+          <p>以仓库中的 <code>config.example.json</code> 为模板创建本地 <code>config.json</code>。不要提交真实 token、API Hash 或数据库密钥。</p>
+
+          <h3>3. Debug 日志启动</h3>
+          <div class="code-block">
+            <div class="code-head">PowerShell · config.json</div>
+            <button class="copy-button" type="button" aria-label="复制 Debug 启动命令">复制</button>
+            <pre><code>$env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
+$env:RUST_LOG = "transfer_bot=debug,info,sea_orm=warn,sqlx=warn,tokio=warn"
+cargo run -p transfer_bot -- -c config.json</code></pre>
+          </div>
+
+          <div class="callout">
+            <strong>登录成功判断</strong>
+            日志出现 <code>tdlib authorization ready</code> 表示对应 client 已完成授权；出现 <code>starting transfer background services</code> 表示后台恢复与缓存服务已启动。
+          </div>
+        </section>
+
+        <section id="interaction">
+          <h2>主要交互流程</h2>
+          <p class="section-intro">用户只需要私聊 Bot。群组和频道作为源或目标，不承载管理命令。</p>
+
+          <div class="flow" aria-label="转存调用流程">
+            <div class="flow-step"><strong>打开菜单</strong><span>发送 /menu 或直接发送可识别内容</span></div>
+            <div class="flow-step"><strong>确定源</strong><span>链接、回复媒体、直接媒体或转发消息</span></div>
+            <div class="flow-step"><strong>选择目标</strong><span>聊天选择器、默认目标、别名或 ID</span></div>
+            <div class="flow-step"><strong>确认转存</strong><span>重复任务会显示旧结果并二次确认</span></div>
+            <div class="flow-step"><strong>查看结果</strong><span>同一进度卡更新并提供目标入口</span></div>
+          </div>
+
+          <h3>推荐操作</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>输入方式</th><th>后续行为</th><th>是否需要手输</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>发送一条 <code>t.me</code> 链接</td><td>直接进入目标选择</td><td><span class="tag">否</span></td></tr>
+                <tr><td>发送 Bot 可见媒体</td><td>直接进入目标选择</td><td><span class="tag">否</span></td></tr>
+                <tr><td>点击“开始转存”</td><td>回复 ForceReply 输入卡，再选择目标</td><td><span class="tag">仅源链接</span></td></tr>
+                <tr><td>点击“快速转存”</td><td>使用默认目标或当前私聊</td><td><span class="tag">仅源链接</span></td></tr>
+                <tr><td>回复媒体并发送 <code>/transfer</code></td><td>从被回复消息提取源</td><td><span class="tag">否</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout warning">
+            <strong>重复转存</strong>
+            已成功转存过的源和目标会先显示旧结果地址。选择“再次转存”后创建新目标消息，并用新地址覆盖该任务的当前结果。
+          </div>
+        </section>
+
+        <section id="configuration">
+          <h2>配置文件</h2>
+          <p class="section-intro">启动级配置保存在 <code>config.json</code>；目标、别名、运行参数和动态授权保存在业务数据库中。</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>字段</th><th>用途</th><th>要求</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>config_version</code></td><td>配置结构版本</td><td>当前为 <code>2</code></td></tr>
+                <tr><td><code>owner_user_id</code></td><td>唯一 Owner 用户 ID</td><td>必须大于 0</td></tr>
+                <tr><td><code>admin_user_ids</code></td><td>静态管理员名单</td><td>可为空数组</td></tr>
+                <tr><td><code>tdlib_defaults.api_id</code></td><td>Telegram API ID</td><td>使用自己的凭据</td></tr>
+                <tr><td><code>tdlib_defaults.api_hash</code></td><td>Telegram API Hash</td><td>不得提交</td></tr>
+                <tr><td><code>clients.bot.token</code></td><td>BotFather Token</td><td>不得提交</td></tr>
+                <tr><td><code>storage.database_url</code></td><td>业务数据库</td><td>SQLite 或 PostgreSQL</td></tr>
+                <tr><td><code>workflow.upload_client</code></td><td>目标消息发送端</td><td>推荐 <code>bot</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-block">
+            <div class="code-head">config.json · 结构示例</div>
+            <button class="copy-button" type="button" aria-label="复制配置示例">复制</button>
+            <pre><code>{
+  "config_version": 2,
+  "owner_user_id": 123456789,
+  "admin_user_ids": [],
+  "tdlib_defaults": {
+    "api_id": 0,
+    "api_hash": "replace_me",
+    "log_verbosity_level": 1
+  },
+  "storage": {
+    "database_url": "sqlite://tg/app/transfer.sqlite?mode=rwc"
+  },
+  "clients": {
+    "user": {
+      "login_info": { "type": "OCR" },
+      "tdlib": {
+        "database_directory": "tg/user/db",
+        "files_directory": "tg/user/files",
+        "database_encryption_key": "replace_me"
+      }
+    },
+    "bot": {
+      "token": "replace_me",
+      "tdlib": {
+        "database_directory": "tg/bot/db",
+        "files_directory": "tg/bot/files",
+        "database_encryption_key": "replace_me"
+      }
+    }
+  },
+  "workflow": { "upload_client": "bot" }
+}</code></pre>
+          </div>
+        </section>
+
+        <section id="permissions">
+          <h2>权限边界</h2>
+          <p class="section-intro">所有操作以发送者的 Telegram 用户 ID 校验，不使用群组 ID 代替用户身份。</p>
+          <ul class="check-list">
+            <li>只处理已授权用户与 Bot 的私聊交互。</li>
+            <li><code>owner_user_id</code> 始终拥有完整权限。</li>
+            <li><code>admin_user_ids</code> 和数据库动态授权用户可执行日常转存与任务管理。</li>
+            <li>只有 Owner 可以打开授权面板、添加或删除动态管理员。</li>
+            <li>群聊和频道中的命令不会进入管理流程，避免使用 chat ID 误判权限。</li>
+          </ul>
+
+          <h3>授权操作</h3>
+          <div class="flow" aria-label="授权流程">
+            <div class="flow-step"><strong>打开授权管理</strong><span>Owner 点击菜单中的授权管理</span></div>
+            <div class="flow-step"><strong>选择添加</strong><span>使用 Telegram 用户选择器</span></div>
+            <div class="flow-step"><strong>确认用户</strong><span>显示名称、username 和 user_id</span></div>
+            <div class="flow-step"><strong>立即生效</strong><span>写入数据库和运行时授权集合</span></div>
+            <div class="flow-step"><strong>列表管理</strong><span>按名称查看并撤销动态授权</span></div>
+          </div>
+        </section>
+
+        <section id="commands">
+          <h2>命令参考</h2>
+          <p class="section-intro">Telegram 的命令菜单仍会注册完整命令，但普通交互卡不会主动展开命令说明。</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>命令</th><th>作用</th><th>权限</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>/menu</code></td><td>打开按钮式主菜单</td><td>管理员</td></tr>
+                <tr><td><code>/transfer [link] [target]</code></td><td>创建转存任务或进入向导</td><td>管理员</td></tr>
+                <tr><td><code>/lookup &lt;link&gt; [target]</code></td><td>查询历史成功结果</td><td>管理员</td></tr>
+                <tr><td><code>/downloads [filter] [limit] [page]</code></td><td>查看任务列表</td><td>管理员</td></tr>
+                <tr><td><code>/job &lt;action&gt; &lt;job_id&gt;</code></td><td>暂停、恢复、停止或查看任务</td><td>管理员</td></tr>
+                <tr><td><code>/targets</code></td><td>管理默认目标和别名</td><td>管理员</td></tr>
+                <tr><td><code>/config</code></td><td>管理运行时参数</td><td>管理员</td></tr>
+                <tr><td><code>/health</code></td><td>查看后台服务健康状态</td><td>管理员</td></tr>
+                <tr><td><code>/cache</code></td><td>查看缓存摘要和明细</td><td>管理员</td></tr>
+                <tr><td><code>/auth</code></td><td>打开授权面板；回复消息可快捷授权</td><td>仅 Owner</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="runtime">
+          <h2>运行机制</h2>
+          <p class="section-intro">业务数据库与 TDLib 数据目录分离。任务状态负责恢复，文件缓存负责减少重复下载，运行时上下文负责实时进度。</p>
+
+          <div class="architecture" aria-label="运行架构">
+            <div class="arch-node">
+              <strong>交互层</strong>
+              <span>命令、callback、ForceReply、聊天和用户选择器</span>
+            </div>
+            <div class="arch-arrow" aria-hidden="true">→</div>
+            <div class="arch-node">
+              <strong>任务层</strong>
+              <span>任务创建、去重、恢复、下载、上传和结果记录</span>
+            </div>
+            <div class="arch-arrow" aria-hidden="true">→</div>
+            <div class="arch-node">
+              <strong>持久化层</strong>
+              <span>transfer_job、transfer_item、file_cache、授权与配置</span>
+            </div>
+          </div>
+
+          <h3>文件处理</h3>
+          <ol>
+            <li>按消息提取稳定的 <code>remote.unique_id</code> 作为 <code>file_key</code>。</li>
+            <li>按 <code>owner_client_role + file_key</code> 查询缓存，Bot 与 User 缓存严格隔离。</li>
+            <li>缓存状态为 <code>ready</code> 且本地文件存在时，直接使用 <code>InputFile::Local</code>。</li>
+            <li>缓存失效时由 TDLib 下载，并通过 single-flight 合并并发下载。</li>
+            <li>引用归零后进入延迟删除队列，由 GC 清理本地文件。</li>
+          </ol>
+        </section>
+
+
+        <section id="troubleshooting">
+          <h2>日志排查</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>日志或现象</th><th>含义与处理</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>tdlib authorization ready</code></td><td>对应 client 登录成功。</td></tr>
+                <tr><td><code>ignored new message from non-interaction client</code></td><td>User client 只负责读取源，不处理 Bot 交互，属于预期日志。</td></tr>
+                <tr><td><code>STATUS_CONTROL_C_EXIT</code></td><td>Windows 下按 Ctrl+C 主动停止进程，不是程序崩溃。</td></tr>
+                <tr><td>无权限，请联系管理员</td><td>检查发送者 user_id 是否是 Owner、静态管理员或动态授权用户。</td></tr>
+                <tr><td>上传进度不变化</td><td>确认上传使用的 client 已登录，并检查 TDLib <code>UpdateFile</code> 是否到达。</td></tr>
+                <tr><td>缓存仍重新下载</td><td>缓存只在角色一致、状态 ready 且本地路径真实存在时复用。</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>代码检查</h3>
+          <div class="code-block">
+            <div class="code-head">PowerShell</div>
+            <button class="copy-button" type="button" aria-label="复制代码检查命令">复制</button>
+            <pre><code>$env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
+cargo fmt --all -- --check
+cargo test -p transfer_bot --lib
+cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
+cargo build -p transfer_bot</code></pre>
+          </div>
+        </section>
+
+        <footer class="footer">
+          <span>tg_transfer_bot 项目文档 · 适用于 config_version 2</span>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

@@ -318,3 +318,78 @@ async fn test_mark_file_cache_delete_failed_delays_retry() -> anyhow::Result<()>
     assert!(!due_rows.iter().any(|row| row.file_key == file_key));
     Ok(())
 }
+
+/// ready 缓存只有在所属 client 一致且本地文件仍存在时才能直接复用。
+#[tokio::test]
+async fn test_find_ready_file_cache_requires_matching_owner_and_existing_file() -> anyhow::Result<()>
+{
+    let _guard = db::TEST_DB_LOCK.lock().await;
+    let db_conn = prepare_test_schema().await?;
+    let now = now_utc8();
+    let file_key = format!(
+        "fk_{}",
+        rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 24)
+    );
+    let existing_path = std::fs::canonicalize("Cargo.toml")?
+        .to_string_lossy()
+        .into_owned();
+
+    db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
+        file_key: sea_orm::ActiveValue::Set(file_key.clone()),
+        status: sea_orm::ActiveValue::Set(FILE_CACHE_STATUS_READY.to_owned()),
+        size_bytes: sea_orm::ActiveValue::Set(Some(2048)),
+        td_file_id: sea_orm::ActiveValue::Set(Some(104)),
+        local_path: sea_orm::ActiveValue::Set(Some(existing_path.clone())),
+        last_error: sea_orm::ActiveValue::Set(None),
+        active_refs: sea_orm::ActiveValue::Set(1),
+        last_ref_zero_at: sea_orm::ActiveValue::Set(None),
+        delete_after: sea_orm::ActiveValue::Set(None),
+        created_at: sea_orm::ActiveValue::Set(now),
+        updated_at: sea_orm::ActiveValue::Set(now),
+        last_used_at: sea_orm::ActiveValue::Set(now),
+    }
+    .insert(db_conn)
+    .await?;
+
+    let cached = find_ready_file_cache("user", &file_key)
+        .await?
+        .expect("existing cache should be reusable");
+    assert_eq!(cached.local_path, existing_path);
+    assert!(find_ready_file_cache("bot", &file_key).await?.is_none());
+    Ok(())
+}
+
+/// 外部清理过本地文件时不能只相信 ready 状态，应回退到正常下载流程。
+#[tokio::test]
+async fn test_find_ready_file_cache_rejects_missing_file() -> anyhow::Result<()> {
+    let _guard = db::TEST_DB_LOCK.lock().await;
+    let db_conn = prepare_test_schema().await?;
+    let now = now_utc8();
+    let file_key = format!(
+        "fk_{}",
+        rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 24)
+    );
+    let missing_path = format!("target/missing-cache-{file_key}.bin");
+
+    db::file_cache::ActiveModel {
+        owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
+        file_key: sea_orm::ActiveValue::Set(file_key.clone()),
+        status: sea_orm::ActiveValue::Set(FILE_CACHE_STATUS_READY.to_owned()),
+        size_bytes: sea_orm::ActiveValue::Set(Some(2048)),
+        td_file_id: sea_orm::ActiveValue::Set(Some(105)),
+        local_path: sea_orm::ActiveValue::Set(Some(missing_path)),
+        last_error: sea_orm::ActiveValue::Set(None),
+        active_refs: sea_orm::ActiveValue::Set(1),
+        last_ref_zero_at: sea_orm::ActiveValue::Set(None),
+        delete_after: sea_orm::ActiveValue::Set(None),
+        created_at: sea_orm::ActiveValue::Set(now),
+        updated_at: sea_orm::ActiveValue::Set(now),
+        last_used_at: sea_orm::ActiveValue::Set(now),
+    }
+    .insert(db_conn)
+    .await?;
+
+    assert!(find_ready_file_cache("user", &file_key).await?.is_none());
+    Ok(())
+}

@@ -15,26 +15,65 @@ pub(crate) fn app_context() -> Arc<AppContext> {
 
 #[derive(Clone)]
 pub struct AppContext {
+    pub(crate) access_control: Arc<AccessControlState>,
     pub(crate) transfer_runtime: Arc<TransferRuntimeState>,
     pub(crate) targets_runtime: Arc<TargetsRuntimeState>,
     pub(crate) download_progress: Arc<DownloadProgressStore>,
+    pub(crate) upload_progress: Arc<UploadProgressStore>,
     pub(crate) inflight_downloads: Arc<InflightDownloadRegistry>,
     pub(crate) transfer_guards: Arc<TransferExecutionGuards>,
     pub(crate) send_capabilities: Arc<SendCapabilities>,
     pub(crate) lookup_retry: Arc<LookupRetryState>,
+    pub(crate) retransfer_confirm: Arc<RetransferConfirmState>,
 }
 
 impl Default for AppContext {
     fn default() -> Self {
         Self {
+            access_control: Arc::new(AccessControlState::default()),
             transfer_runtime: Arc::new(TransferRuntimeState::default()),
             targets_runtime: Arc::new(TargetsRuntimeState::default()),
             download_progress: Arc::new(DownloadProgressStore::default()),
+            upload_progress: Arc::new(UploadProgressStore::default()),
             inflight_downloads: Arc::new(InflightDownloadRegistry::default()),
             transfer_guards: Arc::new(TransferExecutionGuards::default()),
             send_capabilities: Arc::new(SendCapabilities::default()),
             lookup_retry: Arc::new(LookupRetryState::default()),
+            retransfer_confirm: Arc::new(RetransferConfirmState::default()),
         }
+    }
+}
+
+/// 运行时动态授权名单；持久化由数据库访问层负责。
+#[derive(Default)]
+pub struct AccessControlState {
+    authorized_user_ids: RwLock<HashSet<i64>>,
+}
+
+impl AccessControlState {
+    /// 用启动时从数据库读取的完整名单替换当前状态。
+    pub fn replace_authorized_user_ids(&self, user_ids: impl IntoIterator<Item = i64>) {
+        let mut guard = recover_rwlock_write(&self.authorized_user_ids, "authorized user ids");
+        guard.clear();
+        guard.extend(user_ids.into_iter().filter(|user_id| *user_id > 0));
+    }
+
+    pub fn is_authorized(&self, user_id: i64) -> bool {
+        user_id > 0
+            && recover_rwlock_read(&self.authorized_user_ids, "authorized user ids")
+                .contains(&user_id)
+    }
+
+    /// 把单个用户加入当前进程授权名单。
+    pub fn authorize_user(&self, user_id: i64) -> bool {
+        user_id > 0
+            && recover_rwlock_write(&self.authorized_user_ids, "authorized user ids")
+                .insert(user_id)
+    }
+
+    /// 从当前进程授权名单移除单个用户。
+    pub fn revoke_user(&self, user_id: i64) -> bool {
+        recover_rwlock_write(&self.authorized_user_ids, "authorized user ids").remove(&user_id)
     }
 }
 
@@ -86,6 +125,53 @@ impl LookupRetryState {
 }
 
 const LOOKUP_RETRY_CONTEXT_LIMIT_PER_USER: usize = 8;
+
+/// “再次转存”确认卡的短期上下文。
+///
+/// callback_data 不能容纳完整源链接，因此按卡片消息定位保存计划；确认后立即消费。
+#[derive(Default)]
+pub struct RetransferConfirmState {
+    by_message: RwLock<HashMap<(i64, i64, i64), crate::tgbot::transfer::types::TransferPlan>>,
+}
+
+impl RetransferConfirmState {
+    pub(crate) fn put_plan(
+        &self,
+        request_chat_id: i64,
+        sender_user_id: i64,
+        message_id: i64,
+        plan: crate::tgbot::transfer::types::TransferPlan,
+    ) {
+        let mut guard = recover_rwlock_write(&self.by_message, "retransfer confirm context");
+        guard.insert((request_chat_id, sender_user_id, message_id), plan);
+        // 每个会话只保留最近的少量确认卡，防止长期运行后无界增长。
+        let mut scoped = guard
+            .keys()
+            .filter(|(chat_id, user_id, _)| {
+                *chat_id == request_chat_id && *user_id == sender_user_id
+            })
+            .copied()
+            .collect::<Vec<_>>();
+        scoped.sort_by_key(|(_, _, message_id)| *message_id);
+        let remove_count = scoped.len().saturating_sub(8);
+        for key in scoped.into_iter().take(remove_count) {
+            guard.remove(&key);
+        }
+    }
+
+    pub(crate) fn take_plan(
+        &self,
+        request_chat_id: i64,
+        sender_user_id: i64,
+        message_id: i64,
+    ) -> Option<crate::tgbot::transfer::types::TransferPlan> {
+        recover_rwlock_write(&self.by_message, "retransfer confirm context").remove(&(
+            request_chat_id,
+            sender_user_id,
+            message_id,
+        ))
+    }
+}
 
 fn prune_lookup_retry_entries(
     entries: &mut HashMap<(i64, i64, i64), LookupRetryEntry>,
@@ -341,6 +427,172 @@ impl DownloadProgressStore {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct JobUploadProgressSnapshot {
+    pub active_files: i32,
+    pub uploaded_size: i64,
+    pub total_size: i64,
+    pub has_unknown_total: bool,
+}
+
+#[derive(Debug, Clone)]
+struct UploadFileProgressSnapshot {
+    file_id: i32,
+    uploaded_size: i64,
+    total_size: Option<i64>,
+}
+
+#[derive(Default)]
+struct UploadProgressState {
+    /// 逻辑上传项是聚合主键；TDLib 替换 File ID 时不会增加文件数。
+    by_item: HashMap<(i32, i64, i64), UploadFileProgressSnapshot>,
+    /// UpdateFile 只携带 client/file ID，用反向索引定位所属任务条目。
+    by_file: HashMap<(i32, i32), (i64, i64)>,
+}
+
+/// TDLib 上传 file ID 与转存任务的运行时关联。
+///
+/// 上传 file ID 由 `sendMessage` 返回，不能从下载阶段的 file_cache 推导；这里按 client
+/// 隔离保存，并在任务详情读取时按 job 聚合。
+#[derive(Default)]
+pub struct UploadProgressStore {
+    state: RwLock<UploadProgressState>,
+}
+
+impl UploadProgressStore {
+    pub fn register_upload_file(
+        &self,
+        client_id: i32,
+        job_id: i64,
+        item_id: i64,
+        file: &tdlib_rs::types::File,
+    ) {
+        let mut guard = recover_rwlock_write(&self.state, "upload progress");
+        let item_key = (client_id, job_id, item_id);
+        let previous = guard.by_item.remove(&item_key);
+        if let Some(previous) = &previous {
+            guard.by_file.remove(&(client_id, previous.file_id));
+        }
+        let previous_uploaded_size = previous
+            .as_ref()
+            .map(|snapshot| snapshot.uploaded_size)
+            .unwrap_or(0);
+        let previous_total_size = previous.as_ref().and_then(|snapshot| snapshot.total_size);
+
+        guard.by_item.insert(
+            item_key,
+            UploadFileProgressSnapshot {
+                file_id: file.id,
+                // TDLib 替换临时 File ID 时，新对象的 uploaded_size 可能短暂回到 0。
+                // 同一逻辑上传项的已上传字节必须保持单调递增。
+                uploaded_size: file.remote.uploaded_size.max(previous_uploaded_size).max(0),
+                total_size: file_total_size(file).or(previous_total_size),
+            },
+        );
+        guard
+            .by_file
+            .insert((client_id, file.id), (job_id, item_id));
+    }
+
+    pub fn update_upload_progress(&self, client_id: i32, file: &tdlib_rs::types::File) {
+        let mut guard = recover_rwlock_write(&self.state, "upload progress");
+        let Some((job_id, item_id)) = guard.by_file.get(&(client_id, file.id)).copied() else {
+            return;
+        };
+        let Some(snapshot) = guard.by_item.get_mut(&(client_id, job_id, item_id)) else {
+            return;
+        };
+        // UpdateFile 可能乱序到达；旧快照不能让已经展示的上传进度倒退。
+        snapshot.uploaded_size = snapshot.uploaded_size.max(file.remote.uploaded_size).max(0);
+        if snapshot.total_size.is_none() {
+            snapshot.total_size = file_total_size(file);
+        }
+    }
+
+    /// 消息确认发送成功后，把对应逻辑项收敛到已知总大小。
+    ///
+    /// TDLib 不保证在 MessageSendSucceeded 之前再发一条 uploaded_size == size 的
+    /// UpdateFile，因此不能只依赖文件事件显示最终 100%。
+    pub fn mark_upload_item_complete(&self, client_id: i32, job_id: i64, item_id: i64) {
+        let mut guard = recover_rwlock_write(&self.state, "upload progress");
+        let Some(snapshot) = guard.by_item.get_mut(&(client_id, job_id, item_id)) else {
+            return;
+        };
+        if let Some(total_size) = snapshot.total_size {
+            snapshot.uploaded_size = snapshot.uploaded_size.max(total_size);
+        }
+    }
+
+    pub fn get_job_upload_progress(
+        &self,
+        client_id: i32,
+        job_id: i64,
+    ) -> Option<JobUploadProgressSnapshot> {
+        let guard = recover_rwlock_read(&self.state, "upload progress");
+        let mut progress = JobUploadProgressSnapshot::default();
+        for snapshot in guard.by_item.iter().filter_map(
+            |((snapshot_client_id, snapshot_job_id, _), snapshot)| {
+                (*snapshot_client_id == client_id && *snapshot_job_id == job_id).then_some(snapshot)
+            },
+        ) {
+            progress.active_files = progress.active_files.saturating_add(1);
+            progress.uploaded_size = progress
+                .uploaded_size
+                .saturating_add(snapshot.uploaded_size.max(0));
+            if let Some(total_size) = snapshot.total_size {
+                progress.total_size = progress.total_size.saturating_add(total_size.max(0));
+            } else {
+                progress.has_unknown_total = true;
+            }
+        }
+        (progress.active_files > 0).then_some(progress)
+    }
+
+    pub fn clear_job(&self, client_id: i32, job_id: i64) {
+        let mut guard = recover_rwlock_write(&self.state, "upload progress");
+        guard
+            .by_item
+            .retain(|(snapshot_client_id, snapshot_job_id, _), _| {
+                *snapshot_client_id != client_id || *snapshot_job_id != job_id
+            });
+        guard
+            .by_file
+            .retain(|(snapshot_client_id, _), (snapshot_job_id, _)| {
+                *snapshot_client_id != client_id || *snapshot_job_id != job_id
+            });
+    }
+
+    pub fn job_guard(self: &Arc<Self>, client_id: i32, job_id: i64) -> UploadProgressJobGuard {
+        UploadProgressJobGuard {
+            store: self.clone(),
+            client_id,
+            job_id,
+        }
+    }
+}
+
+pub struct UploadProgressJobGuard {
+    store: Arc<UploadProgressStore>,
+    client_id: i32,
+    job_id: i64,
+}
+
+impl Drop for UploadProgressJobGuard {
+    fn drop(&mut self) {
+        self.store.clear_job(self.client_id, self.job_id);
+    }
+}
+
+fn file_total_size(file: &tdlib_rs::types::File) -> Option<i64> {
+    if file.size > 0 {
+        Some(file.size)
+    } else if file.expected_size > 0 {
+        Some(file.expected_size)
+    } else {
+        None
+    }
+}
+
 type DownloadResult = Result<(), String>;
 type DownloadNotifier = tokio::sync::watch::Sender<Option<DownloadResult>>;
 type InflightDownloadMap = HashMap<String, DownloadNotifier>;
@@ -590,6 +842,109 @@ mod tests {
 
         assert_eq!(first.downloaded_size, 100);
         assert_eq!(second.downloaded_size, 700);
+    }
+
+    #[test]
+    fn upload_progress_store_clears_stale_snapshot_before_restart() {
+        let store = UploadProgressStore::default();
+        let mut first = test_file(51, 0, 1000, false, false);
+        first.remote.is_uploading_active = true;
+        first.remote.uploaded_size = 250;
+        let mut second = test_file(52, 0, 3000, false, false);
+        second.remote.is_uploading_active = true;
+        second.remote.uploaded_size = 750;
+
+        store.register_upload_file(10, 7, 101, &first);
+        store.register_upload_file(10, 7, 102, &second);
+        store.update_upload_progress(10, &first);
+        store.update_upload_progress(10, &second);
+
+        let progress = store
+            .get_job_upload_progress(10, 7)
+            .expect("job upload progress");
+        assert_eq!(progress.active_files, 2);
+        assert_eq!(progress.uploaded_size, 1000);
+        assert_eq!(progress.total_size, 4000);
+        assert!(!progress.has_unknown_total);
+        assert!(store.get_job_upload_progress(20, 7).is_none());
+
+        store.clear_job(10, 7);
+        assert!(store.get_job_upload_progress(10, 7).is_none());
+
+        // 暂停后恢复会创建一轮新的 TDLib 上传；只能从新文件快照重新计数。
+        let mut restarted = test_file(53, 0, 2000, false, false);
+        restarted.remote.is_uploading_active = true;
+        restarted.remote.uploaded_size = 100;
+        store.register_upload_file(10, 7, 101, &restarted);
+
+        let restarted_progress = store
+            .get_job_upload_progress(10, 7)
+            .expect("restarted job upload progress");
+        assert_eq!(restarted_progress.active_files, 1);
+        assert_eq!(restarted_progress.uploaded_size, 100);
+        assert_eq!(restarted_progress.total_size, 2000);
+        assert!(!restarted_progress.has_unknown_total);
+    }
+
+    // TDLib 可能在消息发送完成后替换 File ID；同一上传项只能计数一次。
+    #[test]
+    fn upload_progress_store_replaces_file_id_for_same_item() {
+        let store = UploadProgressStore::default();
+        let mut temporary = test_file(61, 0, 1000, false, false);
+        temporary.remote.is_uploading_active = true;
+        temporary.remote.uploaded_size = 300;
+        let mut final_file = test_file(62, 0, 1000, false, false);
+        final_file.remote.is_uploading_active = true;
+        final_file.remote.uploaded_size = 700;
+
+        store.register_upload_file(10, 7, 101, &temporary);
+        store.register_upload_file(10, 7, 101, &final_file);
+        // 旧 File ID 的迟到事件不能覆盖当前上传项。
+        temporary.remote.uploaded_size = 900;
+        store.update_upload_progress(10, &temporary);
+
+        let progress = store
+            .get_job_upload_progress(10, 7)
+            .expect("job upload progress");
+        assert_eq!(progress.active_files, 1);
+        assert_eq!(progress.uploaded_size, 700);
+        assert_eq!(progress.total_size, 1000);
+    }
+
+    // 最终 File 对象可能从 0 重新开始上报；替换 ID 时不能让进度倒退。
+    #[test]
+    fn upload_progress_store_keeps_progress_when_replacement_starts_at_zero() {
+        let store = UploadProgressStore::default();
+        let mut temporary = test_file(71, 0, 1000, false, false);
+        temporary.remote.uploaded_size = 700;
+        let mut final_file = test_file(72, 0, 1000, false, false);
+        final_file.remote.uploaded_size = 0;
+
+        store.register_upload_file(10, 7, 101, &temporary);
+        store.register_upload_file(10, 7, 101, &final_file);
+
+        let progress = store
+            .get_job_upload_progress(10, 7)
+            .expect("job upload progress");
+        assert_eq!(progress.uploaded_size, 700);
+        assert_eq!(progress.total_size, 1000);
+    }
+
+    // 消息发送成功是权威完成信号，即使最后一条 UpdateFile 缺失也应显示 100%。
+    #[test]
+    fn upload_progress_store_marks_item_complete() {
+        let store = UploadProgressStore::default();
+        let mut file = test_file(81, 0, 1000, false, false);
+        file.remote.uploaded_size = 700;
+        store.register_upload_file(10, 7, 101, &file);
+
+        store.mark_upload_item_complete(10, 7, 101);
+
+        let progress = store
+            .get_job_upload_progress(10, 7)
+            .expect("job upload progress");
+        assert_eq!(progress.uploaded_size, 1000);
+        assert_eq!(progress.total_size, 1000);
     }
 
     #[tokio::test]

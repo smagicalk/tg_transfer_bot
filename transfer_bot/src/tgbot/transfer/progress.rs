@@ -19,6 +19,17 @@ mod keyboard;
 mod tests;
 mod text;
 
+/// 恢复任务进度卡片的定位与生命周期状态。
+pub(super) struct RecoveryProgressUpdate {
+    pub(super) job_id: i64,
+    pub(super) source_link: String,
+    pub(super) target_chat_id: i64,
+    pub(super) notify_chat_id: i64,
+    pub(super) message_id: i64,
+    pub(super) client_id: i32,
+    pub(super) done: Arc<AtomicBool>,
+}
+
 /// 周期性刷新 `/transfer` 的进度面板。
 ///
 /// 这里不直接参与下载/上传，只读取数据库快照；即使编辑失败，也不能影响后台转存任务。
@@ -36,25 +47,21 @@ pub(super) async fn update_transfer_progress_message(
             return;
         }
 
-        let snapshot = match store::find_active_job_id_by_source_target(
-            &plan.source_link,
-            plan.target_chat_id,
-        )
-        .await
-        {
-            // 进度面板只需要 job_id，具体展示字段由轻量快照查询读取。
-            Ok(Some(job_id)) => {
-                store::get_job_progress_snapshot_with_context(app_context.as_ref(), job_id)
-                    .await
-                    .ok()
-                    .flatten()
-            }
-            Ok(None) => None,
-            Err(err) => {
-                tracing::warn!("load transfer progress failed: {:#}", err);
-                None
-            }
-        };
+        let snapshot =
+            match store::find_job_by_request(plan.request_chat_id, plan.request_message_id).await {
+                // 每条请求消息绑定自己的 job；同源同目标的并发请求不能串看最新任务。
+                Ok(Some(job)) => {
+                    store::get_job_progress_snapshot_with_context(app_context.as_ref(), job.id)
+                        .await
+                        .ok()
+                        .flatten()
+                }
+                Ok(None) => None,
+                Err(err) => {
+                    tracing::warn!("load transfer progress failed: {:#}", err);
+                    None
+                }
+            };
 
         let text = match &snapshot {
             Some(snapshot) => format_transfer_progress_text(snapshot, &plan.source_link),
@@ -86,6 +93,74 @@ pub(super) async fn update_transfer_progress_message(
         }
 
         // 进度编辑间隔从运行时配置读取，避免频繁 editMessageText 触发 Telegram 限流。
+        let interval = crate::tgbot::transfer::runtime_config_on(app_context.as_ref())
+            .progress_edit_interval_seconds
+            .max(1);
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+    }
+}
+
+/// 周期性刷新手动恢复任务的原详情卡片。
+///
+/// 手动恢复没有新的 `/transfer` 请求，因此不能依赖 request_message_id 查找任务；
+/// 直接按 job_id 读取快照，确保暂停后恢复仍持续更新同一条消息。
+pub(super) async fn update_recovery_progress_message(
+    app_context: std::sync::Arc<crate::app_context::AppContext>,
+    update: RecoveryProgressUpdate,
+) {
+    let mut last_text = String::new();
+    loop {
+        if update.done.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let snapshot = match store::get_job_progress_snapshot_with_context(
+            app_context.as_ref(),
+            update.job_id,
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                tracing::warn!(job_id = update.job_id, error = %err, "load recovery transfer progress failed");
+                None
+            }
+        };
+        let text = match &snapshot {
+            Some(snapshot) => format_transfer_progress_text(snapshot, &update.source_link),
+            None => format_transfer_control_text(
+                "恢复任务等待中",
+                "waiting",
+                &update.source_link,
+                update.target_chat_id,
+                update.job_id,
+                "正在重新获取源消息并恢复任务。",
+            ),
+        };
+
+        if text != last_text {
+            let keyboard = build_transfer_progress_keyboard(
+                Some(update.job_id),
+                snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.job.status.as_str()),
+                &update.source_link,
+                update.target_chat_id,
+            );
+            if let Err(err) = crate::tgbot::send::edit_card_message_with_inline_keyboard(
+                text.clone(),
+                update.notify_chat_id,
+                update.message_id,
+                keyboard,
+                update.client_id,
+            )
+            .await
+            {
+                tracing::warn!(job_id = update.job_id, error = %err, "edit recovery transfer progress message failed");
+            }
+            last_text = text;
+        }
+
         let interval = crate::tgbot::transfer::runtime_config_on(app_context.as_ref())
             .progress_edit_interval_seconds
             .max(1);

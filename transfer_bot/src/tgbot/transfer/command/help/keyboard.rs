@@ -17,6 +17,11 @@ use crate::tgbot::send;
 
 /// `/help` 按钮回调前缀。
 const HELP_CALLBACK_PREFIX: &str = "h:";
+/// 只发送帮助卡片的 callback 前缀。
+///
+/// 菜单页可以原地切换到帮助页；进度、结果和错误卡片则应保留原消息，
+/// 所以这些动态卡片使用 `h:new:*` 单独发送帮助页。
+const HELP_MESSAGE_CALLBACK_PREFIX: &str = "h:new:";
 
 /// 判断 callback payload 是否属于 `/help`。
 pub(super) fn is_help_callback_data(data: &str) -> bool {
@@ -28,9 +33,27 @@ pub(super) fn build_help_callback_data(topic: Option<&str>) -> String {
     format!("{}{}", HELP_CALLBACK_PREFIX, topic.unwrap_or("index"))
 }
 
+/// 生成“查看命令”按钮使用的 callback 数据。
+pub(super) fn build_help_message_callback_data(topic: Option<&str>) -> String {
+    format!(
+        "{}{}",
+        HELP_MESSAGE_CALLBACK_PREFIX,
+        topic.unwrap_or("index")
+    )
+}
+
 /// 解析 help callback payload。
 pub(super) fn parse_help_callback_data(data: &str) -> Option<Option<&str>> {
     let topic = data.strip_prefix(HELP_CALLBACK_PREFIX)?;
+    match topic {
+        "" | "index" => Some(None),
+        other => normalize_help_topic(other).ok().map(Some),
+    }
+}
+
+/// 解析只发送帮助卡片的 callback 数据。
+pub(super) fn parse_help_message_callback_data(data: &str) -> Option<Option<&str>> {
+    let topic = data.strip_prefix(HELP_MESSAGE_CALLBACK_PREFIX)?;
     match topic {
         "" | "index" => Some(None),
         other => normalize_help_topic(other).ok().map(Some),
@@ -87,6 +110,7 @@ pub(super) fn build_help_detail_buttons(
         "lookup" => build_help_entry_footer_rows(build_lookup_help_entry_rows()),
         "health" => build_help_entry_footer_rows(build_health_help_entry_rows()),
         "cache" => build_help_entry_footer_rows(build_cache_help_entry_rows()),
+        "auth" => build_help_entry_footer_rows(vec![]),
         "downloads" => build_help_entry_footer_rows(build_downloads_help_entry_rows()),
         "job" => build_help_entry_footer_rows(build_job_help_entry_rows()),
         "menu" => vec![build_return_menu_row(
@@ -179,6 +203,16 @@ fn build_help_topic_button_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_help_message_callback_data_uses_separate_prefix() {
+        assert_eq!(build_help_message_callback_data(Some("job")), "h:new:job");
+        assert_eq!(
+            parse_help_message_callback_data("h:new:job"),
+            Some(Some("job"))
+        );
+        assert_eq!(parse_help_message_callback_data("h:job"), None);
+    }
 
     #[test]
     fn test_help_detail_buttons_put_navigation_on_last_row() -> anyhow::Result<()> {

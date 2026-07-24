@@ -7,14 +7,21 @@ use crate::config::{BotConfig, RequestActor};
 use crate::tgbot::send;
 use crate::tgbot::transfer::card;
 
-use super::build_downloads_status_button_data;
 use super::build_menu_home_button_data;
 use super::common::{
-    CommandStyle, downloads_command, lookup_command, resolve_target_chat_id_on,
-    transfer_command as build_transfer_command,
+    CommandStyle, resolve_target_chat_id_on, transfer_command as build_transfer_command,
 };
 use super::menu;
+use super::{build_downloads_status_button_data, build_view_commands_button};
 use crate::tgbot::transfer::types::{SourceKind, TransferPlan};
+
+/// 转存命令的请求与交互消息上下文。
+pub(super) struct TransferCommandContext {
+    pub(super) request_message_id: i64,
+    pub(super) interaction_message_id: Option<i64>,
+    pub(super) actor: RequestActor,
+    pub(super) client_id: i32,
+}
 
 /// 在指定上下文上执行 `/transfer` 命令。
 pub async fn transfer_command_on(
@@ -47,9 +54,12 @@ pub async fn transfer_command_on(
         text,
         source,
         config,
-        request_message_id,
-        actor,
-        client_id,
+        TransferCommandContext {
+            request_message_id,
+            interaction_message_id: None,
+            actor,
+            client_id,
+        },
     )
     .await
 }
@@ -60,9 +70,7 @@ pub(in crate::tgbot::transfer::command) async fn transfer_link_command_on(
     text: Vec<&str>,
     config: Arc<BotConfig>,
     _request_chat_id: i64,
-    request_message_id: i64,
-    actor: RequestActor,
-    client_id: i32,
+    ctx: TransferCommandContext,
 ) -> anyhow::Result<()> {
     if text.len() < 2 {
         anyhow::bail!("usage: /transfer <link> [target]");
@@ -74,16 +82,7 @@ pub(in crate::tgbot::transfer::command) async fn transfer_link_command_on(
         source_message_chat_id: None,
         source_message_id: None,
     };
-    run_transfer_plan_on(
-        app_context,
-        text,
-        source,
-        config,
-        request_message_id,
-        actor,
-        client_id,
-    )
-    .await
+    run_transfer_plan_on(app_context, text, source, config, ctx).await
 }
 
 /// 在指定上下文上创建计划、发送进度卡片并派发后台任务。
@@ -92,9 +91,7 @@ async fn run_transfer_plan_on(
     text: Vec<&str>,
     mut source: ResolvedTransferSource,
     config: Arc<BotConfig>,
-    request_message_id: i64,
-    actor: RequestActor,
-    client_id: i32,
+    ctx: TransferCommandContext,
 ) -> anyhow::Result<()> {
     // 链接源的策略是“bot 优先，user 备用”；如果当前配置没有 bot client，
     // 则直接降级 user，避免单 user 部署下因为缺少 bot client 失败。
@@ -110,11 +107,11 @@ async fn run_transfer_plan_on(
         &text,
         &source,
         &config,
-        actor.request_chat_id,
+        ctx.actor.request_chat_id,
     )?;
 
     let plan = TransferPlan {
-        actor,
+        actor: ctx.actor,
         source_link: source.source_link,
         source_kind: source.source_kind,
         preferred_source_client_role: source.preferred_source_client_role,
@@ -122,16 +119,18 @@ async fn run_transfer_plan_on(
         source_message_chat_id: source.source_message_chat_id,
         source_message_id: source.source_message_id,
         target_chat_id,
-        request_chat_id: actor.request_chat_id,
-        request_message_id,
+        request_chat_id: ctx.actor.request_chat_id,
+        request_message_id: ctx.request_message_id,
+        force_retransfer: false,
     };
     dispatch_transfer_plan(
         app_context,
         plan,
         config,
-        actor.request_chat_id,
-        request_message_id,
-        client_id,
+        ctx.actor.request_chat_id,
+        ctx.request_message_id,
+        ctx.interaction_message_id,
+        ctx.client_id,
     )
     .await
 }
@@ -143,6 +142,7 @@ async fn dispatch_transfer_plan(
     config: Arc<BotConfig>,
     request_chat_id: i64,
     request_message_id: i64,
+    interaction_message_id: Option<i64>,
     client_id: i32,
 ) -> anyhow::Result<()> {
     // 日志只记录请求定位和目标 chat；源链接会回显给用户，但不写入日志文件。
@@ -157,28 +157,174 @@ async fn dispatch_transfer_plan(
     );
 
     // 先给用户一个即时反馈，避免长时间下载/上传期间命令看起来像“卡住了”。
-    let progress_message = send::send_card_message_with_buttons_returning(
-        format_transfer_accepted_text(&plan),
-        request_chat_id,
-        build_transfer_accepted_button_rows(),
-        client_id,
-    )
-    .await?;
+    let progress_message_id = if let Some(message_id) = interaction_message_id {
+        edit_transfer_interaction_card(
+            format_transfer_accepted_text(&plan),
+            build_transfer_accepted_button_rows(),
+            request_chat_id,
+            message_id,
+            client_id,
+        )
+        .await?;
+        message_id
+    } else {
+        send::send_card_message_with_buttons_returning(
+            format_transfer_accepted_text(&plan),
+            request_chat_id,
+            build_transfer_accepted_button_rows(),
+            client_id,
+        )
+        .await?
+        .id
+    };
+
+    // 已有成功结果时先在同一张卡片上确认，避免误触重复上传。
+    if !plan.force_retransfer
+        && let Some(old) = crate::tgbot::transfer::store::find_success_job_by_source_target(
+            &plan.source_link,
+            plan.target_chat_id,
+        )
+        .await?
+    {
+        let old_link = crate::tgbot::transfer::refresh_stored_result_link(
+            old.id,
+            old.target_chat_id,
+            old.result_message_id,
+            &old.result_message_link,
+            config.transfer_client_ids()?.upload,
+        )
+        .await?;
+        app_context.retransfer_confirm.put_plan(
+            request_chat_id,
+            plan.actor.user_id,
+            progress_message_id,
+            plan.clone(),
+        );
+        edit_transfer_interaction_card(
+            format_retransfer_confirm_text(&plan, old.id, &old_link),
+            build_retransfer_confirm_button_rows(&old_link),
+            request_chat_id,
+            progress_message_id,
+            client_id,
+        )
+        .await?;
+        return Ok(());
+    }
     // 后台任务会持续编辑这条消息，把它变成转存进度面板。
     super::super::spawn_transfer_job(
         app_context,
         plan,
         request_chat_id,
-        Some(progress_message.id),
+        Some(progress_message_id),
         config.transfer_client_ids()?,
     );
     Ok(())
 }
 
+const RETRANSFER_CALLBACK_DATA: &str = "tr:again";
+
+pub(super) fn is_retransfer_callback_data(data: &str) -> bool {
+    data == RETRANSFER_CALLBACK_DATA
+}
+
+/// 处理“再次转存”确认；计划按当前卡片定位，避免把长链接写入 callback_data。
+pub(super) async fn retransfer_callback_query_on(
+    app: &crate::app_context::AppContext,
+    update: tdlib_rs::types::UpdateNewCallbackQuery,
+    config: Arc<BotConfig>,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let tdlib_rs::enums::CallbackQueryPayload::Data(data) = update.payload else {
+        send::answer_callback_query(update.id, Some("暂不支持这种按钮类型"), client_id).await?;
+        return Ok(());
+    };
+    if !is_retransfer_callback_data(&data.data) {
+        send::answer_callback_query(update.id, Some("重复转存按钮参数无效"), client_id).await?;
+        return Ok(());
+    }
+    let Some(mut plan) =
+        app.retransfer_confirm
+            .take_plan(update.chat_id, update.sender_user_id, update.message_id)
+    else {
+        send::answer_callback_query(update.id, Some("确认已失效，请重新发起"), client_id).await?;
+        return Ok(());
+    };
+    plan.force_retransfer = true;
+    // callback query ID 区分这次明确确认，避免与原命令请求幂等键混用。
+    plan.request_message_id = update.id;
+    send::answer_callback_query(update.id, Some("开始再次转存"), client_id).await?;
+    dispatch_transfer_plan(
+        Arc::new(app.clone()),
+        plan,
+        config,
+        update.chat_id,
+        update.id,
+        Some(update.message_id),
+        client_id,
+    )
+    .await
+}
+
+async fn edit_transfer_interaction_card(
+    text: String,
+    rows: Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>,
+    chat_id: i64,
+    message_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
+    send::edit_interaction_card_or_error(
+        text,
+        chat_id,
+        message_id,
+        keyboard,
+        client_id,
+        "转存卡片更新失败",
+        "当前转存状态已生成，但原消息编辑失败；请返回菜单重新发起。",
+    )
+    .await
+}
+
+fn format_retransfer_confirm_text(plan: &TransferPlan, old_job_id: i64, old_link: &str) -> String {
+    [
+        "已存在转存结果".to_owned(),
+        card::summary_line("confirm-again", Some(old_job_id), plan.target_chat_id),
+        card::section("原结果"),
+        card::field("地址", old_link),
+        card::note(
+            "原消息可能已被删除。再次转存会创建新任务，并将最新结果作为后续查询的默认地址。",
+        ),
+    ]
+    .join("\n")
+}
+
+fn build_retransfer_confirm_button_rows(
+    old_link: &str,
+) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
+    let mut rows = Vec::new();
+    if send::is_openable_url(old_link) {
+        rows.push(vec![send::build_url_button(
+            "打开原结果",
+            old_link,
+            tdlib_rs::enums::ButtonStyle::Default,
+        )]);
+    }
+    rows.push(vec![send::build_callback_button(
+        "再次转存",
+        RETRANSFER_CALLBACK_DATA,
+        tdlib_rs::enums::ButtonStyle::Danger,
+    )]);
+    rows.push(vec![send::build_callback_button(
+        "取消",
+        &build_menu_home_button_data(),
+        tdlib_rs::enums::ButtonStyle::Default,
+    )]);
+    rows
+}
+
 /// 构造 `/transfer` 首次回执按钮。
 ///
-/// 查询命令已经在正文里保留；按钮区优先放可直接点击的运行列表和菜单，
-/// 来源信息已经在正文显示，这里不再重复堆复制按钮。
+/// 按钮区优先放可直接点击的运行列表、命令说明和菜单。
 fn build_transfer_accepted_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![vec![
         send::build_callback_button(
@@ -186,6 +332,7 @@ fn build_transfer_accepted_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeybo
             &build_downloads_status_button_data("running", 8),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
+        build_view_commands_button(Some("transfer")),
         send::build_callback_button(
             "菜单",
             &build_menu_home_button_data(),
@@ -422,15 +569,7 @@ fn format_transfer_accepted_text(plan: &TransferPlan) -> String {
         card::DIVIDER.to_owned(),
         card::section("进度"),
         "后台会自动下载并上传，本消息会持续刷新。".to_owned(),
-        card::section("命令"),
-        card::command_line(
-            "查询",
-            lookup_command(&plan.source_link, plan.target_chat_id, CommandStyle::Long),
-        ),
-        card::command_line(
-            "列表",
-            downloads_command(Some("run"), None, None, CommandStyle::Long),
-        ),
+        card::note("可直接点击下方按钮查看进度；需要命令时点击“查看命令”。"),
         String::new(),
     ]
     .into_iter()
@@ -442,13 +581,15 @@ fn format_transfer_accepted_text(plan: &TransferPlan) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ResolvedTransferSource, bot_message_source_link, build_transfer_accepted_button_rows,
+        RETRANSFER_CALLBACK_DATA, ResolvedTransferSource, bot_message_source_link,
+        build_retransfer_confirm_button_rows, build_transfer_accepted_button_rows,
         format_transfer_accepted_text, forwarded_message_location, resolve_transfer_target_chat_id,
     };
     use crate::ClientRole;
     use crate::app_context::app_context;
     use crate::config::{BotConfig, RequestActor};
     use crate::tgbot::transfer::types::{SourceKind, TransferPlan};
+    use base64::{Engine as _, engine::general_purpose};
 
     fn install_target_runtime(targets: crate::config::TargetsConfig) {
         let app = app_context();
@@ -472,6 +613,7 @@ mod tests {
             target_chat_id: -100,
             request_chat_id: 1,
             request_message_id: 2,
+            force_retransfer: false,
         });
 
         assert!(text.contains("状态：‹queued›"));
@@ -479,7 +621,7 @@ mod tests {
         assert!(text.contains("‹https://t.me/c/1/2›"));
     }
 
-    // 首次回执按钮应直接跳运行列表和菜单，查询命令留在正文，避免按钮区重复复制命令。
+    // 首次回执按钮应直接跳运行列表、按需查看命令和菜单。
     #[test]
     fn test_build_transfer_accepted_button_rows() {
         let rows = build_transfer_accepted_button_rows();
@@ -490,7 +632,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(rows[0][0].text, "查看运行列表");
-        assert_eq!(rows[0][1].text, "菜单");
+        assert_eq!(rows[0][1].text, "查看命令");
+        assert_eq!(rows[0][2].text, "菜单");
         assert_eq!(rows.len(), 1);
         assert!(!labels.contains(&"复制查询命令"));
         assert!(!labels.contains(&"复制源标识"));
@@ -498,6 +641,31 @@ mod tests {
             rows[0][0].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
+    }
+
+    #[test]
+    fn test_retransfer_confirm_buttons_include_old_result_and_confirmation() {
+        let rows = build_retransfer_confirm_button_rows("https://t.me/c/123/456");
+
+        assert_eq!(rows[0][0].text, "打开原结果");
+        assert_eq!(rows[1][0].text, "再次转存");
+        assert_eq!(rows[2][0].text, "取消");
+        assert_eq!(decoded_callback_data(&rows[1][0]), RETRANSFER_CALLBACK_DATA);
+    }
+
+    #[test]
+    fn test_retransfer_confirm_buttons_keep_locator_as_text_only() {
+        let rows = build_retransfer_confirm_button_rows("chat_id=-100 message_id=456");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0][0].text, "再次转存");
+    }
+
+    fn decoded_callback_data(button: &tdlib_rs::types::InlineKeyboardButton) -> String {
+        let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type else {
+            panic!("button must be callback");
+        };
+        String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap()
     }
 
     // bot 可见消息源使用稳定伪链接参与查重，避免自动转存和回复命令生成两种 key。

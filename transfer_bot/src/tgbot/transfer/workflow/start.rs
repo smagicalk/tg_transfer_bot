@@ -1,7 +1,7 @@
 // 转存启动阶段：
-// - source_link + target_chat_id 是业务查重维度，用来复用成功任务和阻止重复活跃任务。
+// - source_link + target_chat_id 只用于复用已经成功的历史结果。
 // - request_chat_id + request_message_id 是请求幂等维度，只兜底处理 TDLib/网络重复投递同一条命令。
-// - 两层语义不能混用：前者决定“是不是同一个转存”，后者决定“这条命令是否已经处理过”。
+// - 不同请求即使源和目标相同也必须各自执行，不能合并成同一个活跃任务。
 
 use crate::db;
 
@@ -51,11 +51,27 @@ pub(super) async fn build_transfer_start(
         "transfer source-target create guard acquired"
     );
 
-    // 业务查重第一层：
+    // 请求级幂等必须最先判断。同一条命令 update 被 TDLib/网络重复投递时，
+    // 无论当前任务处于什么状态，都不能创建第二个 job。
+    if let Some(old) =
+        store::find_job_by_request(plan.request_chat_id, plan.request_message_id).await?
+    {
+        tracing::info!(
+            job_id = old.id,
+            status = %old.status,
+            request_chat_id = plan.request_chat_id,
+            request_message_id = plan.request_message_id,
+            "matched idempotent transfer request"
+        );
+        return request_job_start(old, client_ids.upload).await;
+    }
+
+    // 历史结果复用：
     // 同一个源链接转到同一个目标 chat，如果已经成功完成，直接返回历史结果。
     // 这里不看 request_message_id，因为不同命令重复转存同一链接时也应复用成功结果。
-    if let Some(old) =
-        store::find_success_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
+    if should_reuse_success(plan.force_retransfer)
+        && let Some(old) =
+            store::find_success_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
     {
         let link = refresh_stored_result_link(
             old.id,
@@ -76,60 +92,12 @@ pub(super) async fn build_transfer_start(
         }));
     }
 
-    // 业务查重第二层：
-    // 同一个源链接转到同一个目标 chat，如果已有活跃任务，不能再创建新任务。
-    // 这一步能处理“用户发送两条相同命令但 message_id 不同”的情况。
-    if let Some(old) =
-        store::find_active_job_by_source_target(&plan.source_link, plan.target_chat_id).await?
-    {
-        tracing::info!(
-            job_id = old.id,
-            status = %old.status,
-            target_chat_id = plan.target_chat_id,
-            "matched active transfer job"
-        );
-        return Ok(active_job_start(old, &plan));
-    }
-
-    // 请求级幂等兜底：
-    // TDLib/网络波动可能导致同一条命令 update 被重复投递，此时 request_chat_id
-    // 和 request_message_id 完全相同。即使上面的 source-target 查不到 active/success
-    // （例如第一次处理已失败/取消），也不能让同一条命令再次创建新 job。
-    // 这一步不是业务查重；业务查重只由 source_link + target_chat_id 决定。
-    if let Some(old) =
-        store::find_job_by_request(plan.request_chat_id, plan.request_message_id).await?
-    {
-        tracing::info!(
-            job_id = old.id,
-            status = %old.status,
-            request_chat_id = plan.request_chat_id,
-            request_message_id = plan.request_message_id,
-            "matched idempotent transfer request"
-        );
-        return request_job_start(old, client_ids.upload).await;
-    }
-
     create_new_job_start(app_context, plan, client_ids).await
 }
 
-/// 将已存在的活跃任务转换为本次命令结果。
-fn active_job_start(old: db::transfer_job::Model, plan: &TransferPlan) -> TransferStart {
-    if old.status == store::JOB_STATUS_PAUSED {
-        TransferStart::Outcome(TransferOutcome::Paused { job_id: old.id })
-    } else if matches!(
-        old.status.as_str(),
-        store::JOB_STATUS_CANCELLING | store::JOB_STATUS_CANCEL_FINALIZING
-    ) {
-        TransferStart::Outcome(TransferOutcome::Cancelling { job_id: old.id })
-    } else if old.request_chat_id != plan.request_chat_id
-        || old.request_message_id != plan.request_message_id
-    {
-        // 不同请求命中同一个 source-target 活跃任务时，只提示“已有任务在跑”，不重复派发执行器。
-        // 同一请求命中 active 任务则可能是重复 update，需要走 Resume 兜底恢复。
-        TransferStart::Outcome(TransferOutcome::Running { job_id: old.id })
-    } else {
-        TransferStart::Resume(old)
-    }
+/// 只有尚未得到用户明确确认时才复用历史成功结果。
+fn should_reuse_success(force_retransfer: bool) -> bool {
+    !force_retransfer
 }
 
 /// 将同一请求已存在的任务转换为下一步动作。
@@ -352,16 +320,21 @@ mod tests {
         Ok(())
     }
 
-    // 同源同目标已有运行中任务时，新的不同请求应直接返回 running，而不是重复创建。
+    #[test]
+    fn test_force_retransfer_skips_success_reuse() {
+        assert!(should_reuse_success(false));
+        assert!(!should_reuse_success(true));
+    }
+
+    // 同源同目标但请求消息不同的运行中任务必须允许并存。
     #[tokio::test]
-    async fn test_build_transfer_start_reports_running_for_duplicate_active_job()
-    -> anyhow::Result<()> {
+    async fn test_distinct_requests_allow_duplicate_active_source_target() -> anyhow::Result<()> {
         let _guard = db::TEST_DB_LOCK.lock().await;
         let source_link = unique_source_link();
         let request_chat_id = unique_id();
         let owner_user_id = unique_id();
         let target_chat_id = unique_id();
-        let job = insert_job(
+        let first = insert_job(
             store::JOB_STATUS_RUNNING,
             owner_user_id,
             request_chat_id + 1,
@@ -372,25 +345,21 @@ mod tests {
         )
         .await?;
 
-        let plan = build_test_plan(
-            request_chat_id,
+        let second = insert_job(
+            store::JOB_STATUS_RUNNING,
             owner_user_id,
-            source_link,
-            target_chat_id,
             request_chat_id,
             request_chat_id + 10,
-        );
-        let client_ids = test_client_ids();
-        let app_context = test_app_context();
+            &source_link,
+            target_chat_id,
+            None,
+        )
+        .await?;
 
-        let start = build_transfer_start(app_context, plan, client_ids).await?;
-
-        match start {
-            TransferStart::Outcome(TransferOutcome::Running { job_id }) => {
-                assert_eq!(job_id, job.id);
-            }
-            _ => panic!("unexpected transfer start"),
-        }
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.source_link, second.source_link);
+        assert_eq!(first.target_chat_id, second.target_chat_id);
+        assert_ne!(first.request_message_id, second.request_message_id);
         Ok(())
     }
 
@@ -518,6 +487,7 @@ mod tests {
             target_chat_id,
             request_chat_id: plan_request_chat_id,
             request_message_id: plan_request_message_id,
+            force_retransfer: false,
         }
     }
 

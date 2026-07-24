@@ -7,8 +7,8 @@ use super::super::super::common::{
     lookup_command, menu_command, transfer_command,
 };
 use super::super::super::{
-    cache::cache_help_summary, config_cmd::config_help_descriptor, health::health_help_summary,
-    menu::menu_help_summary, targets::targets_help_descriptor,
+    auth::auth_help_summary, cache::cache_help_summary, config_cmd::config_help_descriptor,
+    health::health_help_summary, menu::menu_help_summary, targets::targets_help_descriptor,
 };
 use super::super::super::{downloads::downloads_help_summary, job::job_help_summary};
 use super::super::topic::help_index_example_topics;
@@ -133,6 +133,11 @@ fn runtime_admin_index_topics() -> Vec<RuntimeAdminIndexTopic> {
             title: "目标配置",
             synopsis: targets.synopsis,
             summary: targets.summary,
+        },
+        RuntimeAdminIndexTopic {
+            title: "授权管理",
+            synopsis: "/auth（打开交互式管理员面板）".to_owned(),
+            summary: auth_help_summary(),
         },
     ]
 }

@@ -8,8 +8,8 @@ use crate::tgbot::transfer::card;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
 use super::common::{
-    CommandStyle, RuntimeAdminHelpDescriptor, RuntimeAdminUsageItem, build_command_examples,
-    build_page_empty_note, build_refresh_return_menu_row, build_runtime_admin_back_menu_row,
+    CommandStyle, RuntimeAdminHelpDescriptor, RuntimeAdminUsageItem, build_page_empty_note,
+    build_refresh_return_menu_row, build_runtime_admin_back_menu_row,
     build_runtime_admin_detail_text, build_runtime_admin_help_menu_row,
     build_runtime_admin_page_intro, build_runtime_admin_section_block, cleared_action_title,
     command_root, deleted_action_title, edit_runtime_admin_interaction_card_or_error,
@@ -117,23 +117,23 @@ pub(in crate::tgbot::transfer::command) const TARGETS_INPUT_SPECS: &[TargetsInpu
         action: super::menu::AdminInputAction::TargetsSetDefault,
         callback_action: TargetsCallbackAction::InputSetDefault,
         input_title: "设置默认目标",
-        input_detail: "请回复目标私聊 chat_id，例如 123456789；或发送 /cancel 取消。",
-        input_placeholder: "输入 target_chat_id，或发送 /cancel",
+        input_detail: "请选择目标群组或频道，也可直接输入 chat_id；输入“取消”可退出。",
+        input_placeholder: "选择聊天或输入 target_chat_id",
         subcommand: "set-default",
         expected_parts: 1,
         example_command: "/targets set-default 123456789",
-        interaction_detail: "默认目标详情页：点“手动设置”后回复 target_chat_id。",
+        interaction_detail: "默认目标详情页：点“选择聊天”后使用原生选择器，也可直接输入 target_chat_id。",
     },
     TargetsInputSpec {
         action: super::menu::AdminInputAction::TargetsSetAlias,
         callback_action: TargetsCallbackAction::InputSetAlias,
         input_title: "设置目标别名",
-        input_detail: "命令模式可回复 alias 和目标私聊 chat_id，例如 archive 123456789；交互模式会先问 alias，再问 target。",
+        input_detail: "命令模式可回复 alias 和目标 chat_id，例如 archive 123456789；交互模式会先问 alias，再选择聊天或输入 target。",
         input_placeholder: "输入 alias target_chat_id",
         subcommand: "set-alias",
         expected_parts: 2,
         example_command: "/targets set-alias archive 123456789",
-        interaction_detail: "别名列表页：点“新增别名”后，先回复 alias，再回复 target_chat_id。",
+        interaction_detail: "别名列表页：点“新增别名”后，先回复 alias，再选择聊天或输入 target_chat_id。",
     },
 ];
 
@@ -371,7 +371,6 @@ pub async fn targets_callback_query_on(
                 keyboard,
                 client_id,
                 "目标配置",
-                "/targets show",
             )
             .await?;
             return Ok(());
@@ -441,7 +440,6 @@ pub async fn targets_callback_query_on(
                 keyboard,
                 client_id,
                 "目标配置",
-                "/targets show",
             )
             .await?;
             return Ok(());
@@ -457,10 +455,10 @@ pub async fn targets_callback_query_on(
                 None,
                 Some("修改目标别名".to_owned()),
                 Some(format!(
-                    "已选 alias：{}。请只回复新的目标私聊 chat_id；或发送 /cancel 取消。",
+                    "已选 alias：{}。请选择新的目标群组或频道，也可直接输入 chat_id；输入“取消”可退出。",
                     alias
                 )),
-                Some("输入新的 target_chat_id，或发送 /cancel".to_owned()),
+                Some("选择聊天或输入新的 target_chat_id".to_owned()),
                 client_id,
             )
             .await;
@@ -546,11 +544,6 @@ fn format_targets_home_text(config: &TargetsConfig) -> String {
     lines.extend(build_runtime_admin_section_block(
         "操作建议",
         vec!["点“默认目标”查看当前默认值；别名列表先点编号进入详情，再执行修改或删除。".to_owned()],
-    ));
-    lines.extend(build_command_examples(
-        targets_example_commands()
-            .into_iter()
-            .filter(|command| command != "/targets reset"),
     ));
     lines.join("\n")
 }
@@ -642,7 +635,7 @@ fn format_default_target_detail_text(config: &TargetsConfig) -> String {
         }],
         "下一步",
         vec![
-            "点“手动设置”后直接回复目标私聊 chat_id。".to_owned(),
+            "点“选择聊天”后使用 Telegram 原生选择器，也可直接输入 chat_id。".to_owned(),
             "也可以进入别名详情页，再把该项设为默认目标。".to_owned(),
             "点“恢复私聊默认”会清掉显式默认值。".to_owned(),
         ],
@@ -654,7 +647,7 @@ fn build_default_detail_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButt
     vec![
         vec![
             send::build_callback_button(
-                "手动设置",
+                "选择聊天",
                 &build_targets_callback_data(TargetsCallbackAction::InputSetDefault),
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
@@ -831,12 +824,6 @@ fn format_targets_config_text(title: &str, config: &TargetsConfig) -> String {
             ));
         }
     }
-
-    lines.extend(build_command_examples(
-        targets_example_commands()
-            .into_iter()
-            .filter(|command| command != "/targets reset"),
-    ));
 
     lines.join("\n")
 }
@@ -1092,7 +1079,6 @@ async fn render_targets_reset_confirm_on(
         keyboard,
         client_id,
         "目标配置",
-        "/targets show",
     )
     .await
 }
@@ -1130,7 +1116,6 @@ async fn render_targets_home_on(
         keyboard,
         client_id,
         "目标配置",
-        "/targets show",
     )
     .await
 }
@@ -1162,13 +1147,7 @@ async fn render_aliases_context_on(
     };
     let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
     edit_runtime_admin_interaction_card_or_error(
-        text,
-        chat_id,
-        message_id,
-        keyboard,
-        client_id,
-        title,
-        "/targets show",
+        text, chat_id, message_id, keyboard, client_id, title,
     )
     .await
 }
@@ -1542,7 +1521,7 @@ mod tests {
         assert!(text.contains("default_chat_id"));
         assert!(!text.contains("请求路由"));
         assert!(text.contains("目标别名"));
-        assert!(text.contains("/targets set-default"));
+        assert!(!text.contains("/targets"));
     }
 
     #[test]
@@ -1571,6 +1550,7 @@ mod tests {
         assert!(labels.contains(&"默认目标"));
         assert!(labels.contains(&"别名列表"));
         assert!(labels.contains(&"重置全部"));
+        assert!(labels.contains(&"查看命令"));
         assert!(!labels.contains(&"重置默认"));
         assert!(!labels.contains(&"设默认"));
         assert!(!labels.contains(&"设路由"));

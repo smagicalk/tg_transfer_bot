@@ -39,18 +39,11 @@ pub(super) fn build_job_resume_callback_data(job_id: i64) -> String {
     args::build_job_callback_data(args::JobCallbackAction::Resume, job_id)
 }
 
-/// 生成单任务停止确认按钮所需的 callback 数据。
+/// 生成单任务停止按钮所需的 callback 数据。
 ///
-/// 所有普通 UI 入口都先进入确认页，避免列表页或最近任务页误触后直接停止任务。
+/// 使用一次点击直接请求停止；历史消息中的 `j:sc` 仍由 callback 层兼容处理。
 pub(super) fn build_job_stop_callback_data(job_id: i64) -> String {
     args::build_job_callback_data(args::JobCallbackAction::StopConfirm, job_id)
-}
-
-/// 生成确认页里“真正停止”按钮所需的 callback 数据。
-///
-/// 旧消息上的 `j:s:<job_id>` 仍然兼容真正停止，因此这个函数只在确认页内部使用。
-pub(super) fn build_job_stop_execute_callback_data(job_id: i64) -> String {
-    args::build_job_callback_data(args::JobCallbackAction::Stop, job_id)
 }
 
 /// 给非 `/job` 模块使用的任务列表入口信息。
@@ -76,8 +69,8 @@ pub(in crate::tgbot::transfer::command) fn job_help_summary() -> &'static str {
 pub(in crate::tgbot::transfer::command) fn job_help_intro_lines() -> Vec<String> {
     vec![
         "先选择任务状态，再点任务详情进行暂停、恢复或停止，无需手动输入 job_id。".to_owned(),
-        "单所有者模式可直接控制任意任务。".to_owned(),
-        "已知 job_id 时仍可直接使用 /job 命令。".to_owned(),
+        "已授权用户可直接控制任意任务。".to_owned(),
+        "也可以从任务列表直接进入详情，不需要手动填写 job_id。".to_owned(),
     ]
 }
 
@@ -97,42 +90,8 @@ pub(in crate::tgbot::transfer::command) fn job_help_action_lines() -> Vec<String
             card::code("stop")
         ),
         format!(
-            "{}：查看单任务详情、阶段计数和真实下载进度。",
+            "{}：查看单任务详情、阶段计数以及真实下载/上传进度。",
             card::code("status")
-        ),
-    ]
-}
-
-/// `/job` 菜单页复用的命令示例。
-pub(in crate::tgbot::transfer::command) fn job_menu_command_lines() -> Vec<String> {
-    vec![
-        card::command_line(
-            "详情",
-            format!(
-                "{} status <job_id>",
-                super::common::command_root("job", CommandStyle::Long)
-            ),
-        ),
-        card::command_line(
-            "暂停",
-            format!(
-                "{} pause <job_id>",
-                super::common::command_root("job", CommandStyle::Long)
-            ),
-        ),
-        card::command_line(
-            "恢复",
-            format!(
-                "{} resume <job_id>",
-                super::common::command_root("job", CommandStyle::Long)
-            ),
-        ),
-        card::command_line(
-            "停止",
-            format!(
-                "{} stop <job_id>",
-                super::common::command_root("job", CommandStyle::Long)
-            ),
         ),
     ]
 }
@@ -296,10 +255,6 @@ pub(in crate::tgbot) async fn job_callback_query_on(
     .await
     {
         Ok(JobCallbackResult::Updated) => Ok(()),
-        Ok(JobCallbackResult::ConfirmFailed(err)) => {
-            send_job_confirm_error(update.chat_id, client_id, args.job_id, &err).await?;
-            Err(err)
-        }
         Ok(JobCallbackResult::RefreshFailed(err)) => {
             send_job_refresh_error(update.chat_id, client_id, args.job_id, &err).await?;
             Err(err)
@@ -316,7 +271,7 @@ fn job_callback_started_tip(action: JobCallbackAction) -> &'static str {
     match action {
         JobCallbackAction::Pause => "正在暂停",
         JobCallbackAction::Resume => "正在恢复",
-        JobCallbackAction::StopConfirm => "请确认停止",
+        JobCallbackAction::StopConfirm => "正在停止",
         JobCallbackAction::Stop => "正在停止",
         JobCallbackAction::Status => "正在刷新",
     }
@@ -360,24 +315,6 @@ async fn send_job_refresh_error(
     .await
 }
 
-/// 停止确认页编辑失败时的提示。
-async fn send_job_confirm_error(
-    request_chat_id: i64,
-    client_id: i32,
-    job_id: i64,
-    err: &anyhow::Error,
-) -> anyhow::Result<()> {
-    let title = format!("停止确认失败 #{}", job_id);
-    send_interaction_error_card(
-        request_chat_id,
-        client_id,
-        &title,
-        "停止确认页未能打开；请重新打开任务详情再试。",
-        err,
-    )
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,7 +332,7 @@ mod tests {
         );
         assert_eq!(
             job_callback_started_tip(JobCallbackAction::StopConfirm),
-            "请确认停止"
+            "正在停止"
         );
         assert_eq!(
             job_callback_started_tip(JobCallbackAction::Stop),

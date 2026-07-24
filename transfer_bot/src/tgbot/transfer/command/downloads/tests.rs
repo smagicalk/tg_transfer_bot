@@ -119,9 +119,11 @@ fn test_format_downloads_text_for_empty() {
         0,
     );
     assert!(text.contains("下载列表为空"));
+    assert!(!text.contains("■ 命令"));
+    assert!(!text.contains("/downloads"));
 }
 
-// 单所有者模式展示全部任务。
+// 已授权用户展示全部任务。
 #[test]
 fn test_format_downloads_text_uses_global_scope() {
     let args = DownloadsArgs {
@@ -133,6 +135,8 @@ fn test_format_downloads_text_uses_global_scope() {
 
     let text = format_downloads_text(&page_items, &args, 1);
     assert!(text.contains("范围：所有任务"));
+    assert!(!text.contains("■ 命令"));
+    assert!(!text.contains("/downloads"));
 }
 
 // 当前页存在任务时，应为每个任务生成详情按钮。
@@ -152,9 +156,34 @@ fn test_build_downloads_keyboard_has_job_detail_buttons() {
     ));
 }
 
-// 运行中任务在列表页应能暂停，并把停止导向确认页，减少误触。
+// 任务列表只承担导航：详情按钮每行两个，暂停/恢复/停止统一进入详情页操作。
 #[test]
-fn test_build_downloads_keyboard_has_running_job_controls() {
+fn test_build_downloads_keyboard_groups_job_details_without_inline_controls() {
+    let args = DownloadsArgs {
+        filter: DownloadsFilter::All,
+        limit: 8,
+        page: 1,
+    };
+    let first = snapshot_with_status("running");
+    let mut second = snapshot_with_status("paused");
+    second.job.id = 2;
+
+    let keyboard = build_downloads_keyboard(&args, 1, &[first, second]);
+    let first_row_labels = keyboard.rows[0]
+        .iter()
+        .map(|button| button.text.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(first_row_labels, vec!["详情 #1", "详情 #2"]);
+    assert!(
+        keyboard.rows[0]
+            .iter()
+            .all(|button| button.text.starts_with("详情 #"))
+    );
+}
+
+// 运行中任务的控制统一进入详情页，列表不重复放暂停/停止。
+#[test]
+fn test_build_downloads_keyboard_routes_running_controls_through_detail() {
     let args = DownloadsArgs {
         filter: DownloadsFilter::Running,
         limit: 8,
@@ -163,27 +192,13 @@ fn test_build_downloads_keyboard_has_running_job_controls() {
     let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("running")]);
 
     assert_eq!(keyboard.rows[0][0].text, "详情 #1");
-    assert_eq!(keyboard.rows[0][1].text, "暂停");
-    assert_eq!(keyboard.rows[0][2].text, "停止");
-    assert_eq!(
-        keyboard.rows[0][2].style,
-        tdlib_rs::enums::ButtonStyle::Danger
-    );
-    assert_eq!(decoded_callback_data(&keyboard.rows[0][1]), "j:p:1");
-    assert_eq!(decoded_callback_data(&keyboard.rows[0][2]), "j:sc:1");
-    assert!(matches!(
-        keyboard.rows[0][1].r#type,
-        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
-    ));
-    assert!(matches!(
-        keyboard.rows[0][2].r#type,
-        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
-    ));
+    assert_eq!(keyboard.rows[0].len(), 1);
+    assert_eq!(decoded_callback_data(&keyboard.rows[0][0]), "j:st:1");
 }
 
-// 暂停任务在列表页应能恢复，并把停止导向确认页。
+// 暂停任务同样只保留详情入口，恢复和停止由详情页承接。
 #[test]
-fn test_build_downloads_keyboard_has_paused_job_controls() {
+fn test_build_downloads_keyboard_routes_paused_controls_through_detail() {
     let args = DownloadsArgs {
         filter: DownloadsFilter::Paused,
         limit: 8,
@@ -192,14 +207,8 @@ fn test_build_downloads_keyboard_has_paused_job_controls() {
     let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("paused")]);
 
     assert_eq!(keyboard.rows[0][0].text, "详情 #1");
-    assert_eq!(keyboard.rows[0][1].text, "恢复");
-    assert_eq!(keyboard.rows[0][2].text, "停止");
-    assert_eq!(decoded_callback_data(&keyboard.rows[0][1]), "j:r:1");
-    assert_eq!(decoded_callback_data(&keyboard.rows[0][2]), "j:sc:1");
-    assert!(matches!(
-        keyboard.rows[0][1].r#type,
-        tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
-    ));
+    assert_eq!(keyboard.rows[0].len(), 1);
+    assert_eq!(decoded_callback_data(&keyboard.rows[0][0]), "j:st:1");
 }
 
 // 已完成任务只保留详情，避免列表里出现无效控制按钮。
@@ -248,7 +257,7 @@ fn test_build_downloads_keyboard_empty_page_has_no_job_detail_row() {
     let keyboard = build_downloads_keyboard(&args, 1, &[]);
 
     assert_eq!(keyboard.rows[0][0].text, "全部");
-    assert_eq!(keyboard.rows[4][0].text, "刷新");
+    assert_eq!(keyboard.rows[2][0].text, "刷新");
 }
 
 // 字节格式化应能覆盖整数和小数展示。
@@ -327,7 +336,7 @@ fn test_build_downloads_keyboard_current_page_is_refresh_callback() {
         page: 2,
     };
     let keyboard = build_downloads_keyboard(&args, 4, &[]);
-    let current = &keyboard.rows[5][2];
+    let current = &keyboard.rows[3][2];
     assert_eq!(current.text, "2/4");
     assert!(matches!(
         current.r#type,
@@ -346,7 +355,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
         page: 1,
     };
     let keyboard = build_downloads_keyboard(&args, 3, &[]);
-    let next = &keyboard.rows[5][1];
+    let next = &keyboard.rows[3][1];
 
     let data = match &next.r#type {
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
@@ -356,7 +365,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
     assert_eq!(decoded, "d:p:run:8:2");
 }
 
-// 列表页把“刷新 / 任务中心 / 菜单”单独放一行，分页单独放一行。
+// 列表页把“刷新 / 任务中心 / 查看命令 / 菜单”单独放一行，分页单独放一行。
 #[test]
 fn test_build_downloads_keyboard_has_refresh_row() {
     let args = DownloadsArgs {
@@ -366,27 +375,28 @@ fn test_build_downloads_keyboard_has_refresh_row() {
     };
     let keyboard = build_downloads_keyboard(&args, 2, &[]);
 
-    assert_eq!(keyboard.rows.len(), 6);
-    assert_eq!(keyboard.rows[4][0].text, "刷新");
+    assert_eq!(keyboard.rows.len(), 4);
+    assert_eq!(keyboard.rows[2][0].text, "刷新");
     assert!(matches!(
-        keyboard.rows[4][0].r#type,
+        keyboard.rows[2][0].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[4][1].text, "任务中心");
-    assert_eq!(decoded_callback_data(&keyboard.rows[4][1]), "m:th");
-    assert_eq!(keyboard.rows[4][2].text, "菜单");
+    assert_eq!(keyboard.rows[2][1].text, "任务中心");
+    assert_eq!(decoded_callback_data(&keyboard.rows[2][1]), "m:th");
+    assert_eq!(keyboard.rows[2][2].text, "查看命令");
     assert!(matches!(
-        keyboard.rows[4][2].r#type,
+        keyboard.rows[2][2].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[5][0].text, "1/2");
-    assert_eq!(keyboard.rows[5][1].text, "下页");
-    assert_eq!(keyboard.rows[5][2].text, "末页");
+    assert_eq!(keyboard.rows[2][3].text, "菜单");
+    assert_eq!(keyboard.rows[3][0].text, "1/2");
+    assert_eq!(keyboard.rows[3][1].text, "下页");
+    assert_eq!(keyboard.rows[3][2].text, "末页");
 }
 
-// 主操作区中的筛选按钮仍保留多行，分页单独放在最后一行。
+// 列表页只保留六个高频状态筛选，细分阶段仍可通过命令访问。
 #[test]
-fn test_build_downloads_keyboard_has_filter_row() {
+fn test_build_downloads_keyboard_uses_compact_filter_groups() {
     let args = DownloadsArgs {
         filter: DownloadsFilter::Running,
         limit: 8,
@@ -404,17 +414,12 @@ fn test_build_downloads_keyboard_has_filter_row() {
         keyboard.rows[0][1].r#type,
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
     ));
-    assert_eq!(keyboard.rows[0][2].text, "等待");
-    assert_eq!(keyboard.rows[1][0].text, "下载");
-    assert_eq!(keyboard.rows[1][1].text, "上传");
-    assert_eq!(keyboard.rows[1][2].text, "就绪");
-    assert_eq!(keyboard.rows[2][0].text, "完成");
-    assert_eq!(keyboard.rows[2][1].text, "成功");
-    assert_eq!(keyboard.rows[3][0].text, "暂停");
-    assert_eq!(keyboard.rows[3][1].text, "停止中");
-    assert_eq!(keyboard.rows[3][2].text, "已停止");
-    assert_eq!(keyboard.rows[5][0].text, "首页");
-    assert_eq!(keyboard.rows[5][4].text, "末页");
+    assert_eq!(keyboard.rows[0][2].text, "暂停");
+    assert_eq!(keyboard.rows[1][0].text, "成功");
+    assert_eq!(keyboard.rows[1][1].text, "失败");
+    assert_eq!(keyboard.rows[1][2].text, "已停止");
+    assert_eq!(keyboard.rows[3][0].text, "首页");
+    assert_eq!(keyboard.rows[3][4].text, "末页");
 }
 
 // 边界页不展示只会刷新当前页的无效导航操作。
@@ -427,7 +432,7 @@ fn test_build_downloads_keyboard_hides_unavailable_navigation() {
     };
     let first_keyboard = build_downloads_keyboard(&first_page, 4, &[]);
     assert_eq!(
-        first_keyboard.rows[5]
+        first_keyboard.rows[3]
             .iter()
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>(),
@@ -440,7 +445,7 @@ fn test_build_downloads_keyboard_hides_unavailable_navigation() {
     };
     let last_keyboard = build_downloads_keyboard(&last_page, 4, &[]);
     assert_eq!(
-        last_keyboard.rows[5]
+        last_keyboard.rows[3]
             .iter()
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>(),
@@ -452,8 +457,8 @@ fn test_build_downloads_keyboard_hides_unavailable_navigation() {
         ..first_page
     };
     let single_keyboard = build_downloads_keyboard(&single_page, 1, &[]);
-    assert_eq!(single_keyboard.rows[5].len(), 1);
-    assert_eq!(single_keyboard.rows[5][0].text, "1/1");
+    assert_eq!(single_keyboard.rows[3].len(), 1);
+    assert_eq!(single_keyboard.rows[3][0].text, "1/1");
 }
 
 // 构造最小任务快照，专门用于筛选器测试。
@@ -463,6 +468,7 @@ fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
         job: store::JobProgressJob {
             id: 1,
             target_chat_id: 300,
+            result_message_link: None,
             status: status.to_owned(),
             total_items: 1,
             last_error: None,
@@ -480,6 +486,10 @@ fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
         active_downloaded_bytes: 0,
         active_download_total_bytes: 0,
         has_unknown_download_total: false,
+        active_upload_files: 0,
+        active_uploaded_bytes: 0,
+        active_upload_total_bytes: 0,
+        has_unknown_upload_total: false,
     }
 }
 

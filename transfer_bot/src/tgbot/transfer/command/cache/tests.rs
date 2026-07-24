@@ -29,6 +29,26 @@ fn test_parse_cache_args() {
 }
 
 #[test]
+fn test_cache_default_entry_opens_first_page_with_navigation() {
+    let args = parse_cache_args(&["/cache"]).unwrap();
+
+    assert_eq!(args.view, CacheView::Page);
+    assert_eq!(args.page, 1);
+    assert_eq!(
+        parse_cache_callback_data(&super::build_cache_default_callback_data()),
+        Some(args)
+    );
+
+    let keyboard = build_cache_keyboard(&args, 3);
+    assert!(
+        keyboard
+            .rows
+            .iter()
+            .any(|row| { row.iter().any(|button| button.text == "1/3") })
+    );
+}
+
+#[test]
 fn test_compute_cache_page_count() {
     assert_eq!(compute_cache_page_count(0, 10), 1);
     assert_eq!(compute_cache_page_count(1, 10), 1);
@@ -90,7 +110,41 @@ fn test_cache_keyboard_follow_row_hierarchy() {
     assert_eq!(keyboard.rows[1][0].text, "刷新");
     assert_eq!(keyboard.rows[1][1].text, "健康");
     assert_eq!(keyboard.rows[1][2].text, "菜单");
+    assert_eq!(keyboard.rows[0].len(), 2);
+    assert_eq!(keyboard.rows[0][1].text, "查看命令");
+    assert!(
+        !keyboard
+            .rows
+            .iter()
+            .flat_map(|row| row.iter())
+            .any(|button| button.text == "分页")
+    );
     assert_eq!(keyboard.rows[2][0].text, "首页");
+}
+
+#[test]
+fn test_cache_summary_can_return_to_default_list_without_pagination_button() {
+    let keyboard = build_cache_keyboard(
+        &CacheArgs {
+            view: CacheView::Summary,
+            limit: 10,
+            page: 1,
+        },
+        3,
+    );
+
+    assert!(
+        keyboard.rows[0]
+            .iter()
+            .any(|button| button.text == "缓存列表")
+    );
+    assert!(
+        !keyboard
+            .rows
+            .iter()
+            .flat_map(|row| row.iter())
+            .any(|button| button.text == "分页")
+    );
 }
 
 #[test]
@@ -127,6 +181,8 @@ fn test_format_cache_summary_text() {
     assert!(text.contains("文件缓存概览"));
     assert!(text.contains("ready"));
     assert!(text.contains("待删除"));
+    assert!(!text.contains("■ 命令"));
+    assert!(!text.contains("/cache"));
 }
 
 #[test]
@@ -177,4 +233,6 @@ fn test_format_cache_page_text() {
     assert!(text.contains("文件缓存列表"));
     assert!(text.contains("user · fk1"));
     assert!(text.contains("td_file_id"));
+    assert!(!text.contains("■ 命令"));
+    assert!(!text.contains("/cache"));
 }

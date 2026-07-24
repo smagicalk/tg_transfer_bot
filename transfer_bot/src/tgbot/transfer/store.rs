@@ -18,7 +18,7 @@ mod tests;
 #[cfg(test)]
 pub(super) use file_cache::{acquire_file_ref, release_job_file_refs};
 pub(super) use file_cache::{
-    claim_file_cache_for_delete, delete_file_cache, list_due_file_cache,
+    claim_file_cache_for_delete, delete_file_cache, find_ready_file_cache, list_due_file_cache,
     mark_file_cache_delete_failed, mark_file_cache_downloading, mark_file_cache_failed,
     mark_file_cache_ready,
 };
@@ -38,9 +38,8 @@ pub(super) use observability::{
     list_transfer_health_snapshot,
 };
 pub(super) use progress::{
-    find_active_job_by_source_target, find_active_job_id_by_source_target,
-    find_success_job_by_source_target, get_job_progress_snapshot_with_context,
-    list_recent_job_snapshots,
+    find_active_job_by_source_target, find_success_job_by_source_target,
+    get_job_progress_snapshot_with_context, list_recent_job_snapshots,
 };
 pub(super) use result::{
     ResultMessageRecord, list_result_messages_by_job, replace_result_messages_on_conn,
@@ -143,6 +142,8 @@ pub(super) struct JobProgressJob {
     pub total_items: i32,
     /// 目标转存 chat_id。
     pub target_chat_id: i64,
+    /// 首个目标消息入口地址。
+    pub result_message_link: Option<String>,
     /// 最后一次失败原因；仅失败/部分失败/取消异常时展示给 `/job status`。
     pub last_error: Option<String>,
     /// 创建时间，用于列表排序。
@@ -179,6 +180,14 @@ pub(super) struct JobProgressSnapshot {
     pub active_download_total_bytes: i64,
     /// 是否存在总大小未知的活跃下载。
     pub has_unknown_download_total: bool,
+    /// 当前已登记上传进度的文件数。
+    pub active_upload_files: i32,
+    /// 当前上传已完成总字节数。
+    pub active_uploaded_bytes: i64,
+    /// 当前上传文件总字节数。
+    pub active_upload_total_bytes: i64,
+    /// 是否存在总大小未知的上传文件。
+    pub has_unknown_upload_total: bool,
 }
 
 /// 主任务完成摘要。

@@ -1,11 +1,9 @@
 // `/downloads` 的 inline keyboard 和 callback 数据。
 // 回调数据保持短格式，避免 Telegram callback payload 过长。
 
-use super::super::common::{build_refresh_return_menu_row, downloads_command as build_command};
-use super::super::job::{
-    build_job_pause_callback_data, build_job_resume_callback_data, build_job_status_callback_data,
-    build_job_stop_callback_data,
-};
+#[cfg(test)]
+use super::super::common::downloads_command as build_command;
+use super::super::job::build_job_status_callback_data;
 use super::super::menu::{build_menu_home_callback_data, build_menu_tasks_hub_callback_data};
 use super::types::{DownloadsArgs, DownloadsFilter};
 use crate::tgbot::send;
@@ -14,7 +12,8 @@ use crate::tgbot::transfer::store;
 /// `/downloads` 按钮回调前缀。
 const DOWNLOADS_CALLBACK_PREFIX: &str = "d:";
 
-/// 生成翻页命令，供当前文本页脚直接复用。
+/// 生成翻页命令，供回归测试校验命令协议。
+#[cfg(test)]
 pub(super) fn build_downloads_page_command(
     filter: DownloadsFilter,
     limit: u64,
@@ -136,7 +135,7 @@ pub(super) fn build_downloads_keyboard(
     rows.extend(build_job_detail_buttons(page_items));
     rows.extend(build_filter_button_rows(args));
 
-    rows.push(build_refresh_return_menu_row(
+    rows.push(vec![
         build_callback_button(
             "刷新",
             &build_downloads_refresh_callback_data(args),
@@ -148,11 +147,16 @@ pub(super) fn build_downloads_keyboard(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
         build_callback_button(
+            "查看命令",
+            &super::super::build_help_button_data(Some("downloads")),
+            tdlib_rs::enums::ButtonStyle::Default,
+        ),
+        build_callback_button(
             "菜单",
             &build_menu_home_callback_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
-    ));
+    ]);
     let mut navigation_row = Vec::new();
     if args.page > 1 {
         navigation_row.push(build_navigation_button("首页", args, 1));
@@ -174,12 +178,11 @@ pub(super) fn build_downloads_keyboard(
 
 /// 构建当前页任务快捷操作按钮。
 ///
-/// 每个任务独占一行：左侧始终是详情，右侧根据状态给出暂停、恢复、停止确认等操作。
-/// “停止”只打开确认页，真正停止必须在确认页再次点击，避免列表误触。
+/// 每行放两个详情入口；暂停、恢复、停止统一进入详情页操作，避免列表按钮过密。
 fn build_job_detail_buttons(
     page_items: &[store::JobProgressSnapshot],
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
-    page_items
+    let buttons = page_items
         .iter()
         .map(|snapshot| {
             let status = snapshot.job.status.as_str();
@@ -192,64 +195,19 @@ fn build_job_detail_buttons(
                 tdlib_rs::enums::ButtonStyle::Default
             };
             let job_id = snapshot.job.id;
-
-            let mut row = vec![send::build_callback_button(
+            send::build_callback_button(
                 &format!("详情 #{}", job_id),
                 &build_job_status_callback_data(job_id),
                 style,
-            )];
-            row.extend(build_inline_job_control_buttons(job_id, status));
-            row
+            )
         })
-        .collect::<Vec<_>>()
-}
-
-/// 构建列表页中的任务控制按钮。
-///
-/// 控制按钮仍复用 `/job` callback；停止按钮会先进入确认页，因此这里不直接修改任务状态。
-fn build_inline_job_control_buttons(
-    job_id: i64,
-    status: &str,
-) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
-    if matches!(
-        status,
-        store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING
-    ) {
-        return vec![
-            send::build_callback_button(
-                "暂停",
-                &build_job_pause_callback_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Default,
-            ),
-            send::build_callback_button(
-                "停止",
-                &build_job_stop_callback_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Danger,
-            ),
-        ];
-    }
-
-    if status == store::JOB_STATUS_PAUSED {
-        return vec![
-            send::build_callback_button(
-                "恢复",
-                &build_job_resume_callback_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Primary,
-            ),
-            send::build_callback_button(
-                "停止",
-                &build_job_stop_callback_data(job_id),
-                tdlib_rs::enums::ButtonStyle::Danger,
-            ),
-        ];
-    }
-
-    Vec::new()
+        .collect::<Vec<_>>();
+    buttons.chunks(2).map(<[_]>::to_vec).collect()
 }
 
 /// 构建常用筛选按钮行。
 ///
-/// 每行最多 3 个按钮，移动端比 5-6 个按钮挤在一行更稳定，也方便后续扩展状态。
+/// 只展示高频聚合状态；下载、上传、就绪等细分阶段仍保留命令筛选能力。
 fn build_filter_button_rows(
     args: &DownloadsArgs,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
@@ -257,24 +215,12 @@ fn build_filter_button_rows(
         [
             ("全部", DownloadsFilter::All),
             ("运行", DownloadsFilter::Running),
-            ("等待", DownloadsFilter::Waiting),
+            ("暂停", DownloadsFilter::Paused),
         ]
         .as_slice(),
         [
-            ("下载", DownloadsFilter::Downloading),
-            ("上传", DownloadsFilter::Uploading),
-            ("就绪", DownloadsFilter::Ready),
-        ]
-        .as_slice(),
-        [
-            ("完成", DownloadsFilter::Finished),
             ("成功", DownloadsFilter::Success),
             ("失败", DownloadsFilter::Failed),
-        ]
-        .as_slice(),
-        [
-            ("暂停", DownloadsFilter::Paused),
-            ("停止中", DownloadsFilter::Cancelling),
             ("已停止", DownloadsFilter::Cancelled),
         ]
         .as_slice(),

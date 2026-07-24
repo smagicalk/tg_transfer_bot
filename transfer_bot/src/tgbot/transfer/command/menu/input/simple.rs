@@ -40,12 +40,18 @@ pub(super) fn parse_job_id_input(input: &str) -> Option<i64> {
 pub(super) async fn send_cancelled_notice(
     request_chat_id: i64,
     client_id: i32,
+    remove_reply_keyboard: bool,
 ) -> anyhow::Result<()> {
     let text = build_menu_status_text(
         "已取消",
         "cancelled",
-        "当前输入流程已取消，可重新打开 /menu。",
+        "当前输入流程已取消，可从菜单重新开始。",
     );
+    if remove_reply_keyboard {
+        return send::send_card_message_with_remove_keyboard(text, request_chat_id, client_id)
+            .await;
+    }
+
     send::ReplyPanel::card(text)
         .row(vec![send::build_callback_button(
             "返回菜单",
@@ -59,7 +65,7 @@ pub(super) async fn send_cancelled_notice(
 /// 菜单输入过期提示的上下文版本。
 pub(super) fn expired_input_detail_on(app: &crate::app_context::AppContext) -> String {
     format!(
-        "上一次菜单输入已超过 {}，请重新打开 /menu。",
+        "上一次菜单输入已超过 {}，请返回菜单重新开始。",
         format_duration_hint(
             crate::tgbot::transfer::runtime_config_on(app)
                 .menu_input_timeout_seconds
@@ -138,6 +144,6 @@ mod tests {
         let text = build_step_prompt_text("1/1", "任务详情", "请输入 job_id。");
 
         assert!(text.contains("步骤：‹1/1›"));
-        assert!(text.contains("‹/cancel›"));
+        assert!(text.contains("回复“取消”结束当前流程"));
     }
 }

@@ -18,5 +18,6 @@ pub(in crate::tgbot::transfer) use gc::{
     mark_file_cache_delete_failed,
 };
 pub(in crate::tgbot::transfer) use status::{
-    mark_file_cache_downloading, mark_file_cache_failed, mark_file_cache_ready,
+    find_ready_file_cache, mark_file_cache_downloading, mark_file_cache_failed,
+    mark_file_cache_ready,
 };

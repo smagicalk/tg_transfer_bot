@@ -62,31 +62,13 @@ pub(in crate::tgbot::transfer::command) fn downloads_help_summary() -> &'static 
 pub(in crate::tgbot::transfer::command) fn downloads_help_intro_lines() -> Vec<String> {
     vec![
         "直接点筛选按钮查看列表；列表页内可继续翻页、刷新和进入任务详情。".to_owned(),
-        "单所有者模式会显示全部任务。".to_owned(),
+        "已授权用户会看到全部任务。".to_owned(),
     ]
 }
 
 /// `/downloads` 帮助详情里统一展示的筛选参数列表。
 pub(in crate::tgbot::transfer::command) fn downloads_help_filter_values() -> &'static str {
     "all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | cancel"
-}
-
-/// `/downloads` 菜单页复用的命令示例。
-pub(in crate::tgbot::transfer::command) fn downloads_menu_command_lines() -> Vec<String> {
-    vec![
-        card::command_line(
-            "全部",
-            build_downloads_command(None, None, None, CommandStyle::Long),
-        ),
-        card::command_line(
-            "运行中",
-            build_downloads_command(Some("run"), None, None, CommandStyle::Long),
-        ),
-        card::command_line(
-            "失败",
-            build_downloads_command(Some("fail"), None, None, CommandStyle::Long),
-        ),
-    ]
 }
 
 /// `/downloads` 帮助详情复用的示例命令。
@@ -277,7 +259,7 @@ pub async fn downloads_callback_query_on(
         keyboard,
         client_id,
         "下载列表刷新失败",
-        "列表已生成，但原消息编辑失败；请复制错误或重新发送 /downloads。",
+        "列表已生成，但原消息编辑失败；请使用错误卡片上的“菜单”按钮重新进入。",
     )
     .await
 }

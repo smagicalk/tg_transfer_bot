@@ -78,7 +78,10 @@ pub(crate) async fn test_schema_has_required_columns(
             && test_table_has_column(db, "file_cache", "owner_client_role").await?
             && test_table_has_column(db, "menu_input_draft", "expires_at").await?
             && test_table_has_column(db, "transfer_runtime_config", "menu_input_timeout_seconds")
-                .await?,
+                .await?
+            && test_table_has_column(db, "authorized_user", "user_id").await?
+            && test_table_has_column(db, "authorized_user", "display_name").await?
+            && test_table_has_column(db, "authorized_user", "username").await?,
     )
 }
 

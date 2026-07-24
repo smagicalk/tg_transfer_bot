@@ -263,6 +263,83 @@ async fn test_insert() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 动态授权应持久化且保持幂等，供运行时命令安全重试。
+#[tokio::test]
+async fn test_authorized_user_persistence_lifecycle() -> anyhow::Result<()> {
+    let _guard = super::TEST_DB_LOCK.lock().await;
+    init_tracing();
+    let db = prepare_test_schema().await?;
+    let user_id = rand::rng().random_range(1_000_000..=9_999_999);
+
+    crate::access::revoke_authorized_user_on(db, user_id).await?;
+    assert!(crate::access::grant_authorized_user_on(db, user_id).await?);
+    assert!(!crate::access::grant_authorized_user_on(db, user_id).await?);
+    assert!(
+        crate::access::list_authorized_user_ids_on(db)
+            .await?
+            .contains(&user_id)
+    );
+
+    assert!(crate::access::revoke_authorized_user_on(db, user_id).await?);
+    assert!(!crate::access::revoke_authorized_user_on(db, user_id).await?);
+    assert!(
+        !crate::access::list_authorized_user_ids_on(db)
+            .await?
+            .contains(&user_id)
+    );
+    Ok(())
+}
+
+/// 动态授权应保存可选的 Telegram 名称资料，列表读取后可用于管理员界面展示。
+#[tokio::test]
+async fn test_authorized_user_profile_lifecycle() -> anyhow::Result<()> {
+    let _guard = super::TEST_DB_LOCK.lock().await;
+    init_tracing();
+    let db = prepare_test_schema().await?;
+    let user_id = rand::rng().random_range(300_000_000..=399_999_999);
+
+    crate::access::revoke_authorized_user_on(db, user_id).await?;
+    assert!(
+        crate::access::grant_authorized_user_with_profile_on(
+            db,
+            user_id,
+            Some("张三"),
+            Some("zhangsan"),
+        )
+        .await?
+    );
+
+    let users = crate::access::list_authorized_users_on(db).await?;
+    let user = users
+        .iter()
+        .find(|user| user.user_id == user_id)
+        .expect("profile row should be listed");
+    assert_eq!(user.display_name.as_deref(), Some("张三"));
+    assert_eq!(user.username.as_deref(), Some("zhangsan"));
+
+    assert!(crate::access::update_authorized_user_profile_on(
+        db,
+        user_id,
+        Some("张三（管理员）"),
+        None,
+    )
+    .await?);
+    let user = crate::access::list_authorized_users_on(db)
+        .await?
+        .into_iter()
+        .find(|user| user.user_id == user_id)
+        .expect("updated profile row should be listed");
+    assert_eq!(user.display_name.as_deref(), Some("张三（管理员）"));
+    assert_eq!(user.username, None);
+
+    assert!(
+        !crate::access::update_authorized_user_profile_on(db, user_id + 1, Some("不存在"), None,)
+            .await?
+    );
+    crate::access::revoke_authorized_user_on(db, user_id).await?;
+    Ok(())
+}
+
 /// 同一个 source_link 可以创建不同 job（不同请求消息）。
 #[tokio::test]
 async fn test_same_link_can_create_different_jobs() -> anyhow::Result<()> {
@@ -380,6 +457,8 @@ async fn test_runtime_bootstrap_helper_seeds_sqlite_runtime_state() -> anyhow::R
     init_tracing();
     let db = get_db().await?;
     rebuild_test_schema(db).await?;
+    let authorized_user_id = 8_765_432;
+    crate::access::grant_authorized_user_on(db, authorized_user_id).await?;
 
     let (transfer_default, targets_default) = test_bootstrap_defaults();
     let seeded = crate::bootstrap_runtime_database_state_on(
@@ -397,6 +476,7 @@ async fn test_runtime_bootstrap_helper_seeds_sqlite_runtime_state() -> anyhow::R
         seeded.targets_config.aliases.get("archive"),
         Some(&-1001234567890)
     );
+    assert!(seeded.authorized_user_ids.contains(&authorized_user_id));
 
     let runtime_row = crate::tgbot::transfer::load_transfer_runtime_config()
         .await?

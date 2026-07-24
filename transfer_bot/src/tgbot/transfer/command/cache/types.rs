@@ -28,7 +28,7 @@ pub(super) struct CacheArgs {
 impl Default for CacheArgs {
     fn default() -> Self {
         Self {
-            view: CacheView::Summary,
+            view: CacheView::Page,
             limit: 10,
             page: 1,
         }

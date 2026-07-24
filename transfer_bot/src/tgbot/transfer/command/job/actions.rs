@@ -13,6 +13,77 @@ use super::{
     build_job_stop_callback_data,
 };
 
+fn preferred_job_result_link(
+    current_link: Option<&str>,
+    records: &[store::ResultMessageRecord],
+) -> Option<String> {
+    current_link
+        .filter(|link| send::is_openable_url(link))
+        .or_else(|| {
+            records
+                .iter()
+                .map(|record| record.message_link.as_str())
+                .find(|link| send::is_openable_url(link))
+        })
+        .or(current_link)
+        .or_else(|| records.first().map(|record| record.message_link.as_str()))
+        .map(str::to_owned)
+}
+
+/// 读取任务详情前刷新历史定位链接，确保超级群目标能提供可点击地址。
+pub(super) async fn load_job_status_snapshot(
+    app: &crate::app_context::AppContext,
+    job_id: i64,
+) -> anyhow::Result<Option<store::JobProgressSnapshot>> {
+    let Some(mut snapshot) = store::get_job_progress_snapshot_with_context(app, job_id).await?
+    else {
+        return Ok(None);
+    };
+    if snapshot
+        .job
+        .result_message_link
+        .as_deref()
+        .is_none_or(|link| !send::is_openable_url(link))
+    {
+        let mut records = store::list_result_messages_by_job(job_id).await?;
+        if !records.is_empty() {
+            match super::super::super::transfer_client_ids() {
+                Ok(client_ids) => {
+                    match workflow::refresh_stored_result_messages(
+                        job_id,
+                        records,
+                        client_ids.upload,
+                    )
+                    .await
+                    {
+                        Ok(refreshed) => records = refreshed,
+                        Err(err) => {
+                            tracing::warn!(job_id, error = %err, "refresh job result links failed");
+                            records = store::list_result_messages_by_job(job_id).await?;
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(job_id, error = %err, "upload client unavailable while refreshing job result links");
+                }
+            }
+
+            let preferred =
+                preferred_job_result_link(snapshot.job.result_message_link.as_deref(), &records);
+            if preferred != snapshot.job.result_message_link {
+                if let Some(link) = preferred.as_ref()
+                    && send::is_openable_url(link)
+                    && let Err(err) = store::update_result_message_link(job_id, link.clone()).await
+                {
+                    tracing::warn!(job_id, error = %err, "sync primary job result link failed");
+                }
+                snapshot.job.result_message_link = preferred;
+            }
+        }
+    }
+    Ok(Some(snapshot))
+}
+
 /// 当前文件删除延迟（分钟）。
 fn file_delete_delay_minutes_on(app: &crate::app_context::AppContext) -> i64 {
     crate::tgbot::transfer::runtime_config_on(app)
@@ -101,6 +172,7 @@ pub(super) async fn resume_job_on(
             app_context,
             job.clone(),
             super::super::super::transfer_client_ids()?,
+            None,
         );
     }
     tracing::info!(
@@ -228,7 +300,7 @@ pub(super) async fn show_job_status_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let Some(snapshot) = store::get_job_progress_snapshot_with_context(app, job_id).await? else {
+    let Some(snapshot) = load_job_status_snapshot(app, job_id).await? else {
         anyhow::bail!("job not found: {}", job_id);
     };
     tracing::info!(
@@ -248,7 +320,8 @@ pub(super) async fn show_job_status_on(
 
 #[cfg(test)]
 mod tests {
-    use super::build_pause_job_action_rows;
+    use super::{build_pause_job_action_rows, preferred_job_result_link};
+    use crate::tgbot::transfer::store::ResultMessageRecord;
     use base64::{Engine as _, engine::general_purpose};
 
     // 暂停结果卡片应提供直接操作按钮；停止按钮进入确认页，不再直接停止。
@@ -275,6 +348,24 @@ mod tests {
             rows[0][1].r#type,
             tdlib_rs::enums::InlineKeyboardButtonType::Callback(_)
         ));
+    }
+
+    // 主任务字段为空但结果明细已有 URL 时，详情必须采用明细地址生成跳转入口。
+    #[test]
+    fn test_preferred_job_result_link_uses_first_openable_result_record() {
+        let records = vec![ResultMessageRecord {
+            result_index: 0,
+            target_chat_id: -100123,
+            message_id: 734003200,
+            message_link: "https://t.me/c/123/700".to_owned(),
+            is_album: false,
+            item_count: 1,
+        }];
+
+        assert_eq!(
+            preferred_job_result_link(None, &records).as_deref(),
+            Some("https://t.me/c/123/700")
+        );
     }
 
     fn decoded_callback_data(button: &tdlib_rs::types::InlineKeyboardButton) -> String {

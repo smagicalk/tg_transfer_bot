@@ -7,8 +7,8 @@ use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
 
 use super::common::{
-    CommandStyle, build_page_command_section, build_ready_page_header,
-    build_refresh_return_menu_row, health_command as build_health_command,
+    CommandStyle, build_ready_page_header, build_refresh_return_menu_row,
+    health_command as build_health_command,
 };
 
 /// `health` 帮助页和目录页共用的用途描述。
@@ -130,7 +130,7 @@ pub async fn health_callback_query_on(
         keyboard,
         client_id,
         "健康页刷新失败",
-        "健康页已生成，但原消息编辑失败；请复制错误或重新发送 /health。",
+        "健康页已生成，但原消息编辑失败；请使用错误卡片上的“菜单”按钮重新进入。",
     )
     .await
 }
@@ -169,8 +169,8 @@ fn build_health_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
                 tdlib_rs::enums::ButtonStyle::Primary,
             ),
             send::build_callback_button(
-                "帮助",
-                &super::build_help_button_data(None),
+                "查看命令",
+                &super::build_help_button_data(Some("health")),
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
             send::build_callback_button(
@@ -273,10 +273,6 @@ fn format_health_text(snapshot: &HealthSnapshot) -> String {
             "file_gc_interval_seconds",
             transfer.file_gc_interval_seconds,
         ),
-        build_page_command_section(),
-        card::command_line("缓存", "/cache"),
-        card::command_line("下载", "/downloads"),
-        card::command_line("帮助", "/help"),
     ]);
     lines.join("\n")
 }
@@ -298,7 +294,7 @@ fn format_client_line(clients: Option<crate::config::TransferClientIds>) -> Stri
 mod tests {
     use super::*;
 
-    // 健康页应像控制面板一样直接跳转/刷新，复制命令只作为兜底。
+    // 健康页应像控制面板一样直接跳转/刷新，命令说明通过“查看命令”打开。
     #[test]
     fn test_build_health_buttons_prefer_callbacks() {
         let rows = build_health_buttons();
@@ -308,7 +304,7 @@ mod tests {
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        for expected in ["刷新", "下载列表", "文件缓存", "菜单"] {
+        for expected in ["刷新", "下载列表", "文件缓存", "查看命令", "菜单"] {
             assert!(
                 labels.contains(&expected),
                 "missing health button: {expected}"
@@ -335,12 +331,12 @@ mod tests {
         assert_eq!(rows[0][0].text, "下载列表");
         assert_eq!(rows[0][1].text, "文件缓存");
         assert_eq!(rows[1][0].text, "刷新");
-        assert_eq!(rows[1][1].text, "帮助");
+        assert_eq!(rows[1][1].text, "查看命令");
         assert_eq!(rows[1][2].text, "菜单");
     }
 
     #[test]
-    fn test_format_health_text_uses_ready_header_and_command_section() {
+    fn test_format_health_text_hides_command_section_by_default() {
         let now = store::now_utc8();
         let snapshot = HealthSnapshot {
             transfer: store::TransferHealthSnapshot {
@@ -372,7 +368,7 @@ mod tests {
 
         assert!(text.contains("运行健康"));
         assert!(text.contains("状态：‹ready›"));
-        assert!(text.contains("■ 命令"));
-        assert!(text.contains("缓存：‹/cache›"));
+        assert!(!text.contains("■ 命令"));
+        assert!(!text.contains("/cache"));
     }
 }

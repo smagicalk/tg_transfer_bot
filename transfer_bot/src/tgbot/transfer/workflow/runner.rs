@@ -185,33 +185,48 @@ async fn run_job_inner_once(
         }
 
         let file_key = file::extract_file_key(msg);
+        let mut cached_meta = None;
         if let Some(seed) = file::extract_download_seed(msg) {
-            store::mark_file_cache_downloading(&job.source_client_role, &seed).await?;
-            // TDLib 的 file id/local path 隶属于具体 client，bot/user 不能共享同一个下载 future。
-            let singleflight_key = format!("{}:{}", job.source_client_role, seed.file_key);
-            let download_result = queue::run_singleflight(singleflight_key, || async {
-                file::ensure_media_downloaded(msg, source_client_id).await
-            })
-            .await;
-            if let Err(err) = download_result {
-                let err_str = format!("{:#}", err);
-                tracing::warn!(
-                    job_id = job.id,
-                    item_id = item.id,
-                    file_key = %seed.file_key,
-                    error = %err_str,
-                    "prepare item download failed"
-                );
-                store::set_item_status(item.id, ITEM_STATUS_FAILED, Some(err_str.clone())).await?;
-                store::mark_file_cache_failed(
-                    &job.source_client_role,
-                    &seed.file_key,
-                    err_str.clone(),
-                )
-                .await?;
-                prepare_fail_count += 1;
-                last_error = Some(err_str);
-                continue;
+            cached_meta =
+                store::find_ready_file_cache(&job.source_client_role, &seed.file_key).await?;
+            if cached_meta.is_none() {
+                store::mark_file_cache_downloading(&job.source_client_role, &seed).await?;
+                // TDLib 的 file id/local path 隶属于具体 client，bot/user 不能共享同一个下载 future。
+                let singleflight_key = format!("{}:{}", job.source_client_role, seed.file_key);
+                let download_result = queue::run_singleflight(singleflight_key, || async {
+                    file::ensure_media_downloaded(msg, source_client_id, job.id).await
+                })
+                .await;
+                if let Err(err) = download_result {
+                    if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
+                        tracing::info!(
+                            job_id = job.id,
+                            item_id = item.id,
+                            outcome = ?outcome,
+                            "transfer job download interrupted by control"
+                        );
+                        return Ok(outcome);
+                    }
+                    let err_str = format!("{:#}", err);
+                    tracing::warn!(
+                        job_id = job.id,
+                        item_id = item.id,
+                        file_key = %seed.file_key,
+                        error = %err_str,
+                        "prepare item download failed"
+                    );
+                    store::set_item_status(item.id, ITEM_STATUS_FAILED, Some(err_str.clone()))
+                        .await?;
+                    store::mark_file_cache_failed(
+                        &job.source_client_role,
+                        &seed.file_key,
+                        err_str.clone(),
+                    )
+                    .await?;
+                    prepare_fail_count += 1;
+                    last_error = Some(err_str);
+                    continue;
+                }
             }
             if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
                 tracing::info!(
@@ -223,7 +238,7 @@ async fn run_job_inner_once(
             }
         }
 
-        match file::prepare_upload_content(msg, source_client_id).await {
+        match file::prepare_upload_content(msg, source_client_id, cached_meta.as_ref()).await {
             Ok(prepared_one) => {
                 if let Some(meta) = &prepared_one.cache_meta {
                     store::mark_file_cache_ready(&job.source_client_role, meta).await?;
@@ -358,7 +373,23 @@ async fn run_job_inner_once(
         "transfer job upload started"
     );
 
-    let upload_result = upload_prepared(job.target_chat_id, &prepared, client_ids.upload).await;
+    // guard 覆盖上传与最终状态落库；任何成功或错误返回都会清理运行时 file_id 映射。
+    // 恢复任务可能来自进程重启或上一次中断，先清除同 job 的陈旧 file_id/字节快照，
+    // 避免新一轮上传从旧进度起算。
+    app_context
+        .upload_progress
+        .clear_job(client_ids.upload, job.id);
+    let _upload_progress_guard = app_context
+        .upload_progress
+        .job_guard(client_ids.upload, job.id);
+    let upload_result = upload_prepared(
+        app_context.as_ref(),
+        job.id,
+        job.target_chat_id,
+        &prepared,
+        client_ids.upload,
+    )
+    .await;
     match upload_result {
         Ok(upload_result) => {
             // 上传成功后目标消息已经真实发出，不能再用 pause/stop 把数据库隐藏成未完成。
@@ -417,6 +448,17 @@ async fn run_job_inner_once(
             })
         }
         Err(err) => {
+            // 上传等待会在 pause/stop 时主动返回；必须先交给控制状态收敛，
+            // 不能把用户控制误记成上传失败，更不能随后覆盖成 success。
+            if let Some(outcome) = apply_job_control(app_context.as_ref(), job.id).await? {
+                tracing::info!(
+                    job_id = job.id,
+                    target_chat_id = job.target_chat_id,
+                    outcome = ?outcome,
+                    "transfer upload interrupted by job control"
+                );
+                return Ok(outcome);
+            }
             let err_str = format!("{:#}", err);
             tracing::error!(
                 job_id = job.id,

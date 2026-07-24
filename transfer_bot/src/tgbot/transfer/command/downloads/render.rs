@@ -1,10 +1,7 @@
 // `/downloads` 的文本渲染。
 // 该模块只把已经查询好的任务快照渲染为 card 标记文本。
 
-use super::super::common::{
-    build_page_command_section, build_page_empty_note, build_ready_page_header, format_bytes,
-};
-use super::keyboard::build_downloads_page_command;
+use super::super::common::{build_page_empty_note, build_ready_page_header, format_bytes};
 use super::types::DownloadsArgs;
 use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::store;
@@ -19,12 +16,6 @@ pub(super) fn format_downloads_text(
     let scope_label = "范围：所有任务";
     if snapshots.is_empty() {
         let page_label = format!("{}/{}", args.page, total_pages);
-        let current_page_command = card::code(build_downloads_page_command(
-            args.filter,
-            args.limit,
-            args.page,
-        ));
-        let current_page_line = format!("当前页：{}", current_page_command);
         let mut lines = build_ready_page_header("下载列表为空");
         lines.push(format!(
             "筛选：{}  页码：{}  每页：{}",
@@ -33,8 +24,6 @@ pub(super) fn format_downloads_text(
             card::code(args.limit),
         ));
         lines.push(scope_label.to_owned());
-        lines.push(build_page_command_section());
-        lines.push(current_page_line);
         lines.push(build_page_empty_note("可切换筛选或稍后刷新。"));
         return lines.join("\n");
     }
@@ -48,14 +37,6 @@ pub(super) fn format_downloads_text(
         card::code(total)
     ));
     lines.push(card::DIVIDER.to_owned());
-    lines.push(format!(
-        "命令：{}",
-        card::code(build_downloads_page_command(
-            args.filter,
-            args.limit,
-            args.page,
-        )),
-    ));
     lines.push(scope_label.to_owned());
 
     for snapshot in snapshots {
@@ -96,14 +77,6 @@ pub(super) fn format_downloads_text(
         lines.push(card::field(
             "更新",
             snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S"),
-        ));
-        lines.push(card::command_line(
-            "命令",
-            super::super::common::job_command(
-                "status",
-                snapshot.job.id,
-                super::super::common::CommandStyle::Long,
-            ),
         ));
     }
 

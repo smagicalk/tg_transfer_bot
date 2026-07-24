@@ -11,7 +11,18 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 type SendKey = (i32, i64, i64);
-type SendResult = Result<tdlib_rs::types::Message, String>;
+type SendResult = Result<SentMessageReceipt, String>;
+
+/// 文本发送后业务层需要的轻量回执。
+///
+/// 生成的 TDLib `Message` 包含非常大的枚举；只为读取消息 ID 而复制该类型会在
+/// Windows debug worker 的深异步调用栈上触发栈溢出。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SentMessageReceipt {
+    pub id: i64,
+    pub chat_id: i64,
+    pub is_temporary: bool,
+}
 
 /// 最多缓存多少条“先收到成功 update，后注册等待者”的消息。
 const COMPLETED_CACHE_LIMIT: usize = 256;
@@ -22,8 +33,8 @@ static SEND_STATE: LazyLock<Mutex<SendState>> = LazyLock::new(|| Mutex::new(Send
 
 #[derive(Default)]
 struct SendState {
-    /// 临时消息键 -> 最终发送成功的消息。
-    completed: HashMap<SendKey, tdlib_rs::types::Message>,
+    /// 临时消息键 -> 最终发送成功的轻量回执。
+    completed: HashMap<SendKey, SentMessageReceipt>,
     /// 临时消息键 -> 正在等待最终发送结果的调用方。
     waiters: HashMap<SendKey, Vec<oneshot::Sender<SendResult>>>,
 }
@@ -35,15 +46,71 @@ pub async fn wait_for_sent_message(
     message: tdlib_rs::types::Message,
     client_id: i32,
 ) -> anyhow::Result<tdlib_rs::types::Message> {
+    wait_for_sent_message_with_timeout(message, client_id, SEND_SUCCEEDED_WAIT_TIMEOUT).await
+}
+
+/// 等待 TDLib 把临时 message_id 替换成最终 message_id，并允许业务场景指定等待窗口。
+///
+/// 媒体上传可能在服务端处理较慢，上传调用方应使用更长窗口；普通机器人文本仍使用
+/// `wait_for_sent_message` 的短窗口，避免单条回复长时间阻塞。
+pub async fn wait_for_sent_message_with_timeout(
+    message: tdlib_rs::types::Message,
+    client_id: i32,
+    timeout: Duration,
+) -> anyhow::Result<tdlib_rs::types::Message> {
     if message.sending_state.is_none() {
         return Ok(message);
     }
 
-    let key = (client_id, message.chat_id, message.id);
+    let temporary = SentMessageReceipt {
+        id: message.id,
+        chat_id: message.chat_id,
+        is_temporary: true,
+    };
+    let final_receipt =
+        wait_for_sent_message_receipt_with_timeout(temporary, client_id, timeout).await?;
+    if final_receipt.is_temporary || final_receipt.id == message.id {
+        return Ok(message);
+    }
+
+    tdlib_rs::functions::get_message(final_receipt.chat_id, final_receipt.id, client_id)
+        .await
+        .map(|message| {
+            let tdlib_rs::enums::Message::Message(message) = message;
+            message
+        })
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "get final sent message failed: code={}, message={}",
+                error.code,
+                error.message
+            )
+        })
+}
+
+/// 等待文本消息从临时 ID 对齐到最终 ID，全程只传递轻量回执。
+pub async fn wait_for_sent_message_receipt(
+    receipt: SentMessageReceipt,
+    client_id: i32,
+) -> anyhow::Result<SentMessageReceipt> {
+    wait_for_sent_message_receipt_with_timeout(receipt, client_id, SEND_SUCCEEDED_WAIT_TIMEOUT)
+        .await
+}
+
+async fn wait_for_sent_message_receipt_with_timeout(
+    receipt: SentMessageReceipt,
+    client_id: i32,
+    timeout: Duration,
+) -> anyhow::Result<SentMessageReceipt> {
+    if !receipt.is_temporary {
+        return Ok(receipt);
+    }
+
+    let key = (client_id, receipt.chat_id, receipt.id);
     let rx = {
         let mut state = lock_send_state();
-        if let Some(final_message) = state.completed.get(&key) {
-            return Ok(final_message.clone());
+        if let Some(final_receipt) = state.completed.get(&key) {
+            return Ok(*final_receipt);
         }
 
         let (tx, rx) = oneshot::channel();
@@ -51,27 +118,27 @@ pub async fn wait_for_sent_message(
         rx
     };
 
-    match tokio::time::timeout(SEND_SUCCEEDED_WAIT_TIMEOUT, rx).await {
-        Ok(Ok(Ok(final_message))) => Ok(final_message),
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(Ok(final_receipt))) => Ok(final_receipt),
         Ok(Ok(Err(error))) => {
             anyhow::bail!("message send failed after initial response: {}", error)
         }
         Ok(Err(_closed)) => {
             tracing::warn!(
-                chat_id = message.chat_id,
-                temporary_message_id = message.id,
+                chat_id = receipt.chat_id,
+                temporary_message_id = receipt.id,
                 "message send waiter dropped, use temporary id"
             );
-            Ok(message)
+            Ok(receipt)
         }
         Err(_elapsed) => {
             prune_closed_waiters(key);
             tracing::warn!(
-                chat_id = message.chat_id,
-                temporary_message_id = message.id,
+                chat_id = receipt.chat_id,
+                temporary_message_id = receipt.id,
                 "wait message send succeeded timeout, use temporary id"
             );
-            Ok(message)
+            Ok(receipt)
         }
     }
 }
@@ -86,26 +153,19 @@ pub async fn wait_for_sent_message_id(
     temporary_message_id: i64,
     timeout: Duration,
 ) -> Option<i64> {
-    let key = (client_id, chat_id, temporary_message_id);
-    let rx = {
-        let mut state = lock_send_state();
-        if let Some(final_message) = state.completed.get(&key) {
-            return Some(final_message.id);
-        }
-
-        let (tx, rx) = oneshot::channel();
-        state.waiters.entry(key).or_default().push(tx);
-        rx
-    };
-
-    match tokio::time::timeout(timeout, rx).await {
-        Ok(Ok(Ok(final_message))) => Some(final_message.id),
-        Err(_elapsed) => {
-            prune_closed_waiters(key);
-            None
-        }
-        _ => None,
-    }
+    wait_for_sent_message_receipt_with_timeout(
+        SentMessageReceipt {
+            id: temporary_message_id,
+            chat_id,
+            is_temporary: true,
+        },
+        client_id,
+        timeout,
+    )
+    .await
+    .ok()
+    .filter(|receipt| !receipt.is_temporary)
+    .map(|receipt| receipt.id)
 }
 
 /// 记录指定 TDLib client 的发送成功 update。
@@ -117,18 +177,23 @@ pub fn observe_message_send_succeeded_for_client(
     client_id: i32,
 ) {
     let key = (client_id, update.message.chat_id, update.old_message_id);
+    let receipt = SentMessageReceipt {
+        id: update.message.id,
+        chat_id: update.message.chat_id,
+        is_temporary: false,
+    };
     let waiters = {
         let mut state = lock_send_state();
         // 即使当前已有等待者，也缓存最终 ID。等待者可能已经因为超时被丢弃，
         // 后续编辑进度消息时仍需要通过临时 ID 找回最终 ID。
-        state.completed.insert(key, update.message.clone());
+        state.completed.insert(key, receipt);
         trim_completed_cache(&mut state);
         state.waiters.remove(&key)
     };
 
     if let Some(waiters) = waiters {
         for waiter in waiters {
-            let _ = waiter.send(Ok(update.message.clone()));
+            let _ = waiter.send(Ok(receipt));
         }
     }
 }
@@ -263,13 +328,6 @@ mod tests {
         }
     }
 
-    /// 构造 TDLib 发送中状态，用来模拟 sendMessage 返回临时 message_id。
-    fn pending_state() -> Option<tdlib_rs::enums::MessageSendingState> {
-        Some(tdlib_rs::enums::MessageSendingState::Pending(
-            tdlib_rs::types::MessageSendingStatePending { sending_id: 1 },
-        ))
-    }
-
     #[tokio::test]
     async fn test_completed_message_cache_is_not_consumed_by_first_waiter() {
         let chat_id = next_chat_id();
@@ -285,8 +343,12 @@ mod tests {
             TEST_CLIENT_ID,
         );
 
-        let resolved = wait_for_sent_message(
-            test_message(chat_id, temporary_id, pending_state()),
+        let resolved = wait_for_sent_message_receipt(
+            SentMessageReceipt {
+                id: temporary_id,
+                chat_id,
+                is_temporary: true,
+            },
             TEST_CLIENT_ID,
         )
         .await
@@ -334,6 +396,40 @@ mod tests {
         )
         .await;
         assert_eq!(resolved_id, Some(final_id));
+    }
+
+    /// 上传场景使用更长的自定义等待窗口时，应接住稍后到达的最终消息 ID。
+    #[tokio::test]
+    async fn test_custom_wait_timeout_resolves_delayed_final_message() {
+        let chat_id = next_chat_id();
+        let temporary_id = -14;
+        let final_id = 34;
+
+        let observer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            observe_message_send_succeeded_for_client(
+                tdlib_rs::types::UpdateMessageSendSucceeded {
+                    message: test_message(chat_id, final_id, None),
+                    old_message_id: temporary_id,
+                },
+                TEST_CLIENT_ID,
+            );
+        });
+
+        let resolved = wait_for_sent_message_receipt_with_timeout(
+            SentMessageReceipt {
+                id: temporary_id,
+                chat_id,
+                is_temporary: true,
+            },
+            TEST_CLIENT_ID,
+            Duration::from_millis(100),
+        )
+        .await
+        .expect("delayed successful send should resolve within custom timeout");
+        observer.await.expect("observer task should finish");
+
+        assert_eq!(resolved.id, final_id);
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 // 数据库模块：
 // - 初始化 SeaORM 连接池
-// - 定义 transfer_job / transfer_item / transfer_result_message / file_cache / menu_input_draft / transfer_runtime_config 实体
+// - 定义转存任务、缓存、菜单草稿、运行配置和动态授权实体
 // - 启动时执行 SeaORM migration；具体 DDL 统一放到 migration/runtime_schema.rs
 use sea_orm_migration::MigratorTrait;
 
@@ -41,6 +41,7 @@ pub(crate) async fn ensure_runtime_schema(db: &sea_orm::DatabaseConnection) -> a
 pub(crate) static TEST_DB_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+pub(crate) mod authorized_user;
 pub(crate) mod file_cache;
 pub(crate) mod menu_input_draft;
 pub(crate) mod transfer_item;
