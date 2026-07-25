@@ -262,7 +262,7 @@ pub(in crate::tgbot::transfer) fn format_failure_card_text(
         card::summary_line("failed", job_id, target_chat_id),
         card::DIVIDER.to_owned(),
         card::section("错误"),
-        card::pre_code(format!("{:#}", err)),
+        card::pre_code(format!("{err:#}")),
         card::section("建议"),
     ];
     lines.extend(build_failure_advice_lines(err));
@@ -279,7 +279,7 @@ pub(in crate::tgbot::transfer) fn format_failure_card_text(
 /// TDLib 错误来自远端状态和本地 client 状态，类型不稳定；这里用保守的文本分类给出下一步，
 /// 但原始错误仍保留在“错误”代码块里，方便日志排查时回到真实原因。
 fn build_failure_advice_lines(err: &anyhow::Error) -> Vec<String> {
-    let err_text = format!("{:#}", err);
+    let err_text = format!("{err:#}");
     let hint = classify_transfer_error_text(&err_text);
     vec![
         format!("原因：{}", hint.reason),

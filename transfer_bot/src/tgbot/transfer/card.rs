@@ -32,14 +32,14 @@ pub(in crate::tgbot) fn link(label: &str, url: &str) -> String {
 
 /// 构造一个分区标题。
 pub(in crate::tgbot) fn section(title: &str) -> String {
-    format!("■ {}", title)
+    format!("■ {title}")
 }
 
 /// 构造普通说明行。
 ///
 /// 说明文字不使用 code 实体，保留自然换行和可读性。
 pub(in crate::tgbot) fn note(value: &str) -> String {
-    format!("说明：{}", value)
+    format!("说明：{value}")
 }
 
 /// 构造单个 `label：value` 字段。
@@ -100,7 +100,7 @@ pub(in crate::tgbot) fn status_job_target(
 
 /// 构造 job 引用字段，统一展示为 `#id`。
 pub(in crate::tgbot) fn job_ref(job_id: i64) -> String {
-    code(format!("#{}", job_id))
+    code(format!("#{job_id}"))
 }
 
 /// 构造固定宽度文本进度条。

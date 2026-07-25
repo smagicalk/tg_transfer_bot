@@ -95,7 +95,7 @@ pub(crate) async fn send_command_error_message(
     chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let error_text = format!("{:#}", err);
+    let error_text = format!("{err:#}");
     let hint = command_error_hint(&error_text);
     let result = ReplyPanel::card(
         [
@@ -220,7 +220,7 @@ pub(crate) async fn send_auto_transfer_hint_message(
     chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
-    let error_text = format!("{:#}", err);
+    let error_text = format!("{err:#}");
     if error_text.contains("无法定位原始消息") {
         return ReplyPanel::card(
             [

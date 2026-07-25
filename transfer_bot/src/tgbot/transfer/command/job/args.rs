@@ -56,7 +56,7 @@ pub(super) fn parse_job_args(text: &[&str]) -> anyhow::Result<JobArgs> {
         "resume" => JobAction::Resume,
         "stop" | "cancel" => JobAction::Stop,
         "status" => JobAction::Status,
-        other => anyhow::bail!("unknown job action: {}", other),
+        other => anyhow::bail!("unknown job action: {other}"),
     };
 
     Ok(JobArgs { action, job_id })

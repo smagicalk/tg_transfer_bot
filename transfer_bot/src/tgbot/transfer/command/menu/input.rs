@@ -273,7 +273,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn handle_shared_chat_input_
                         context.context_i64,
                     );
                     let detail =
-                        build_input_retry_detail(&format!("执行失败：{}。", err), &meta.detail);
+                        build_input_retry_detail(&format!("执行失败：{err}。"), &meta.detail);
                     send_admin_input_prompt(
                         context.action,
                         context.context_i64,
@@ -886,10 +886,8 @@ pub(super) async fn handle_menu_input_on(
                     error = %err,
                     "menu input job command failed, waiting for retry"
                 );
-                let detail = build_input_retry_detail(
-                    &format!("执行失败：{}。", err),
-                    action.input_detail(),
-                );
+                let detail =
+                    build_input_retry_detail(&format!("执行失败：{err}。"), action.input_detail());
                 send::send_card_message_with_force_reply_returning(
                     build_step_prompt_text("1/1", "任务操作未生效", &detail),
                     request_chat_id,
@@ -1076,8 +1074,7 @@ pub(super) async fn handle_menu_input_on(
                     "menu input admin command failed, waiting for retry"
                 );
                 let meta = admin_input_prompt_meta(action, context_text.as_deref(), context_i64);
-                let detail =
-                    build_input_retry_detail(&format!("执行失败：{}。", err), &meta.detail);
+                let detail = build_input_retry_detail(&format!("执行失败：{err}。"), &meta.detail);
                 send_admin_input_prompt(
                     action,
                     context_i64,

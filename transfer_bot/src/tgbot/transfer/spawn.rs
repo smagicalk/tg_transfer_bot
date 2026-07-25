@@ -120,7 +120,7 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
             "sending separate transfer outcome message"
         );
         // result 会被发送函数消费；先保存错误摘要，避免为了日志克隆完整结果。
-        let result_error = result.as_ref().err().map(|err| format!("{:#}", err));
+        let result_error = result.as_ref().err().map(|err| format!("{err:#}"));
         let send_result = send_transfer_outcome(
             &source_link,
             target_chat_id,
@@ -253,7 +253,7 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
         }
 
         // result 会被发送函数消费；先保存错误摘要，避免为了日志克隆完整结果。
-        let result_error = result.as_ref().err().map(|err| format!("{:#}", err));
+        let result_error = result.as_ref().err().map(|err| format!("{err:#}"));
         let send_result = send_recovery_outcome(
             job_id,
             &source_link,

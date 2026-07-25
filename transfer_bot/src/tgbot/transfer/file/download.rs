@@ -224,7 +224,7 @@ async fn ensure_local_file_with_control(
                 result = &mut download => break result.map_err(|e| anyhow::Error::new(TdError(e)))?,
                 _ = tokio::time::sleep(DOWNLOAD_CONTROL_POLL_INTERVAL) => {
                     let Some(status) = store::get_job_status(job_id).await? else {
-                        anyhow::bail!("job not found while downloading: {}", job_id);
+                        anyhow::bail!("job not found while downloading: {job_id}");
                     };
                     if matches!(
                         status.as_str(),
@@ -248,7 +248,7 @@ async fn ensure_local_file_with_control(
                                 "tdlib cancelDownloadFile returned error"
                             );
                         }
-                        anyhow::bail!("transfer job control requested during download: {}", status);
+                        anyhow::bail!("transfer job control requested during download: {status}");
                     }
                 }
             }

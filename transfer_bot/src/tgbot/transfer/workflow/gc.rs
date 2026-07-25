@@ -63,7 +63,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(
                         mark_delete_failed_retry_later(
                             &row.file_key,
                             &row.owner_client_role,
-                            format!("remove local file failed: {}", err),
+                            format!("remove local file failed: {err}"),
                             retry_delay_seconds,
                         )
                         .await?;
@@ -84,7 +84,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(
                         mark_delete_failed_retry_later(
                             &row.file_key,
                             &row.owner_client_role,
-                            format!("unsafe local path refused: {}", err),
+                            format!("unsafe local path refused: {err}"),
                             retry_delay_seconds,
                         )
                         .await?;
@@ -119,7 +119,7 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(
                         mark_delete_failed_retry_later(
                             &row.file_key,
                             &row.owner_client_role,
-                            format!("tdlib delete_file failed: {:?}", err),
+                            format!("tdlib delete_file failed: {err:?}"),
                             retry_delay_seconds,
                         )
                         .await?;
@@ -173,7 +173,7 @@ fn safe_local_file_path(
     local_path: &str,
 ) -> anyhow::Result<Option<PathBuf>> {
     let role = crate::tgbot::transfer::types::client_role_from_str(owner_client_role)
-        .ok_or_else(|| anyhow::anyhow!("invalid owner_client_role: {}", owner_client_role))?;
+        .ok_or_else(|| anyhow::anyhow!("invalid owner_client_role: {owner_client_role}"))?;
     let Some(tdlib_root) = app_context.transfer_runtime.tdlib_files_directory_for(role) else {
         anyhow::bail!("tdlib files_directory is empty");
     };

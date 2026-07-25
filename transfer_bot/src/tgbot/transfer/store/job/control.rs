@@ -43,17 +43,17 @@ pub(in crate::tgbot::transfer) async fn pause_job(
     let db_conn = db::get_db().await?;
     let job = find_job(job_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("job not found: {}", job_id))?;
+        .ok_or_else(|| anyhow::anyhow!("job not found: {job_id}"))?;
 
     match job.status.as_str() {
         JOB_STATUS_PENDING | JOB_STATUS_RUNNING | JOB_STATUS_PAUSED => {}
         JOB_STATUS_CANCELLING | JOB_STATUS_CANCEL_FINALIZING => {
-            anyhow::bail!("job is cancelling: {}", job_id)
+            anyhow::bail!("job is cancelling: {job_id}")
         }
         status if is_finished_job_status(status) => {
-            anyhow::bail!("job already finished: {}", status)
+            anyhow::bail!("job already finished: {status}")
         }
-        status => anyhow::bail!("job status doesn't support pause: {}", status),
+        status => anyhow::bail!("job status doesn't support pause: {status}"),
     }
 
     let update = db::transfer_job::Entity::update_many()
@@ -71,12 +71,12 @@ pub(in crate::tgbot::transfer) async fn pause_job(
     let rs = update.exec(db_conn).await?;
 
     if rs.rows_affected == 0 {
-        anyhow::bail!("job status changed before pause: {}", job_id);
+        anyhow::bail!("job status changed before pause: {job_id}");
     }
 
     find_job(job_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("job not found after pause: {}", job_id))
+        .ok_or_else(|| anyhow::anyhow!("job not found after pause: {job_id}"))
 }
 
 /// 唤醒未完成任务。
@@ -91,18 +91,18 @@ pub(in crate::tgbot::transfer) async fn wake_job(
     let db_conn = db::get_db().await?;
     let job = find_job(job_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("job not found: {}", job_id))?;
+        .ok_or_else(|| anyhow::anyhow!("job not found: {job_id}"))?;
 
     match job.status.as_str() {
         JOB_STATUS_PAUSED => {}
         JOB_STATUS_PENDING | JOB_STATUS_RUNNING => return Ok(job),
         JOB_STATUS_CANCELLING | JOB_STATUS_CANCEL_FINALIZING => {
-            anyhow::bail!("job is cancelling: {}", job_id)
+            anyhow::bail!("job is cancelling: {job_id}")
         }
         status if is_finished_job_status(status) => {
-            anyhow::bail!("job already finished: {}", status)
+            anyhow::bail!("job already finished: {status}")
         }
-        status => anyhow::bail!("job status doesn't support wake: {}", status),
+        status => anyhow::bail!("job status doesn't support wake: {status}"),
     }
 
     let update = db::transfer_job::Entity::update_many()
@@ -116,12 +116,12 @@ pub(in crate::tgbot::transfer) async fn wake_job(
     let rs = update.exec(db_conn).await?;
 
     if rs.rows_affected == 0 {
-        anyhow::bail!("job status changed before wake: {}", job_id);
+        anyhow::bail!("job status changed before wake: {job_id}");
     }
 
     find_job(job_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("job not found after wake: {}", job_id))
+        .ok_or_else(|| anyhow::anyhow!("job not found after wake: {job_id}"))
 }
 
 /// 请求停止任务。
@@ -133,7 +133,7 @@ pub(in crate::tgbot::transfer) async fn request_cancel_job(
     let db_conn = db::get_db().await?;
     let job = find_job(job_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("job not found: {}", job_id))?;
+        .ok_or_else(|| anyhow::anyhow!("job not found: {job_id}"))?;
 
     if job.status == JOB_STATUS_CANCEL_FINALIZING {
         return Ok(job);
@@ -142,9 +142,9 @@ pub(in crate::tgbot::transfer) async fn request_cancel_job(
     match job.status.as_str() {
         JOB_STATUS_PENDING | JOB_STATUS_RUNNING | JOB_STATUS_PAUSED | JOB_STATUS_CANCELLING => {}
         status if is_finished_job_status(status) => {
-            anyhow::bail!("job already finished: {}", status)
+            anyhow::bail!("job already finished: {status}")
         }
-        status => anyhow::bail!("job status doesn't support stop: {}", status),
+        status => anyhow::bail!("job status doesn't support stop: {status}"),
     }
 
     let update = db::transfer_job::Entity::update_many()
@@ -165,17 +165,17 @@ pub(in crate::tgbot::transfer) async fn request_cancel_job(
     if rs.rows_affected == 0 {
         let current = find_job(job_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("job not found after stop conflict: {}", job_id))?;
+            .ok_or_else(|| anyhow::anyhow!("job not found after stop conflict: {job_id}"))?;
         if matches!(
             current.status.as_str(),
             JOB_STATUS_CANCEL_FINALIZING | JOB_STATUS_CANCELLED
         ) {
             return Ok(current);
         }
-        anyhow::bail!("job status changed before stop: {}", job_id);
+        anyhow::bail!("job status changed before stop: {job_id}");
     }
 
     find_job(job_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("job not found after stop: {}", job_id))
+        .ok_or_else(|| anyhow::anyhow!("job not found after stop: {job_id}"))
 }

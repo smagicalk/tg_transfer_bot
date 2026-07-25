@@ -121,7 +121,7 @@ async fn wait_for_sent_message_receipt_with_timeout(
     match tokio::time::timeout(timeout, rx).await {
         Ok(Ok(Ok(final_receipt))) => Ok(final_receipt),
         Ok(Ok(Err(error))) => {
-            anyhow::bail!("message send failed after initial response: {}", error)
+            anyhow::bail!("message send failed after initial response: {error}")
         }
         Ok(Err(_closed)) => {
             tracing::warn!(

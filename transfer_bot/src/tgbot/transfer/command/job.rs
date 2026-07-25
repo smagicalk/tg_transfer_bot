@@ -286,7 +286,7 @@ async fn send_job_callback_error(
     job_id: i64,
     err: &anyhow::Error,
 ) -> anyhow::Result<()> {
-    let title = format!("任务操作失败 #{}", job_id);
+    let title = format!("任务操作失败 #{job_id}");
     send_interaction_error_card(
         request_chat_id,
         client_id,
@@ -304,7 +304,7 @@ async fn send_job_refresh_error(
     job_id: i64,
     err: &anyhow::Error,
 ) -> anyhow::Result<()> {
-    let title = format!("任务详情刷新失败 #{}", job_id);
+    let title = format!("任务详情刷新失败 #{job_id}");
     send_interaction_error_card(
         request_chat_id,
         client_id,

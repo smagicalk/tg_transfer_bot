@@ -153,7 +153,7 @@ async fn insert_item_with_optional_file_ref(
         }
     }
 
-    anyhow::bail!("file cache is being deleted, file_key={}", file_key)
+    anyhow::bail!("file cache is being deleted, file_key={file_key}")
 }
 
 /// 在已有事务内创建子项，并按媒体/文本决定是否增加 file_cache 引用。
@@ -169,7 +169,7 @@ where
 {
     let is_text = is_text_file_key(&file_key);
     if !is_text && !try_acquire_file_ref_on_conn(conn, file_owner_client_role, &file_key).await? {
-        anyhow::bail!("file cache is being deleted, file_key={}", file_key);
+        anyhow::bail!("file cache is being deleted, file_key={file_key}");
     }
 
     let now = now_utc8();
@@ -212,7 +212,7 @@ where
     if needs_new_ref
         && !try_acquire_file_ref_on_conn(conn, new_file_owner_client_role, &new_file_key).await?
     {
-        anyhow::bail!("file cache is being deleted, file_key={}", new_file_key);
+        anyhow::bail!("file cache is being deleted, file_key={new_file_key}");
     }
 
     if (old.file_key != new_file_key || owner_changed)

@@ -117,7 +117,7 @@ pub(super) fn build_help_detail_buttons(
             help_index_button(),
             menu_home_button(),
         )],
-        _ => anyhow::bail!("unknown help topic: {}", command_name),
+        _ => anyhow::bail!("unknown help topic: {command_name}"),
     };
     Ok(rows)
 }

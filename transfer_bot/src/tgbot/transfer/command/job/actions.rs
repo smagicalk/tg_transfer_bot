@@ -301,7 +301,7 @@ pub(super) async fn show_job_status_on(
     client_id: i32,
 ) -> anyhow::Result<()> {
     let Some(snapshot) = load_job_status_snapshot(app, job_id).await? else {
-        anyhow::bail!("job not found: {}", job_id);
+        anyhow::bail!("job not found: {job_id}");
     };
     tracing::info!(
         job_id,

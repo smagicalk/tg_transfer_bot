@@ -144,7 +144,7 @@ pub(super) fn parse_downloads_args_on(
         } else if let Ok(num) = arg1.parse::<u64>() {
             numeric_args.push(num);
         } else {
-            anyhow::bail!("unknown downloads filter: {}", arg1);
+            anyhow::bail!("unknown downloads filter: {arg1}");
         }
     }
 
@@ -152,7 +152,7 @@ pub(super) fn parse_downloads_args_on(
         if let Ok(num) = arg2.parse::<u64>() {
             numeric_args.push(num);
         } else {
-            anyhow::bail!("downloads limit/page must be number: {}", arg2);
+            anyhow::bail!("downloads limit/page must be number: {arg2}");
         }
     }
 
@@ -160,7 +160,7 @@ pub(super) fn parse_downloads_args_on(
         if let Ok(num) = arg3.parse::<u64>() {
             numeric_args.push(num);
         } else {
-            anyhow::bail!("downloads page must be number: {}", arg3);
+            anyhow::bail!("downloads page must be number: {arg3}");
         }
     }
 
