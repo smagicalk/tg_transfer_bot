@@ -198,7 +198,7 @@ pub(super) fn cancel_input_callback_data() -> String {
 
 /// 生成菜单 callback payload。
 fn menu_callback_data(action: &str) -> String {
-    format!("{}{}", MENU_CALLBACK_PREFIX, action)
+    format!("{MENU_CALLBACK_PREFIX}{action}")
 }
 
 #[cfg(test)]

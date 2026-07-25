@@ -295,7 +295,7 @@ fn format_recovery_startup_text(summary: &RecoveryStartupSummary) -> String {
         summary
             .sample_job_ids
             .iter()
-            .map(|id| format!("#{}", id))
+            .map(|id| format!("#{id}"))
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -409,7 +409,7 @@ mod tests {
                 request_chat_id: 100,
                 request_message_id: 1_000 + job_id,
                 owner_user_id: 2_000 + job_id,
-                source_link: format!("https://t.me/c/100/{}", job_id),
+                source_link: format!("https://t.me/c/100/{job_id}"),
                 source_kind: "link".to_owned(),
                 source_client_role: if job_id % 2 == 0 {
                     "bot".to_owned()

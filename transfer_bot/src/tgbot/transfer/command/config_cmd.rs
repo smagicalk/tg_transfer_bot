@@ -525,9 +525,7 @@ async fn update_transfer_config_on(
             let parsed = value.parse::<usize>()?;
             if !(JOB_CONCURRENCY_MIN..=JOB_CONCURRENCY_MAX).contains(&parsed) {
                 anyhow::bail!(
-                    "job_concurrency must be between {} and {}",
-                    JOB_CONCURRENCY_MIN,
-                    JOB_CONCURRENCY_MAX
+                    "job_concurrency must be between {JOB_CONCURRENCY_MIN} and {JOB_CONCURRENCY_MAX}"
                 );
             }
             transfer_config.job_concurrency = parsed;
@@ -536,9 +534,7 @@ async fn update_transfer_config_on(
             let parsed = value.parse::<i64>()?;
             if !(FILE_DELETE_DELAY_MINUTES_MIN..=FILE_DELETE_DELAY_MINUTES_MAX).contains(&parsed) {
                 anyhow::bail!(
-                    "file_delete_delay_minutes must be between {} and {}",
-                    FILE_DELETE_DELAY_MINUTES_MIN,
-                    FILE_DELETE_DELAY_MINUTES_MAX
+                    "file_delete_delay_minutes must be between {FILE_DELETE_DELAY_MINUTES_MIN} and {FILE_DELETE_DELAY_MINUTES_MAX}"
                 );
             }
             transfer_config.file_delete_delay_minutes = parsed;
@@ -547,9 +543,7 @@ async fn update_transfer_config_on(
             let parsed = value.parse::<u64>()?;
             if !(FILE_GC_INTERVAL_SECONDS_MIN..=FILE_GC_INTERVAL_SECONDS_MAX).contains(&parsed) {
                 anyhow::bail!(
-                    "file_gc_interval_seconds must be between {} and {}",
-                    FILE_GC_INTERVAL_SECONDS_MIN,
-                    FILE_GC_INTERVAL_SECONDS_MAX
+                    "file_gc_interval_seconds must be between {FILE_GC_INTERVAL_SECONDS_MIN} and {FILE_GC_INTERVAL_SECONDS_MAX}"
                 );
             }
             transfer_config.file_gc_interval_seconds = parsed;
@@ -560,9 +554,7 @@ async fn update_transfer_config_on(
                 .contains(&parsed)
             {
                 anyhow::bail!(
-                    "progress_edit_interval_seconds must be between {} and {}",
-                    PROGRESS_EDIT_INTERVAL_SECONDS_MIN,
-                    PROGRESS_EDIT_INTERVAL_SECONDS_MAX
+                    "progress_edit_interval_seconds must be between {PROGRESS_EDIT_INTERVAL_SECONDS_MIN} and {PROGRESS_EDIT_INTERVAL_SECONDS_MAX}"
                 );
             }
             transfer_config.progress_edit_interval_seconds = parsed;
@@ -573,9 +565,7 @@ async fn update_transfer_config_on(
                 .contains(&parsed)
             {
                 anyhow::bail!(
-                    "downloads_default_page_size must be between {} and {}",
-                    DOWNLOADS_DEFAULT_PAGE_SIZE_MIN,
-                    DOWNLOADS_DEFAULT_PAGE_SIZE_MAX
+                    "downloads_default_page_size must be between {DOWNLOADS_DEFAULT_PAGE_SIZE_MIN} and {DOWNLOADS_DEFAULT_PAGE_SIZE_MAX}"
                 );
             }
             transfer_config.downloads_default_page_size = parsed;
@@ -585,9 +575,7 @@ async fn update_transfer_config_on(
             if !(MENU_INPUT_TIMEOUT_SECONDS_MIN..=MENU_INPUT_TIMEOUT_SECONDS_MAX).contains(&parsed)
             {
                 anyhow::bail!(
-                    "menu_input_timeout_seconds must be between {} and {}",
-                    MENU_INPUT_TIMEOUT_SECONDS_MIN,
-                    MENU_INPUT_TIMEOUT_SECONDS_MAX
+                    "menu_input_timeout_seconds must be between {MENU_INPUT_TIMEOUT_SECONDS_MIN} and {MENU_INPUT_TIMEOUT_SECONDS_MAX}"
                 );
             }
             transfer_config.menu_input_timeout_seconds = parsed;
@@ -601,7 +589,7 @@ async fn update_transfer_config_on(
     tracing::info!(key, value, "transfer runtime config updated");
 
     Ok(format_transfer_config_text(
-        &format!("{}：{} = {}", updated_action_title("运行配置"), key, value),
+        &format!("{}：{key} = {value}", updated_action_title("运行配置")),
         &transfer_config,
     ))
 }

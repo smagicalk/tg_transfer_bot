@@ -33,7 +33,7 @@ pub(super) fn format_transfer_progress_text(
         ),
         card::DIVIDER.to_owned(),
         card::section("进度"),
-        card::field("总进度", format!("{}/{}", finished, total)),
+        card::field("总进度", format!("{finished}/{total}")),
         card::field("完成率", card::progress_bar(finished.into(), total.into())),
         card::field("更新", snapshot.job.updated_at.format("%Y-%m-%d %H:%M:%S")),
         card::field_pair(

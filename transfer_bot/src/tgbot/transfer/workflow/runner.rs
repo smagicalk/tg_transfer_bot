@@ -527,10 +527,7 @@ async fn reconcile_job_source_for_fallback(
     bundle: &TransferBundle,
 ) -> anyhow::Result<()> {
     if let Some(outcome) = apply_job_control(app_context, job_id).await? {
-        anyhow::bail!(
-            "transfer job control requested during fallback: {:?}",
-            outcome
-        );
+        anyhow::bail!("transfer job control requested during fallback: {outcome:?}");
     }
     store::reconcile_items_for_bundle(
         job_id,
@@ -565,8 +562,7 @@ async fn finish_prepare_fallback_failed_job(
         .count() as i32;
     let fail_count = (items.len() as i32 - ok_count).max(1);
     let last_error = Some(format!(
-        "bot prepare failed: {:#}; user fallback failed: {:#}",
-        bot_err, fallback_err
+        "bot prepare failed: {bot_err:#}; user fallback failed: {fallback_err:#}"
     ));
     if !store::finish_job_with_item_statuses(
         job.clone(),

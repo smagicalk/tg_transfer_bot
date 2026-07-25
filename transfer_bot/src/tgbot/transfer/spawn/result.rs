@@ -179,7 +179,7 @@ pub(super) async fn send_recovery_outcome(
         }
         Err(err) => {
             send_failure_message(
-                &format!("恢复任务失败，job_id={}", recovery_job_id),
+                &format!("恢复任务失败，job_id={recovery_job_id}"),
                 source_link,
                 target_chat_id,
                 Some(recovery_job_id),

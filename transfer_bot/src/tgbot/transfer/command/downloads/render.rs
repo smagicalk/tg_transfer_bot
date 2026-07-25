@@ -15,7 +15,7 @@ pub(super) fn format_downloads_text(
     let total_pages = compute_total_pages(total, args.limit);
     let scope_label = "范围：所有任务";
     if snapshots.is_empty() {
-        let page_label = format!("{}/{}", args.page, total_pages);
+        let page_label = format!("{}/{total_pages}", args.page);
         let mut lines = build_ready_page_header("下载列表为空");
         lines.push(format!(
             "筛选：{}  页码：{}  每页：{}",
@@ -32,7 +32,7 @@ pub(super) fn format_downloads_text(
     lines.push(format!(
         "下载列表 · {}\n页码：{}  每页：{}  总数：{}",
         card::code(args.filter.label()),
-        card::code(format!("{}/{}", args.page, total_pages)),
+        card::code(format!("{}/{total_pages}", args.page)),
         card::code(args.limit),
         card::code(total)
     ));
@@ -52,7 +52,7 @@ pub(super) fn format_downloads_text(
                 snapshot.job.target_chat_id
             )
         ));
-        lines.push(card::field("总进度", format!("{}/{}", finished, total)));
+        lines.push(card::field("总进度", format!("{finished}/{total}")));
         lines.push(card::field(
             "完成率",
             card::progress_bar(finished.into(), total.into()),

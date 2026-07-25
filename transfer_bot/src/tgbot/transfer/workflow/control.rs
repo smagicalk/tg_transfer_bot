@@ -46,8 +46,5 @@ pub(super) async fn finish_skipped_by_control(
     if let Some(outcome) = apply_job_control(app_context, job_id).await? {
         return Ok(outcome);
     }
-    anyhow::bail!(
-        "job finish skipped but no control outcome, job_id={}",
-        job_id
-    )
+    anyhow::bail!("job finish skipped but no control outcome, job_id={job_id}")
 }

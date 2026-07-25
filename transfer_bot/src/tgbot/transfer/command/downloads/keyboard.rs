@@ -163,7 +163,7 @@ pub(super) fn build_downloads_keyboard(
         navigation_row.push(build_navigation_button("上页", args, prev_page));
     }
     navigation_row.push(build_callback_button(
-        &format!("{}/{}", args.page, total_pages),
+        &format!("{}/{total_pages}", args.page),
         &build_downloads_refresh_callback_data(args),
         tdlib_rs::enums::ButtonStyle::Primary,
     ));
@@ -196,7 +196,7 @@ fn build_job_detail_buttons(
             };
             let job_id = snapshot.job.id;
             send::build_callback_button(
-                &format!("详情 #{}", job_id),
+                &format!("详情 #{job_id}"),
                 &build_job_status_callback_data(job_id),
                 style,
             )

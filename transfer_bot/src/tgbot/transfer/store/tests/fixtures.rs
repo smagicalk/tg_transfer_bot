@@ -239,7 +239,7 @@ pub(super) fn message_with_document(
                         expected_size: 4096,
                         remote: tdlib_rs::types::RemoteFile {
                             unique_id: file_key.to_owned(),
-                            id: format!("remote_{}", file_key),
+                            id: format!("remote_{file_key}"),
                             ..Default::default()
                         },
                         ..Default::default()
