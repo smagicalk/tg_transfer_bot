@@ -38,7 +38,7 @@ pub(super) fn format_job_status_text(snapshot: &JobProgressSnapshot) -> String {
             snapshot.job.target_chat_id,
         ),
         card::section("进度"),
-        card::field("总进度", format!("{}/{}", finished, total)),
+        card::field("总进度", format!("{finished}/{total}")),
         card::field("完成率", card::progress_bar(finished.into(), total.into())),
         card::field_pair(
             "等待/下载",

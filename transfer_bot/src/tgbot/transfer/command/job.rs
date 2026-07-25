@@ -112,7 +112,7 @@ pub(in crate::tgbot::transfer::command) fn build_job_help_detail_text() -> Strin
     lines.extend(
         job_help_intro_lines()
             .into_iter()
-            .map(|line| format!("说明：{}", line)),
+            .map(|line| format!("说明：{line}")),
     );
     lines.extend([
         card::DIVIDER.to_owned(),

@@ -302,9 +302,9 @@ pub(in crate::tgbot::transfer::command) fn build_config_detail_callback_data(
     action: ConfigCallbackAction,
 ) -> String {
     match action {
-        ConfigCallbackAction::Refresh => format!("{}r", CONFIG_CALLBACK_PREFIX),
-        ConfigCallbackAction::Reset => format!("{}x", CONFIG_CALLBACK_PREFIX),
-        ConfigCallbackAction::ConfirmReset => format!("{}xc", CONFIG_CALLBACK_PREFIX),
+        ConfigCallbackAction::Refresh => format!("{CONFIG_CALLBACK_PREFIX}r"),
+        ConfigCallbackAction::Reset => format!("{CONFIG_CALLBACK_PREFIX}x"),
+        ConfigCallbackAction::ConfirmReset => format!("{CONFIG_CALLBACK_PREFIX}xc"),
         ConfigCallbackAction::ResetField { field } => {
             format!("{}xf:{}", CONFIG_CALLBACK_PREFIX, field.code())
         }
@@ -315,7 +315,7 @@ pub(in crate::tgbot::transfer::command) fn build_config_detail_callback_data(
             format!("{}i:{}", CONFIG_CALLBACK_PREFIX, field.code())
         }
         ConfigCallbackAction::Adjust { field, direction } => {
-            format!("{}a:{}:{}", CONFIG_CALLBACK_PREFIX, field.code(), direction)
+            format!("{CONFIG_CALLBACK_PREFIX}a:{}:{direction}", field.code())
         }
     }
 }

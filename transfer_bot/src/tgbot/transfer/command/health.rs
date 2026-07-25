@@ -37,7 +37,7 @@ pub(in crate::tgbot::transfer::command) fn build_health_help_detail_text() -> St
     lines.extend(
         health_intro_lines()
             .into_iter()
-            .map(|line| format!("说明：{}", line)),
+            .map(|line| format!("说明：{line}")),
     );
     lines.extend([
         card::DIVIDER.to_owned(),
@@ -77,7 +77,7 @@ pub(super) fn is_health_callback_data(data: &str) -> bool {
 
 /// 给菜单页生成健康页 callback 数据。
 pub(super) fn build_health_callback_data() -> String {
-    format!("{}show", HEALTH_CALLBACK_PREFIX)
+    format!("{HEALTH_CALLBACK_PREFIX}show")
 }
 
 /// 在指定上下文上执行 `/health` 命令。

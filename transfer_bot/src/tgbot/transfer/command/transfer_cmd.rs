@@ -430,7 +430,7 @@ fn resolve_transfer_source(
 
 /// bot 可见消息的稳定源标识。
 fn bot_message_source_link(chat_id: i64, message_id: i64) -> String {
-    format!("bot-message:{}:{}", chat_id, message_id)
+    format!("bot-message:{chat_id}:{message_id}")
 }
 
 /// 链接源优先使用 bot；如果当前配置没有启用 bot client，则自动退回 user。

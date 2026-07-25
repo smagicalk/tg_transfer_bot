@@ -78,7 +78,7 @@ pub(super) fn build_job_callback_data(action: JobCallbackAction, job_id: i64) ->
         JobCallbackAction::Stop => "s",
         JobCallbackAction::Status => "st",
     };
-    format!("{}{}:{}", JOB_CALLBACK_PREFIX, action, job_id)
+    format!("{JOB_CALLBACK_PREFIX}{action}:{job_id}")
 }
 
 /// 解析 `/job` callback payload。

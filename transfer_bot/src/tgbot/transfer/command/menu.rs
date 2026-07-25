@@ -176,7 +176,7 @@ pub(in crate::tgbot::transfer::command) fn build_menu_help_detail_text() -> Stri
     lines.extend(
         menu_help_intro_lines()
             .into_iter()
-            .map(|line| format!("说明：{}", line)),
+            .map(|line| format!("说明：{line}")),
     );
     lines.extend([
         card::DIVIDER.to_owned(),
@@ -749,7 +749,7 @@ pub(in crate::tgbot) async fn start_transfer_target_choice_from_bot_message(
         chat_id,
         sender_user_id,
         MenuInputKind::Transfer,
-        format!("bot-message:{}:{}", source_chat_id, source_message_id),
+        format!("bot-message:{source_chat_id}:{source_message_id}"),
         client_id,
     )
     .await

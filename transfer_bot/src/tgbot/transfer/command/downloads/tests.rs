@@ -240,7 +240,7 @@ fn test_build_downloads_keyboard_job_detail_callback_data() {
     let button = &keyboard.rows[0][0];
     let data = match &button.r#type {
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
-        other => panic!("unexpected button type: {:?}", other),
+        other => panic!("unexpected button type: {other:?}"),
     };
     let decoded = String::from_utf8(general_purpose::STANDARD.decode(data).unwrap()).unwrap();
     assert_eq!(decoded, "j:st:1");
@@ -359,7 +359,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
 
     let data = match &next.r#type {
         tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) => &callback.data,
-        other => panic!("unexpected button type: {:?}", other),
+        other => panic!("unexpected button type: {other:?}"),
     };
     let decoded = String::from_utf8(general_purpose::STANDARD.decode(data).unwrap()).unwrap();
     assert_eq!(decoded, "d:p:run:8:2");

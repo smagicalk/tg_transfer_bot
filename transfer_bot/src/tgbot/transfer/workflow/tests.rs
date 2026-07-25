@@ -279,7 +279,7 @@ async fn test_apply_job_control_paused() -> anyhow::Result<()> {
         .expect("paused job should stop workflow");
     match outcome {
         TransferOutcome::Paused { job_id } => assert_eq!(job_id, job.id),
-        other => panic!("unexpected outcome: {:?}", other),
+        other => panic!("unexpected outcome: {other:?}"),
     }
     Ok(())
 }
@@ -298,7 +298,7 @@ async fn test_apply_job_control_cancelling() -> anyhow::Result<()> {
         .expect("cancelling job should stop workflow");
     match outcome {
         TransferOutcome::Cancelled { job_id } => assert_eq!(job_id, job.id),
-        other => panic!("unexpected outcome: {:?}", other),
+        other => panic!("unexpected outcome: {other:?}"),
     }
 
     let status = store::get_job_status(job.id)

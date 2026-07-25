@@ -45,7 +45,7 @@ pub(in crate::tgbot::transfer::command) fn build_cache_help_detail_text() -> Str
     lines.extend(
         cache_intro_lines()
             .into_iter()
-            .map(|line| format!("说明：{}", line)),
+            .map(|line| format!("说明：{line}")),
     );
     lines.extend([
         card::DIVIDER.to_owned(),

@@ -377,10 +377,7 @@ pub async fn targets_callback_query_on(
         }
         TargetsCallbackAction::InputSetDefault => {
             let Some(spec) = targets_input_spec_for_callback_action(&action) else {
-                anyhow::bail!(
-                    "missing targets input spec for callback action: {:?}",
-                    action
-                );
+                anyhow::bail!("missing targets input spec for callback action: {action:?}");
             };
             return super::menu::start_admin_input_callback(
                 update.id,
@@ -455,8 +452,7 @@ pub async fn targets_callback_query_on(
                 None,
                 Some("修改目标别名".to_owned()),
                 Some(format!(
-                    "已选 alias：{}。请选择新的目标群组或频道，也可直接输入 chat_id；输入“取消”可退出。",
-                    alias
+                    "已选 alias：{alias}。请选择新的目标群组或频道，也可直接输入 chat_id；输入“取消”可退出。"
                 )),
                 Some("选择聊天或输入新的 target_chat_id".to_owned()),
                 client_id,
@@ -618,7 +614,7 @@ fn format_targets_list_page_text(
         lines.push(build_page_empty_note(empty_note));
     } else {
         for (offset, item) in page_items.iter().enumerate() {
-            lines.push(format!("{}. {}", start + offset + 1, item));
+            lines.push(format!("{}. {item}", start + offset + 1));
         }
     }
     lines.join("\n")

@@ -237,7 +237,7 @@ pub(in crate::tgbot::transfer) fn build_result_message_rows(
         let idx = result.result_index + 1;
         if crate::tgbot::send::is_openable_url(&result.message_link) {
             rows.push(vec![crate::tgbot::send::build_url_button(
-                &format!("打开结果 {}", idx),
+                &format!("打开结果 {idx}"),
                 &result.message_link,
                 if idx == 1 {
                     tdlib_rs::enums::ButtonStyle::Primary

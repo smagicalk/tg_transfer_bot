@@ -183,7 +183,7 @@ pub(in crate::tgbot::transfer) async fn refresh_stored_result_messages(
 /// 注意：TDLib 的 `message_id` 是 TDLib 内部消息 ID，不能随意拼成 t.me 链接。
 /// 只有 supergroup/channel 兜底会先换算为可见消息 ID；其他 chat 只能保存排查用定位。
 pub(super) fn fallback_result_message_locator(chat_id: i64, message_id: i64) -> String {
-    format!("chat_id={} message_id={}", chat_id, message_id)
+    format!("chat_id={chat_id} message_id={message_id}")
 }
 
 /// 从历史保存的旧链接或定位字符串中提取 TDLib message_id。
@@ -247,8 +247,7 @@ pub(super) fn build_private_supergroup_message_link(
 ) -> Option<String> {
     let visible_message_id = tdlib_message_id_to_visible_id(tdlib_message_id)?;
     Some(format!(
-        "https://t.me/c/{}/{}",
-        supergroup_id, visible_message_id
+        "https://t.me/c/{supergroup_id}/{visible_message_id}"
     ))
 }
 

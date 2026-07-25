@@ -138,7 +138,7 @@ pub(crate) fn config_set_command(key: &str, value: impl ToString, style: Command
 /// 构造 `/help <topic>` 命令。
 pub(crate) fn help_command(topic: Option<&str>, style: CommandStyle) -> String {
     match topic {
-        Some(topic) => format!("{} {}", command_name("help", style), topic),
+        Some(topic) => format!("{} {topic}", command_name("help", style)),
         None => command_name("help", style),
     }
 }
@@ -329,11 +329,7 @@ pub(crate) fn build_runtime_admin_help_detail_text(
     descriptor: &RuntimeAdminHelpDescriptor,
 ) -> String {
     let mut lines = vec![title.to_owned(), format!("用途：{}", descriptor.purpose)];
-    lines.extend(
-        detail_lines
-            .into_iter()
-            .map(|line| format!("说明：{}", line)),
-    );
+    lines.extend(detail_lines.into_iter().map(|line| format!("说明：{line}")));
     lines.push(card::DIVIDER.to_owned());
     lines.extend(extra_lines);
     lines.extend(build_runtime_admin_usage_block(descriptor));
