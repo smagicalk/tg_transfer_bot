@@ -196,7 +196,7 @@ pub async fn targets_command_on(
             })
             .await?
         }
-        Some(other) => anyhow::bail!("unknown targets subcommand: {}", other),
+        Some(other) => anyhow::bail!("unknown targets subcommand: {other}"),
     };
 
     send::ReplyPanel::card(reply)
@@ -427,7 +427,7 @@ pub async fn targets_callback_query_on(
         TargetsCallbackAction::ViewAlias { alias, context } => {
             let config = crate::tgbot::transfer::targets_runtime_config_on(app);
             let Some(target_chat_id) = config.aliases.get(&alias).copied() else {
-                anyhow::bail!("alias not found: {}", alias);
+                anyhow::bail!("alias not found: {alias}");
             };
             let (text, keyboard) =
                 send::ReplyPanel::card(format_alias_detail_text(&alias, target_chat_id))
@@ -481,7 +481,7 @@ pub async fn targets_callback_query_on(
         TargetsCallbackAction::UseAliasAsDefault { alias, context } => {
             let config = crate::tgbot::transfer::targets_runtime_config_on(app);
             let Some(target_chat_id) = config.aliases.get(&alias).copied() else {
-                anyhow::bail!("alias not found: {}", alias);
+                anyhow::bail!("alias not found: {alias}");
             };
             update_targets_with_on(app, &updated_action_title("默认目标"), |config| {
                 config.default_chat_id = target_chat_id;
@@ -1375,7 +1375,7 @@ async fn send_targets_callback_error(
 
 fn parse_i64_arg(text: &[&str], index: usize, usage: &str) -> anyhow::Result<i64> {
     text.get(index)
-        .ok_or_else(|| anyhow::anyhow!("{}", usage))?
+        .ok_or_else(|| anyhow::anyhow!("{usage}"))?
         .parse::<i64>()
         .map_err(Into::into)
 }
@@ -1383,7 +1383,7 @@ fn parse_i64_arg(text: &[&str], index: usize, usage: &str) -> anyhow::Result<i64
 fn parse_alias_arg(text: &[&str], index: usize, usage: &str) -> anyhow::Result<String> {
     let alias = text
         .get(index)
-        .ok_or_else(|| anyhow::anyhow!("{}", usage))?
+        .ok_or_else(|| anyhow::anyhow!("{usage}"))?
         .trim();
     if alias.is_empty() {
         anyhow::bail!("alias cannot be empty");

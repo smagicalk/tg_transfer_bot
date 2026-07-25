@@ -41,10 +41,10 @@ impl TransferBotCli {
     // 异步读取配置文件文本。
     async fn read_file(path: &std::path::PathBuf) -> anyhow::Result<String> {
         if !path.exists() {
-            anyhow::bail!("{:?} 文件不存在", path)
+            anyhow::bail!("{path:?} 文件不存在")
         }
         if path.is_dir() {
-            anyhow::bail!("{:?} 是目录，不是文件", path)
+            anyhow::bail!("{path:?} 是目录，不是文件")
         }
         Ok(tokio::fs::read_to_string(path).await?)
     }

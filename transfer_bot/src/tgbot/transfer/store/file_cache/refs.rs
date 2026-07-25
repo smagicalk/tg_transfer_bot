@@ -139,7 +139,7 @@ pub(in crate::tgbot::transfer) async fn acquire_file_ref(file_key: &str) -> anyh
         .await;
     }
 
-    anyhow::bail!("file cache is being deleted, file_key={}", file_key)
+    anyhow::bail!("file cache is being deleted, file_key={file_key}")
 }
 
 /// 尝试在指定连接/事务内增加一次文件引用。

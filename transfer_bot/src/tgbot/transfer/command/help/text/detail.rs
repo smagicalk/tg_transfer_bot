@@ -40,7 +40,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_detail_text(
         "downloads" => build_downloads_help_detail_text(),
         "job" => build_job_help_detail_text(),
         "menu" => build_menu_help_detail_text(),
-        _ => anyhow::bail!("unknown help topic: {}", command_name),
+        _ => anyhow::bail!("unknown help topic: {command_name}"),
     };
     Ok(text)
 }

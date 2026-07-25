@@ -207,7 +207,7 @@ pub(super) fn normalize_help_topic(command_name: &str) -> anyhow::Result<&'stati
         "downloads" | "download" => Ok("downloads"),
         "job" => Ok("job"),
         "menu" => Ok("menu"),
-        other => anyhow::bail!("unknown help topic: {}", other),
+        other => anyhow::bail!("unknown help topic: {other}"),
     }
 }
 

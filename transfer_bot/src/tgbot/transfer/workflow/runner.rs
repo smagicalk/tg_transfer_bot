@@ -207,7 +207,7 @@ async fn run_job_inner_once(
                         );
                         return Ok(outcome);
                     }
-                    let err_str = format!("{:#}", err);
+                    let err_str = format!("{err:#}");
                     tracing::warn!(
                         job_id = job.id,
                         item_id = item.id,
@@ -255,7 +255,7 @@ async fn run_job_inner_once(
                 }
             }
             Err(err) => {
-                let err_str = format!("{:#}", err);
+                let err_str = format!("{err:#}");
                 tracing::warn!(
                     job_id = job.id,
                     item_id = item.id,
@@ -459,7 +459,7 @@ async fn run_job_inner_once(
                 );
                 return Ok(outcome);
             }
-            let err_str = format!("{:#}", err);
+            let err_str = format!("{err:#}");
             tracing::error!(
                 job_id = job.id,
                 target_chat_id = job.target_chat_id,

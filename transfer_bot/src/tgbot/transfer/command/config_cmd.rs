@@ -326,7 +326,7 @@ pub async fn config_command_on(
                 build_config_buttons_on(app),
             )
         }
-        Some(other) => anyhow::bail!("unknown config subcommand: {}", other),
+        Some(other) => anyhow::bail!("unknown config subcommand: {other}"),
     };
 
     let mut panel = send::ReplyPanel::card(reply);
@@ -592,7 +592,7 @@ async fn update_transfer_config_on(
             }
             transfer_config.menu_input_timeout_seconds = parsed;
         }
-        _ => anyhow::bail!("unsupported config key: {}", key),
+        _ => anyhow::bail!("unsupported config key: {key}"),
     }
 
     crate::tgbot::transfer::save_transfer_runtime_config(&transfer_config).await?;

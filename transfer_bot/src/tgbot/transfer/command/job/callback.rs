@@ -128,7 +128,7 @@ async fn edit_job_status_message(
     client_id: i32,
 ) -> anyhow::Result<()> {
     let Some(snapshot) = load_job_status_snapshot(app, job_id).await? else {
-        anyhow::bail!("job not found: {}", job_id);
+        anyhow::bail!("job not found: {job_id}");
     };
     let (text, keyboard) = send::ReplyPanel::card(format_job_status_text(&snapshot))
         .rows(build_job_status_buttons(&snapshot))

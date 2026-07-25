@@ -58,7 +58,7 @@ pub(super) fn parse_cache_args(text: &[&str]) -> anyhow::Result<CacheArgs> {
                 }
                 return Ok(args);
             }
-            anyhow::bail!("unknown cache subcommand: {}", value);
+            anyhow::bail!("unknown cache subcommand: {value}");
         }
     }
 

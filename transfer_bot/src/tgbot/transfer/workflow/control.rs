@@ -14,7 +14,7 @@ pub(super) async fn apply_job_control(
     job_id: i64,
 ) -> anyhow::Result<Option<TransferOutcome>> {
     let Some(status) = store::get_job_status(job_id).await? else {
-        anyhow::bail!("job not found: {}", job_id);
+        anyhow::bail!("job not found: {job_id}");
     };
 
     match status.as_str() {
@@ -32,9 +32,9 @@ pub(super) async fn apply_job_control(
             Ok(Some(TransferOutcome::Cancelled { job_id }))
         }
         status if store::is_finished_job_status(status) => {
-            anyhow::bail!("job already finished during workflow: {}", status)
+            anyhow::bail!("job already finished during workflow: {status}")
         }
-        other => anyhow::bail!("unknown job status during workflow: {}", other),
+        other => anyhow::bail!("unknown job status during workflow: {other}"),
     }
 }
 

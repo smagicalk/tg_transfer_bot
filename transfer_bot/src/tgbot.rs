@@ -51,7 +51,7 @@ pub async fn get_version(client_id: i32) -> anyhow::Result<()> {
             tracing::info!(version = ?version, "tdlib version loaded");
             Ok(())
         }
-        Err(err) => anyhow::bail!("get_version failed, error={:?}", err),
+        Err(err) => anyhow::bail!("get_version failed, error={err:?}"),
     }
 }
 

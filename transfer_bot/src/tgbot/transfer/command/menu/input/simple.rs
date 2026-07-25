@@ -77,7 +77,7 @@ pub(super) fn expired_input_detail_on(app: &crate::app_context::AppContext) -> S
 /// 把秒数压缩成适合卡片展示的短文案。
 pub(super) fn format_duration_hint(seconds: u64) -> String {
     if seconds < 60 {
-        return format!("{} 秒", seconds);
+        return format!("{seconds} 秒");
     }
     if seconds.is_multiple_of(3600) {
         return format!("{} 小时", seconds / 3600);
@@ -85,7 +85,7 @@ pub(super) fn format_duration_hint(seconds: u64) -> String {
     if seconds.is_multiple_of(60) {
         return format!("{} 分钟", seconds / 60);
     }
-    format!("{} 秒", seconds)
+    format!("{seconds} 秒")
 }
 
 /// 判断普通文本是否表示取消。

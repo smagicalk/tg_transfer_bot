@@ -47,21 +47,21 @@ async fn wait_for_sent_message_with_control(
             result = &mut wait => {
                 let result = result?;
                 let Some(status) = store::get_job_status(job_id).await? else {
-                    anyhow::bail!("job not found after upload: {}", job_id);
+                    anyhow::bail!("job not found after upload: {job_id}");
                 };
                 if is_upload_control_status(&status) {
                     delete_upload_messages(target_chat_id, client_id, job_id, &[result.id]).await;
-                    anyhow::bail!("transfer job control requested after upload: {}", status);
+                    anyhow::bail!("transfer job control requested after upload: {status}");
                 }
                 return Ok(result);
             },
             _ = tokio::time::sleep(UPLOAD_CONTROL_POLL_INTERVAL) => {
                 let Some(status) = store::get_job_status(job_id).await? else {
-                    anyhow::bail!("job not found while waiting for upload: {}", job_id);
+                    anyhow::bail!("job not found while waiting for upload: {job_id}");
                 };
                 if is_upload_control_status(&status) {
                     delete_upload_messages(target_chat_id, client_id, job_id, pending_message_ids).await;
-                    anyhow::bail!("transfer job control requested during upload: {}", status);
+                    anyhow::bail!("transfer job control requested during upload: {status}");
                 }
             }
         }

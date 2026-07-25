@@ -120,10 +120,10 @@ pub async fn handle_authorization(
             let phone_number = authorization_state_wait_code.code_info.phone_number.clone();
             tracing::info!(client_id, "waiting for phone login code");
             let code_result =
-                inquire::Text::new(format!("请输入 {} 的验证码", phone_number).as_str())
+                inquire::Text::new(format!("请输入 {phone_number} 的验证码").as_str())
                     .with_placeholder("验证码")
                     .with_help_message(
-                        format!("请输入 {} 在其他设备收到的验证码", phone_number).as_str(),
+                        format!("请输入 {phone_number} 在其他设备收到的验证码").as_str(),
                     )
                     .with_validator(inquire::validator::MinLengthValidator::new(5))
                     .prompt()
@@ -147,8 +147,8 @@ pub async fn handle_authorization(
                 .build();
 
             println!("请使用 Telegram 扫描下面的登录二维码：");
-            println!("{}", qr);
-            println!("如果二维码无法识别，可在可信环境打开临时链接：{}", link);
+            println!("{qr}");
+            println!("如果二维码无法识别，可在可信环境打开临时链接：{link}");
             Ok(())
         }
 

@@ -54,7 +54,7 @@ fn parse_target_arg(arg: &str, config: &crate::config::TargetsConfig) -> anyhow:
         .aliases
         .get(arg)
         .copied()
-        .ok_or_else(|| anyhow::anyhow!("unknown target chat alias: {}", arg))
+        .ok_or_else(|| anyhow::anyhow!("unknown target chat alias: {arg}"))
 }
 
 /// 构造 `/transfer` 命令。
@@ -421,17 +421,17 @@ pub(crate) fn build_runtime_admin_detail_text(
 
 /// 统一“已更新...”成功标题。
 pub(crate) fn updated_action_title(subject: &str) -> String {
-    format!("已更新{}", subject)
+    format!("已更新{subject}")
 }
 
 /// 统一“已清空...”成功标题。
 pub(crate) fn cleared_action_title(subject: &str) -> String {
-    format!("已清空{}", subject)
+    format!("已清空{subject}")
 }
 
 /// 统一“已删除...”成功标题。
 pub(crate) fn deleted_action_title(subject: &str) -> String {
-    format!("已删除{}", subject)
+    format!("已删除{subject}")
 }
 
 /// 统一“XXX已重置为启动默认值”成功标题。

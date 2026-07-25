@@ -101,7 +101,7 @@ pub(in crate::tgbot::transfer) async fn cancel_job_now(
         let current = db::transfer_job::Entity::find_by_id(job_id)
             .one(db_conn)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("job not found: {}", job_id))?;
+            .ok_or_else(|| anyhow::anyhow!("job not found: {job_id}"))?;
 
         if current.status == JOB_STATUS_CANCELLED {
             return Ok(current);
@@ -124,7 +124,7 @@ pub(in crate::tgbot::transfer) async fn cancel_job_now(
                 let latest = db::transfer_job::Entity::find_by_id(job_id)
                     .one(db_conn)
                     .await?
-                    .ok_or_else(|| anyhow::anyhow!("job not found: {}", job_id))?;
+                    .ok_or_else(|| anyhow::anyhow!("job not found: {job_id}"))?;
                 if latest.status == JOB_STATUS_CANCELLED {
                     return Ok(latest);
                 }
@@ -141,7 +141,7 @@ pub(in crate::tgbot::transfer) async fn cancel_job_now(
     let job = db::transfer_job::Entity::find_by_id(job_id)
         .one(db_conn)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("job not found after cancel claim: {}", job_id))?;
+        .ok_or_else(|| anyhow::anyhow!("job not found after cancel claim: {job_id}"))?;
     if job.status == JOB_STATUS_CANCELLED {
         return Ok(job);
     }
@@ -196,7 +196,7 @@ pub(in crate::tgbot::transfer) async fn cancel_job_now(
         let current = db::transfer_job::Entity::find_by_id(job_id)
             .one(db_conn)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("job not found during cancel finish: {}", job_id))?;
+            .ok_or_else(|| anyhow::anyhow!("job not found during cancel finish: {job_id}"))?;
         if current.status == JOB_STATUS_CANCELLED {
             return Ok(current);
         }
@@ -215,5 +215,5 @@ pub(in crate::tgbot::transfer) async fn cancel_job_now(
     db::transfer_job::Entity::find_by_id(job_id)
         .one(db_conn)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("job not found after cancel finish: {}", job_id))
+        .ok_or_else(|| anyhow::anyhow!("job not found after cancel finish: {job_id}"))
 }
