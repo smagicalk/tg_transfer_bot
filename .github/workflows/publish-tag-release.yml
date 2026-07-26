@@ -3,15 +3,30 @@ name: Publish Tag Release
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Existing Git tag to package and publish"
+      source_ref:
+        description: "Existing Git tag or branch to build"
         required: true
-        type: string
+        default: "dev"
+        type: choice
+        options:
+          - "dev"
+          - "master"
+          - "v0.0.1"
+      release_mode:
+        description: "Build only or publish a GitHub Release"
+        required: true
+        default: "build_only"
+        type: choice
+        options:
+          - "build_only"
+          - "publish_release"
       td_ref:
         description: "TDLib git branch/tag/commit"
-        required: false
+        required: true
         default: "master"
-        type: string
+        type: choice
+        options:
+          - "master"
       run_checks:
         description: "Run fmt/test/clippy before release build"
         required: false
@@ -25,19 +40,41 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-tag-${{ inputs.tag }}
+  group: publish-ref-${{ inputs.source_ref }}-${{ inputs.release_mode }}
   cancel-in-progress: false
 
 env:
   ARTIFACT_PREFIX: transfer_bot
   CARGO_TERM_COLOR: always
-  RELEASE_TAG: ${{ inputs.tag }}
+  SOURCE_REF: ${{ inputs.source_ref }}
   TD_GIT_REF: ${{ inputs.td_ref }}
   RUN_CHECKS: ${{ inputs.run_checks }}
 
 jobs:
+  validate-source:
+    name: Validate selected source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout selected source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+
+      - name: Prevent publishing a branch as a release
+        shell: bash
+        run: |
+          set -eu
+          if [[ "${{ inputs.release_mode }}" == "publish_release" ]]; then
+            git show-ref --tags --verify --quiet "refs/tags/$SOURCE_REF" || {
+              echo "GitHub Release mode requires a tag; selected ref is not a tag: $SOURCE_REF" >&2
+              exit 1
+            }
+          fi
+
   package-linux:
     name: ${{ matrix.label }}
+    needs: validate-source
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -55,20 +92,12 @@ jobs:
             label: Ubuntu 24.04 glibc x86_64
             image: ubuntu:24.04
             artifact_suffix: linux-x86_64-ubuntu24.04
-          - id: rocky-9
-            label: Rocky Linux 9 glibc x86_64
-            image: rockylinux:9
-            artifact_suffix: linux-x86_64-rocky9
     steps:
-      - name: Checkout tag
+      - name: Checkout selected source
         uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: ${{ inputs.source_ref }}
           fetch-depth: 0
-
-      - name: Verify tag
-        shell: bash
-        run: git show-ref --tags --verify --quiet "refs/tags/$RELEASE_TAG"
 
       - name: Restore Linux build cache
         uses: actions/cache@v4
@@ -117,6 +146,7 @@ jobs:
 
   package-windows:
     name: Windows Server 2022 MSVC x86_64
+    needs: validate-source
     runs-on: windows-2022
     env:
       CI_ARTIFACT_NAME: transfer_bot-windows-x86_64-msvc
@@ -126,17 +156,11 @@ jobs:
       VCPKG_DEFAULT_TRIPLET: x64-windows
       VCPKG_INSTALLATION_ROOT: ${{ github.workspace }}\.ci-cache\windows\vcpkg-root
     steps:
-      - name: Checkout tag
+      - name: Checkout selected source
         uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: ${{ inputs.source_ref }}
           fetch-depth: 0
-
-      - name: Verify tag
-        shell: pwsh
-        run: |
-          git show-ref --tags --verify --quiet "refs/tags/$env:RELEASE_TAG"
-          if ($LASTEXITCODE -ne 0) { throw "Tag not found: $env:RELEASE_TAG" }
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.88.0
@@ -182,6 +206,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
+    if: inputs.release_mode == 'publish_release'
     needs:
       - package-linux
       - package-windows
@@ -196,7 +221,7 @@ jobs:
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag }}
+          tag_name: ${{ inputs.source_ref }}
           generate_release_notes: true
           files: |
             release-assets/*.tar.gz

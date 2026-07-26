@@ -20,12 +20,14 @@ on:
           - alpine-3.23
           - debian-13
           - ubuntu-24.04
-          - rocky-9
           - windows-2022
       td_ref:
         description: "TDLib git branch/tag/commit"
-        required: false
+        required: true
         default: "master"
+        type: choice
+        options:
+          - "master"
       run_checks:
         description: "Run fmt/test/clippy before release build"
         required: false
@@ -66,10 +68,6 @@ jobs:
             label: Ubuntu 24.04 glibc x86_64
             image: ubuntu:24.04
             artifact_suffix: linux-x86_64-ubuntu24.04-test
-          - id: rocky-9
-            label: Rocky Linux 9 glibc x86_64
-            image: rockylinux:9
-            artifact_suffix: linux-x86_64-rocky9-test
     steps:
       - name: Skip non-selected targets
         if: matrix.id != github.event.inputs.target
