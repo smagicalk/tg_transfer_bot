@@ -1,0 +1,204 @@
+name: Publish Tag Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing Git tag to package and publish"
+        required: true
+        type: string
+      td_ref:
+        description: "TDLib git branch/tag/commit"
+        required: false
+        default: "master"
+        type: string
+      run_checks:
+        description: "Run fmt/test/clippy before release build"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-tag-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  ARTIFACT_PREFIX: transfer_bot
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag }}
+  TD_GIT_REF: ${{ inputs.td_ref }}
+  RUN_CHECKS: ${{ inputs.run_checks }}
+
+jobs:
+  package-linux:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: alpine-3.23
+            label: Alpine 3.23 musl x86_64
+            image: alpine:3.23
+            artifact_suffix: linux-x86_64-alpine3.23
+          - id: debian-13
+            label: Debian 13 glibc x86_64
+            image: debian:13
+            artifact_suffix: linux-x86_64-debian13
+          - id: ubuntu-24.04
+            label: Ubuntu 24.04 glibc x86_64
+            image: ubuntu:24.04
+            artifact_suffix: linux-x86_64-ubuntu24.04
+          - id: rocky-9
+            label: Rocky Linux 9 glibc x86_64
+            image: rockylinux:9
+            artifact_suffix: linux-x86_64-rocky9
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Verify tag
+        shell: bash
+        run: git show-ref --tags --verify --quiet "refs/tags/$RELEASE_TAG"
+
+      - name: Restore Linux build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-cache/linux/${{ matrix.id }}/cargo-home
+            .ci-cache/linux/${{ matrix.id }}/rustup
+            .ci-cache/linux/${{ matrix.id }}/target
+          key: ${{ runner.os }}-publish-linux-${{ matrix.id }}-${{ hashFiles('Cargo.lock', '.github/scripts/build_linux_package.sh', '.github/workflows/publish-tag-release.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-publish-linux-${{ matrix.id }}-
+
+      - name: Prepare Linux cache dirs
+        run: |
+          mkdir -p ".ci-cache/linux/${{ matrix.id }}/cargo-home"
+          mkdir -p ".ci-cache/linux/${{ matrix.id }}/rustup"
+          mkdir -p ".ci-cache/linux/${{ matrix.id }}/target"
+
+      - name: Build TDLib and package transfer_bot
+        run: |
+          set -eux
+          docker run --rm \
+            -v "$PWD:/work" \
+            -v "$PWD/.ci-cache/linux/${{ matrix.id }}/cargo-home:/root/.cargo" \
+            -v "$PWD/.ci-cache/linux/${{ matrix.id }}/rustup:/root/.rustup" \
+            -v "$PWD/.ci-cache/linux/${{ matrix.id }}/target:/work/target" \
+            -w /work \
+            -e "CI_DISTRO_ID=${{ matrix.id }}" \
+            -e "CI_IMAGE=${{ matrix.image }}" \
+            -e "CI_ARTIFACT_NAME=${{ env.ARTIFACT_PREFIX }}-${{ matrix.artifact_suffix }}" \
+            -e "PACKAGE_MODE=package" \
+            -e "TD_GIT_REF=${TD_GIT_REF}" \
+            -e "RUN_CHECKS=${RUN_CHECKS}" \
+            -e "PACKAGE_RETENTION_KIND=full" \
+            "${{ matrix.image }}" sh "/work/.github/scripts/build_linux_package.sh"
+
+      - name: Upload release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-${{ matrix.artifact_suffix }}
+          path: |
+            dist/${{ env.ARTIFACT_PREFIX }}-${{ matrix.artifact_suffix }}.tar.gz
+            dist/${{ env.ARTIFACT_PREFIX }}-${{ matrix.artifact_suffix }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  package-windows:
+    name: Windows Server 2022 MSVC x86_64
+    runs-on: windows-2022
+    env:
+      CI_ARTIFACT_NAME: transfer_bot-windows-x86_64-msvc
+      CARGO_TARGET_DIR: ${{ github.workspace }}\.ci-cache\windows\target
+      LOCAL_TDLIB_PATH: ${{ github.workspace }}\tdlib-install
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.ci-cache\windows\vcpkg-archives
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_INSTALLATION_ROOT: ${{ github.workspace }}\.ci-cache\windows\vcpkg-root
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Verify tag
+        shell: pwsh
+        run: |
+          git show-ref --tags --verify --quiet "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw "Tag not found: $env:RELEASE_TAG" }
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore Windows build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            .ci-cache\windows\target
+            .ci-cache\windows\vcpkg-root
+            .ci-cache\windows\vcpkg-archives
+          key: ${{ runner.os }}-publish-windows-msvc-${{ hashFiles('Cargo.lock', '.github/scripts/build_windows_package.ps1', '.github/workflows/publish-tag-release.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-publish-windows-msvc-
+
+      - name: Prepare Windows cache dirs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ".ci-cache\windows\target" | Out-Null
+          New-Item -ItemType Directory -Force ".ci-cache\windows\vcpkg-root" | Out-Null
+          New-Item -ItemType Directory -Force ".ci-cache\windows\vcpkg-archives" | Out-Null
+
+      - name: Build TDLib and package transfer_bot
+        shell: pwsh
+        run: |
+          $env:PACKAGE_MODE = "package"
+          $env:PACKAGE_RETENTION_KIND = "full"
+          & ".github/scripts/build_windows_package.ps1"
+
+      - name: Upload release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.CI_ARTIFACT_NAME }}
+          path: |
+            dist/${{ env.CI_ARTIFACT_NAME }}.zip
+            dist/${{ env.CI_ARTIFACT_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    name: Publish GitHub Release
+    needs:
+      - package-linux
+      - package-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          generate_release_notes: true
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/*.sha256

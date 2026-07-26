@@ -102,8 +102,25 @@ copy_runtime_libs() {
         continue
         ;;
     esac
-    if [ ! -e "$DIST_DIR/lib/$base" ]; then
-      cp -L "$lib" "$DIST_DIR/lib/$base"
+    if [ ! -e "$DIST_DIR/bin/$base" ]; then
+      cp -L "$lib" "$DIST_DIR/bin/$base"
+    fi
+  done
+}
+
+assert_packaged_runtime() {
+  if LD_LIBRARY_PATH="$DIST_DIR/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    ldd "$DIST_DIR/bin/transfer_bot" | grep -q 'not found'; then
+    echo "transfer_bot has unresolved runtime dependencies" >&2
+    exit 1
+  fi
+
+  for so in "$DIST_DIR"/bin/libtdjson.so*; do
+    [ -e "$so" ] || continue
+    if LD_LIBRARY_PATH="$DIST_DIR/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      ldd "$so" | grep -q 'not found'; then
+      echo "$(basename "$so") has unresolved runtime dependencies" >&2
+      exit 1
     fi
   done
 }
@@ -182,30 +199,32 @@ fi
 DIST_ROOT="$WORK_ROOT/dist"
 DIST_DIR="$DIST_ROOT/$CI_ARTIFACT_NAME"
 rm -rf "$DIST_DIR" "$DIST_ROOT/$CI_ARTIFACT_NAME.tar.gz" "$DIST_ROOT/$CI_ARTIFACT_NAME.sha256"
-mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
+mkdir -p "$DIST_DIR/bin"
 
 cp "$CARGO_TARGET_DIR/release/transfer_bot" "$DIST_DIR/bin/transfer_bot"
-find "$LOCAL_TDLIB_PATH/lib" -maxdepth 1 -name 'libtdjson.so*' -exec cp -a {} "$DIST_DIR/lib/" \;
+find "$LOCAL_TDLIB_PATH/lib" -maxdepth 1 -name 'libtdjson.so*' -exec cp -a {} "$DIST_DIR/bin/" \;
+test -e "$DIST_DIR/bin/libtdjson.so"
 
 {
   ldd "$DIST_DIR/bin/transfer_bot" || true
-  for so in "$DIST_DIR"/lib/libtdjson.so*; do
+  for so in "$DIST_DIR"/bin/libtdjson.so*; do
     [ -e "$so" ] || continue
     ldd "$so" || true
   done
 } > "$DIST_DIR/runtime-libs.txt"
 copy_runtime_libs
+assert_packaged_runtime
 
 if command -v strip >/dev/null 2>&1; then
   strip "$DIST_DIR/bin/transfer_bot" || true
-  find "$DIST_DIR/lib" -type f -name '*.so*' -exec strip --strip-unneeded {} \; || true
+  find "$DIST_DIR/bin" -type f -name '*.so*' -exec strip --strip-unneeded {} \; || true
 fi
 
 cat > "$DIST_DIR/run.sh" <<'RUN_SCRIPT'
 #!/usr/bin/env sh
 set -eu
 APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-export LD_LIBRARY_PATH="$APP_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$APP_DIR/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$APP_DIR/bin/transfer_bot" "$@"
 RUN_SCRIPT
 chmod +x "$DIST_DIR/run.sh"
@@ -215,7 +234,7 @@ cat > "$DIST_DIR/README.RUN.md" <<'README_RUN'
 
 1. 把 `config.example.json` 复制成自己的 `config.json` 并填写真实配置。
 2. 使用 `./run.sh -c config.json` 启动。
-3. `run.sh` 会自动把当前包内的 `lib/` 加入 `LD_LIBRARY_PATH`。
+3. `run.sh` 会自动把当前包内的 `bin/` 加入 `LD_LIBRARY_PATH`；TDLib 与其运行时依赖和 `transfer_bot` 位于同一目录。
 4. 该产物只保证在同名或兼容发行版上运行，例如 Alpine 包优先用于 Alpine。
 README_RUN
 
