@@ -1,0 +1,78 @@
+name: Publish Alpine Container Image
+
+on:
+  workflow_dispatch:
+
+run-name: Publish latest Alpine image by @${{ github.actor }}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-alpine-image-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/tg_transfer_bot
+  RELEASE_ASSET: transfer_bot-linux-x86_64-alpine3.23.tar.gz
+
+jobs:
+  publish:
+    name: Build and push Alpine image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout container definition
+        uses: actions/checkout@v4
+
+      - name: Download latest Alpine release package
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName')"
+          case "$version" in
+            ''|*[!0-9A-Za-z._-]*)
+              echo "Latest release tag is not a valid container tag: $version" >&2
+              exit 1
+              ;;
+          esac
+
+          mkdir -p release-assets image-root
+          gh release download "$version" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RELEASE_ASSET" \
+            --dir release-assets \
+            --clobber
+          tar -xzf "release-assets/$RELEASE_ASSET" --strip-components=1 -C image-root
+          cp Dockerfile.alpine image-root/Dockerfile.alpine
+
+          test -x image-root/bin/transfer_bot
+          test -f image-root/bin/libtdjson.so
+          test -x image-root/run.sh
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: image-root
+          file: image-root/Dockerfile.alpine
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.version }}
+            ${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}

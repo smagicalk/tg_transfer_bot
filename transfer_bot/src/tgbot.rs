@@ -4,6 +4,7 @@
 // - 委托 transfer 命令处理逻辑
 
 mod error;
+pub(crate) mod executor;
 mod login;
 mod queue;
 pub mod send;
@@ -117,7 +118,11 @@ pub async fn handle_update(
     config: std::sync::Arc<crate::config::BotConfig>,
     ready_roles: std::sync::Arc<tokio::sync::Mutex<BTreeSet<crate::config::ClientRole>>>,
 ) -> anyhow::Result<()> {
-    let Some(role) = config.client_ids.role_for_client_id(client_id) else {
+    let Some(role) = app_context
+        .executor_runtime
+        .role_for_client_id(client_id)
+        .or_else(|| config.client_ids.role_for_client_id(client_id))
+    else {
         tracing::warn!(client_id, "ignored update from unknown tdlib client");
         return Ok(());
     };
@@ -310,6 +315,45 @@ pub async fn handle_update(
                 )
                 .await?;
                 return Ok(());
+            }
+
+            // 二次验证密码只在 owner 私聊且执行器明确等待密码时消费；先删除用户
+            // 的密码消息，再发送给 TDLib，避免密码留在聊天记录中。
+            if !text[0].starts_with("/")
+                && app_context.executor_runtime.phase()
+                    == crate::app_context::ExecutorPhase::WaitingPassword
+                && app_context.executor_runtime.owner_chat_id() == Some(chat_id)
+            {
+                let reply_message_id = match message.reply_to.as_ref() {
+                    Some(tdlib_rs::enums::MessageReplyTo::Message(reply))
+                        if reply.chat_id == 0 || reply.chat_id == chat_id =>
+                    {
+                        Some(reply.message_id)
+                    }
+                    _ => None,
+                };
+                if app_context.executor_runtime.password_prompt_message_id() != reply_message_id {
+                    return Ok(());
+                }
+                let _ =
+                    crate::tgbot::send::delete_message(chat_id, message.id, interaction_client_id)
+                        .await;
+                if tgbot::executor::submit_two_factor_password(
+                    app_context.as_ref(),
+                    sender_id,
+                    reply_message_id,
+                    raw_text.clone(),
+                )
+                .await?
+                {
+                    crate::tgbot::send::send_card_message(
+                        "执行器登录\n\n二次验证密码已提交。".to_owned(),
+                        chat_id,
+                        interaction_client_id,
+                    )
+                    .await?;
+                    return Ok(());
+                }
             }
 
             let first_token_command = if text[0].starts_with("/") {

@@ -1,0 +1,20 @@
+# 仅接收 GitHub Release 的 Alpine 运行包作为构建上下文。
+# 包内已包含 transfer_bot、TDLib 和经过构建时校验的运行时依赖。
+FROM alpine:3.23
+
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S transfer_bot \
+    && adduser -S -G transfer_bot -h /app transfer_bot
+
+WORKDIR /app
+COPY --chown=transfer_bot:transfer_bot . /app/
+
+RUN chmod +x /app/run.sh /app/bin/transfer_bot
+
+ENV CONFIG_PATH=/app/config.json
+ENV RUST_LOG=info
+
+USER transfer_bot
+
+# 通过 CONFIG_PATH 指定宿主机映射后的配置位置；额外运行参数会继续传给程序。
+ENTRYPOINT ["/bin/sh", "-ec", "exec /app/run.sh -c \"$CONFIG_PATH\" \"$@\"", "--"]

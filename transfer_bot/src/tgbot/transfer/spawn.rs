@@ -25,8 +25,10 @@ pub(in crate::tgbot::transfer) fn spawn_transfer_job(
     notify_chat_id: i64,
     progress_message_id: Option<i64>,
     client_ids: crate::config::TransferClientIds,
+    admission: crate::app_context::TransferAdmissionGuard,
 ) {
     tokio::spawn(async move {
+        let _admission = admission;
         let source_link = plan.source_link.clone();
         let target_chat_id = plan.target_chat_id;
         tracing::info!(
@@ -159,7 +161,15 @@ pub(in crate::tgbot::transfer) fn spawn_recovery_job(
     client_ids: crate::config::TransferClientIds,
     progress_message_id: Option<i64>,
 ) {
+    let Some(admission) = app_context.transfer_runtime.try_admit_transfer() else {
+        tracing::info!(
+            job_id = job.id,
+            "recovery job not started while executor drains"
+        );
+        return;
+    };
     tokio::spawn(async move {
+        let _admission = admission;
         let notify_chat_id = job.request_chat_id;
         let job_id = job.id;
         let source_link = job.source_link.clone();

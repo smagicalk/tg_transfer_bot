@@ -165,6 +165,7 @@ enum CallbackRoute {
     Job,
     Config,
     Targets,
+    Executor,
     Health,
     Cache,
     Menu,
@@ -217,6 +218,12 @@ pub(in crate::tgbot) async fn transfer_callback_query_on(
         CallbackRoute::Job => job::job_callback_query_on(app, update, actor, client_id).await,
         CallbackRoute::Config => config_cmd::config_callback_query_on(app, update, client_id).await,
         CallbackRoute::Targets => targets::targets_callback_query_on(app, update, client_id).await,
+        CallbackRoute::Executor => {
+            crate::tgbot::executor::executor_callback_query_on(
+                app, update, config, actor, client_id,
+            )
+            .await
+        }
         CallbackRoute::Health => health::health_callback_query_on(app, update, client_id).await,
         CallbackRoute::Cache => cache::cache_callback_query_on(app, update, client_id).await,
         CallbackRoute::Menu => {
@@ -291,6 +298,11 @@ fn classify_callback_route(payload: &tdlib_rs::enums::CallbackQueryPayload) -> C
             if targets::is_targets_callback_data(&data.data) =>
         {
             CallbackRoute::Targets
+        }
+        tdlib_rs::enums::CallbackQueryPayload::Data(data)
+            if crate::tgbot::executor::is_executor_callback_data(&data.data) =>
+        {
+            CallbackRoute::Executor
         }
         tdlib_rs::enums::CallbackQueryPayload::Data(data)
             if health::is_health_callback_data(&data.data) =>

@@ -57,49 +57,71 @@ pub async fn handle_authorization(
         }
 
         // 进入手机 / Token / OCR 登录分支。
-        AuthorizationState::WaitPhoneNumber => match &login_info {
-            LoginInfo::Phone(phone) => {
-                tracing::info!(
+        AuthorizationState::WaitPhoneNumber => {
+            // 用户执行器只能由 owner 在 Bot 面板中显式启动。禁止在进程启动或 TDLib
+            // 重连时自动弹出终端二维码，避免它反过来阻塞 Bot 的默认工作流。
+            if role == ClientRole::User {
+                if app_context
+                    .executor_runtime
+                    .request_qr_if_starting(client_id)
+                {
+                    tracing::info!(client_id, "requesting executor qr login");
+                    return tdlib_rs::functions::request_qr_code_authentication(vec![], client_id)
+                        .await
+                        .map_err(|error| anyhow::Error::new(TdError(error)));
+                }
+                tracing::debug!(
                     client_id,
-                    role = role.as_str(),
-                    "submitting phone login request"
+                    phase = ?app_context.executor_runtime.phase(),
+                    "executor user client is waiting for an owner login request"
                 );
-                let phone_number_authentication_settings =
-                    tdlib_rs::types::PhoneNumberAuthenticationSettings {
-                        allow_flash_call: false,
-                        allow_missed_call: false,
-                        is_current_phone_number: true,
-                        has_unknown_phone_number: false,
-                        allow_sms_retriever_api: false,
-                        firebase_authentication_settings: None,
-                        authentication_tokens: vec![],
-                    };
+                return Ok(());
+            }
 
-                tdlib_rs::functions::set_authentication_phone_number(
-                    phone.clone(),
-                    Some(phone_number_authentication_settings),
-                    client_id,
-                )
-                .await
-                .map_err(|e| anyhow::Error::new(TdError(e)))
-            }
-            LoginInfo::Token(token) => {
-                tracing::info!(
-                    client_id,
-                    role = role.as_str(),
-                    "submitting bot token login request"
-                );
-                tdlib_rs::functions::check_authentication_bot_token(token.clone(), client_id)
+            match &login_info {
+                LoginInfo::Phone(phone) => {
+                    tracing::info!(
+                        client_id,
+                        role = role.as_str(),
+                        "submitting phone login request"
+                    );
+                    let phone_number_authentication_settings =
+                        tdlib_rs::types::PhoneNumberAuthenticationSettings {
+                            allow_flash_call: false,
+                            allow_missed_call: false,
+                            is_current_phone_number: true,
+                            has_unknown_phone_number: false,
+                            allow_sms_retriever_api: false,
+                            firebase_authentication_settings: None,
+                            authentication_tokens: vec![],
+                        };
+
+                    tdlib_rs::functions::set_authentication_phone_number(
+                        phone.clone(),
+                        Some(phone_number_authentication_settings),
+                        client_id,
+                    )
                     .await
                     .map_err(|e| anyhow::Error::new(TdError(e)))
+                }
+                LoginInfo::Token(token) => {
+                    tracing::info!(
+                        client_id,
+                        role = role.as_str(),
+                        "submitting bot token login request"
+                    );
+                    tdlib_rs::functions::check_authentication_bot_token(token.clone(), client_id)
+                        .await
+                        .map_err(|e| anyhow::Error::new(TdError(e)))
+                }
+                LoginInfo::Ocr => {
+                    tracing::info!(client_id, role = role.as_str(), "requesting qr login");
+                    tdlib_rs::functions::request_qr_code_authentication(vec![], client_id)
+                        .await
+                        .map_err(|e| anyhow::Error::new(TdError(e)))
+                }
             }
-            LoginInfo::Ocr => {
-                tracing::info!(client_id, role = role.as_str(), "requesting qr login");
-                tdlib_rs::functions::request_qr_code_authentication(vec![], client_id)
-                    .await
-                    .map_err(|e| anyhow::Error::new(TdError(e)))
-            }
-        },
+        }
 
         // 以下状态暂未实现：返回可控错误，避免 `todo!` 触发 panic。
         AuthorizationState::WaitPremiumPurchase(_) => {
@@ -139,6 +161,15 @@ pub async fn handle_authorization(
         ) => {
             tracing::info!(client_id, "qr login confirmation requested");
             let link = authorization_state_wait_other_device_confirmation.link;
+            if role == ClientRole::User {
+                return crate::tgbot::executor::send_qr_code_to_owner(
+                    app_context.as_ref(),
+                    client_id,
+                    link,
+                    config.interaction_client_id()?,
+                )
+                .await;
+            }
             let code =
                 qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::Q)?;
             let qr = code
@@ -163,6 +194,15 @@ pub async fn handle_authorization(
         // 输入二次密码。
         AuthorizationState::WaitPassword(authorization_state_wait_password) => {
             tracing::info!(client_id, "waiting for two-factor password");
+            if role == ClientRole::User {
+                return crate::tgbot::executor::request_two_factor_password(
+                    app_context.as_ref(),
+                    client_id,
+                    authorization_state_wait_password.password_hint.as_str(),
+                    config.interaction_client_id()?,
+                )
+                .await;
+            }
             let password =
                 inquire::Password::new(authorization_state_wait_password.password_hint.as_str())
                     .with_help_message("请输入密码")
@@ -191,27 +231,89 @@ pub async fn handle_authorization(
             if role == ClientRole::Bot {
                 register_bot_commands_once(client_id).await;
             }
+            if role == ClientRole::User && app_context.executor_runtime.mark_ready(client_id) {
+                if let Err(error) = crate::tgbot::executor::refresh_executor_identity(
+                    app_context.as_ref(),
+                    client_id,
+                )
+                .await
+                {
+                    // 账号摘要仅用于面板展示；读取失败不能阻止已完成的执行器登录。
+                    tracing::warn!(client_id, error = %error, "load executor account identity failed");
+                }
+                if let Some(path) = app_context.executor_runtime.take_qr_image_path() {
+                    let _ = std::fs::remove_file(path);
+                }
+                if let Some(prompt_id) = app_context
+                    .executor_runtime
+                    .take_password_prompt_message_id()
+                {
+                    let _ = crate::tgbot::send::delete_message(
+                        config.owner_user_id,
+                        prompt_id,
+                        config.interaction_client_id()?,
+                    )
+                    .await;
+                }
+            }
             let mut ready_roles = ready_roles.lock().await;
             ready_roles.insert(role);
             if config.all_required_clients_ready(&ready_roles) {
-                let transfer_clients = config.transfer_client_ids()?;
+                let mut transfer_clients =
+                    config.transfer_client_ids_for_ready_roles(&ready_roles)?;
+                transfer_clients.user = app_context.executor_runtime.user_client_id();
                 drop(ready_roles);
                 crate::tgbot::transfer::on_clients_ready(app_context, transfer_clients);
             }
             Ok(())
         }
 
-        // 生命周期终止状态：直接退出进程。
+        // Bot 生命周期终止才退出进程；用户执行器可以独立退出或重新登录。
         AuthorizationState::LoggingOut => {
             tracing::info!(client_id, "tdlib logging out");
+            if role == ClientRole::User {
+                app_context.executor_runtime.mark_logging_out(client_id);
+                return Ok(());
+            }
             exit(0)
         }
         AuthorizationState::Closing => {
             tracing::info!(client_id, "tdlib closing");
+            if role == ClientRole::User {
+                return Ok(());
+            }
             exit(0)
         }
         AuthorizationState::Closed => {
             tracing::info!(client_id, "tdlib closed");
+            if role == ClientRole::User {
+                ready_roles.lock().await.remove(&ClientRole::User);
+                if app_context.executor_runtime.clear_user_client_if(client_id) {
+                    if let Some(path) = app_context.executor_runtime.take_qr_image_path() {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    if let Some(prompt_id) = app_context
+                        .executor_runtime
+                        .take_password_prompt_message_id()
+                    {
+                        let _ = crate::tgbot::send::delete_message(
+                            config.owner_user_id,
+                            prompt_id,
+                            config.interaction_client_id()?,
+                        )
+                        .await;
+                    }
+                    if let Some(mut transfer_clients) =
+                        app_context.transfer_runtime.transfer_client_ids()
+                    {
+                        transfer_clients.user = None;
+                        app_context
+                            .transfer_runtime
+                            .set_transfer_client_ids(transfer_clients);
+                    }
+                }
+                return Ok(());
+            }
             exit(0)
         }
     }

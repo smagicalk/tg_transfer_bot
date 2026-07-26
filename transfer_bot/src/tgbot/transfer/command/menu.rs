@@ -50,6 +50,7 @@ enum HubEntryAction {
     HealthHome,
     CacheHome,
     AuthHome,
+    ExecutorHome,
 }
 
 /// 任务 hub 的共享入口定义。
@@ -140,11 +141,18 @@ fn admin_hub_specs(is_owner: bool) -> Vec<Vec<HubEntrySpec>> {
         ],
     ];
     if is_owner {
-        rows.push(vec![HubEntrySpec {
-            text: "授权管理",
-            style: tdlib_rs::enums::ButtonStyle::Primary,
-            action: HubEntryAction::AuthHome,
-        }]);
+        rows.push(vec![
+            HubEntrySpec {
+                text: "执行器",
+                style: tdlib_rs::enums::ButtonStyle::Primary,
+                action: HubEntryAction::ExecutorHome,
+            },
+            HubEntrySpec {
+                text: "授权管理",
+                style: tdlib_rs::enums::ButtonStyle::Default,
+                action: HubEntryAction::AuthHome,
+            },
+        ]);
     }
     rows
 }

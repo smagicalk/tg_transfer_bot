@@ -139,7 +139,7 @@ async fn run_transfer_plan_on(
 async fn dispatch_transfer_plan(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: TransferPlan,
-    config: Arc<BotConfig>,
+    _config: Arc<BotConfig>,
     request_chat_id: i64,
     request_message_id: i64,
     interaction_message_id: Option<i64>,
@@ -191,7 +191,7 @@ async fn dispatch_transfer_plan(
             old.target_chat_id,
             old.result_message_id,
             &old.result_message_link,
-            config.transfer_client_ids()?.upload,
+            super::super::transfer_client_ids()?.upload,
         )
         .await?;
         app_context.retransfer_confirm.put_plan(
@@ -211,12 +211,17 @@ async fn dispatch_transfer_plan(
         return Ok(());
     }
     // 后台任务会持续编辑这条消息，把它变成转存进度面板。
+    let admission = app_context
+        .transfer_runtime
+        .try_admit_transfer()
+        .ok_or_else(|| anyhow::anyhow!("执行器正在退出，暂不接收新的转存任务"))?;
     super::super::spawn_transfer_job(
         app_context,
         plan,
         request_chat_id,
         Some(progress_message_id),
-        config.transfer_client_ids()?,
+        super::super::transfer_client_ids()?,
+        admission,
     );
     Ok(())
 }
