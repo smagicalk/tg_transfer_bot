@@ -52,26 +52,6 @@ install_packages() {
         zlib1g-dev
       rm -rf /var/lib/apt/lists/*
       ;;
-    rocky)
-      dnf install -y --setopt=install_weak_deps=False \
-        ca-certificates \
-        clang \
-        cmake \
-        coreutils \
-        curl \
-        file \
-        gcc-c++ \
-        git \
-        gperf \
-        gzip \
-        make \
-        openssl-devel \
-        pkgconf-pkg-config \
-        sqlite-devel \
-        tar \
-        zlib-devel
-      dnf clean all
-      ;;
     *)
       echo "Unsupported distro: $ID" >&2
       exit 1

@@ -101,10 +101,11 @@ cargo run -p transfer_bot -- -c config.json
 
 ## GitHub Actions
 
-仓库内提供两个手动 workflow：
+仓库内提供三个手动 workflow：
 
 - `release-packages.yml`：面向正式发布，手动构建全部目标系统。
 - `test-single-target.yml`：面向单系统验证，手动只构建一个目标系统。
+- `publish-tag-release.yml`：选择已有 tag 或分支，构建全部目标；tag 可继续发布为 GitHub Release。
 
 ### release-packages.yml
 
@@ -118,12 +119,24 @@ cargo run -p transfer_bot -- -c config.json
 - `run_checks`
   - 是否先执行 `cargo fmt`、`cargo test`、`cargo clippy`。
 
+### publish-tag-release.yml
+
+所有参数均为下拉框：
+
+- `source_ref`：选择构建来源，当前可选 `dev`、`master` 和 `v0.0.1`。
+- `release_mode`
+  - `build_only`：只构建并上传 workflow artifact，适合使用分支测试。
+  - `publish_release`：构建后发布 GitHub Release，只允许搭配 tag 使用。
+- `td_ref`：选择 TDLib 版本来源，当前为 `master`。
+- `run_checks`：选择是否先执行格式化、测试和 Clippy 检查。
+
+默认使用 `dev + build_only`，避免测试时误创建 Release。GitHub Actions 的 `workflow_dispatch.choice` 不支持动态读取仓库 tag 或分支；创建新 tag 或分支后，需要同时将名称加入 `publish-tag-release.yml` 的 `source_ref.options`。
+
 当前正式发布目标：
 
 - `linux-x86_64-alpine3.23`
 - `linux-x86_64-debian13`
 - `linux-x86_64-ubuntu24.04`
-- `linux-x86_64-rocky9`
 - `windows-x86_64-msvc`
 
 ### test-single-target.yml
@@ -134,7 +147,6 @@ cargo run -p transfer_bot -- -c config.json
   - `alpine-3.23`
   - `debian-13`
   - `ubuntu-24.04`
-  - `rocky-9`
   - `windows-2022`
 - `package_mode`
   - `package`：编译、打包并上传单个测试 artifact。
