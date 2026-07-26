@@ -179,7 +179,7 @@ cargo run -p transfer_bot -- -c config.json</code></pre>
                 <tr><td><code>tdlib_defaults.api_hash</code></td><td>Telegram API Hash</td><td>不得提交</td></tr>
                 <tr><td><code>clients.bot.token</code></td><td>BotFather Token</td><td>不得提交</td></tr>
                 <tr><td><code>storage.database_url</code></td><td>业务数据库</td><td>SQLite 或 PostgreSQL</td></tr>
-                <tr><td><code>workflow.upload_client</code></td><td>目标消息发送端</td><td>推荐 <code>bot</code></td></tr>
+                <tr><td><code>clients.user</code></td><td>按需执行器目录</td><td>由 Owner 在 Bot 内二维码登录</td></tr>
               </tbody>
             </table>
           </div>
@@ -201,7 +201,6 @@ cargo run -p transfer_bot -- -c config.json</code></pre>
   },
   "clients": {
     "user": {
-      "login_info": { "type": "OCR" },
       "tdlib": {
         "database_directory": "tg/user/db",
         "files_directory": "tg/user/files",
@@ -216,8 +215,7 @@ cargo run -p transfer_bot -- -c config.json</code></pre>
         "database_encryption_key": "replace_me"
       }
     }
-  },
-  "workflow": { "upload_client": "bot" }
+  }
 }</code></pre>
           </div>
         </section>

@@ -18,7 +18,7 @@ use super::super::types::{SourceKind, TransferBundle, client_role_from_str};
 use super::TransferOutcome;
 use super::control::{apply_job_control, finish_skipped_by_control};
 use super::result_link::build_result_message_link;
-use super::upload::upload_prepared;
+use super::upload::{is_initial_upload_rejected, upload_prepared};
 
 /// 已持有 job 运行锁后的核心执行逻辑：
 /// 1. 准备所有上传内容（包括下载与缓存回填）
@@ -376,20 +376,56 @@ async fn run_job_inner_once(
     // guard 覆盖上传与最终状态落库；任何成功或错误返回都会清理运行时 file_id 映射。
     // 恢复任务可能来自进程重启或上一次中断，先清除同 job 的陈旧 file_id/字节快照，
     // 避免新一轮上传从旧进度起算。
-    app_context
-        .upload_progress
-        .clear_job(client_ids.upload, job.id);
-    let _upload_progress_guard = app_context
-        .upload_progress
-        .job_guard(client_ids.upload, job.id);
-    let upload_result = upload_prepared(
-        app_context.as_ref(),
-        job.id,
-        job.target_chat_id,
-        &prepared,
-        client_ids.upload,
-    )
-    .await;
+    let mut upload_client_id = client_ids.upload;
+    let initial_upload_result = {
+        app_context
+            .upload_progress
+            .clear_job(upload_client_id, job.id);
+        let _upload_progress_guard = app_context
+            .upload_progress
+            .job_guard(upload_client_id, job.id);
+        upload_prepared(
+            app_context.as_ref(),
+            job.id,
+            job.target_chat_id,
+            &prepared,
+            upload_client_id,
+        )
+        .await
+    };
+    let upload_result = match initial_upload_result {
+        Err(error)
+            if client_ids.bot == Some(upload_client_id)
+                && client_ids.user.is_some()
+                && is_initial_upload_rejected(&error) =>
+        {
+            let user_client_id = client_ids.get(crate::config::ClientRole::User)?;
+            tracing::warn!(
+                job_id = job.id,
+                target_chat_id = job.target_chat_id,
+                bot_upload_client_id = upload_client_id,
+                user_upload_client_id = user_client_id,
+                error = %error,
+                "bot initial upload rejected, fallback to user before target acceptance"
+            );
+            upload_client_id = user_client_id;
+            app_context
+                .upload_progress
+                .clear_job(upload_client_id, job.id);
+            let _upload_progress_guard = app_context
+                .upload_progress
+                .job_guard(upload_client_id, job.id);
+            upload_prepared(
+                app_context.as_ref(),
+                job.id,
+                job.target_chat_id,
+                &prepared,
+                upload_client_id,
+            )
+            .await
+        }
+        result => result,
+    };
     match upload_result {
         Ok(upload_result) => {
             // 上传成功后目标消息已经真实发出，不能再用 pause/stop 把数据库隐藏成未完成。
@@ -399,7 +435,7 @@ async fn run_job_inner_once(
                     job.target_chat_id,
                     entry.message_id,
                     entry.is_album,
-                    client_ids.upload,
+                    upload_client_id,
                 )
                 .await?;
                 result_messages.push(store::ResultMessageRecord {

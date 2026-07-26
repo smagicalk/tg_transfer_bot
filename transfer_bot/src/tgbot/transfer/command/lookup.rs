@@ -74,7 +74,7 @@ pub(in crate::tgbot::transfer::command) fn build_lookup_help_entry_rows()
 pub async fn lookup_command_on(
     app: &crate::app_context::AppContext,
     text: Vec<&str>,
-    config: Arc<BotConfig>,
+    _config: Arc<BotConfig>,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
@@ -100,7 +100,7 @@ pub async fn lookup_command_on(
             job.target_chat_id,
             job.result_message_id,
             &job.result_message_link,
-            config.transfer_client_ids()?.upload,
+            super::super::transfer_client_ids()?.upload,
         )
         .await?;
         let result_messages = store::list_result_messages_by_job(job.id).await?;
@@ -112,7 +112,7 @@ pub async fn lookup_command_on(
         let result_messages = refresh_stored_result_messages(
             job.id,
             result_messages,
-            config.transfer_client_ids()?.upload,
+            super::super::transfer_client_ids()?.upload,
         )
         .await?;
         tracing::info!(

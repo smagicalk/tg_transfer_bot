@@ -81,5 +81,6 @@ fn build_hub_button(spec: &HubEntrySpec) -> tdlib_rs::types::InlineKeyboardButto
             &super::super::super::auth::build_auth_panel_callback_data(),
             spec.style.clone(),
         ),
+        HubEntryAction::ExecutorHome => crate::tgbot::executor::build_executor_panel_button(),
     }
 }

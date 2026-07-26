@@ -113,6 +113,100 @@ pub(in crate::tgbot::send::message) async fn send_formatted_text_message(
     Ok(())
 }
 
+/// 发送本地 PNG 照片并返回最终消息定位。
+///
+/// 二维码需要在后续刷新时原地替换，因此只解析轻量消息定位，不反序列化完整 `Message`。
+pub async fn send_local_photo_returning(
+    local_path: &str,
+    caption: &str,
+    chat_id: i64,
+    client_id: i32,
+) -> anyhow::Result<SentMessageReceipt> {
+    let response = tdlib_rs::send_request(
+        client_id,
+        json!({
+            "@type": "sendMessage",
+            "chat_id": chat_id,
+            "topic_id": serde_json::Value::Null,
+            "reply_to": serde_json::Value::Null,
+            "options": serde_json::Value::Null,
+            "reply_markup": serde_json::Value::Null,
+            "input_message_content": {
+                "@type": "inputMessagePhoto",
+                "photo": { "@type": "inputFileLocal", "path": local_path },
+                "thumbnail": serde_json::Value::Null,
+                "added_sticker_file_ids": [],
+                "width": 0,
+                "height": 0,
+                "caption": {
+                    "@type": "formattedText",
+                    "text": caption,
+                    "entities": []
+                },
+                "show_caption_above_media": false,
+                "self_destruct_type": serde_json::Value::Null,
+                "has_spoiler": false
+            }
+        }),
+    )
+    .await;
+    if response["@type"] == "error" {
+        let err: tdlib_rs::types::Error = serde_json::from_value(response)?;
+        return Err(anyhow::Error::new(TdError(err)));
+    }
+    let receipt = parse_sent_message_lite(response)?;
+    tracing::debug!(
+        chat_id,
+        message_id = receipt.id,
+        "tdlib QR photo send requested"
+    );
+    wait_for_sent_message_receipt(receipt, client_id).await
+}
+
+/// 原地替换本地 PNG 照片及其说明文字。
+///
+/// 只检查 TDLib 是否接受编辑请求，避免为二维码刷新反序列化大型媒体 `Message`。
+pub async fn edit_local_photo(
+    local_path: &str,
+    caption: &str,
+    chat_id: i64,
+    message_id: i64,
+    client_id: i32,
+) -> anyhow::Result<()> {
+    let response = tdlib_rs::send_request(
+        client_id,
+        json!({
+            "@type": "editMessageMedia",
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "reply_markup": serde_json::Value::Null,
+            "input_message_content": {
+                "@type": "inputMessagePhoto",
+                "photo": { "@type": "inputFileLocal", "path": local_path },
+                "thumbnail": serde_json::Value::Null,
+                "added_sticker_file_ids": [],
+                "width": 0,
+                "height": 0,
+                "caption": {
+                    "@type": "formattedText",
+                    "text": caption,
+                    "entities": []
+                },
+                "show_caption_above_media": false,
+                "self_destruct_type": serde_json::Value::Null,
+                "has_spoiler": false
+            }
+        }),
+    )
+    .await;
+    if response["@type"] == "error" {
+        let err: tdlib_rs::types::Error = serde_json::from_value(response)?;
+        return Err(anyhow::Error::new(TdError(err)));
+    }
+    tracing::debug!(chat_id, message_id, "tdlib QR photo edit requested");
+    Ok(())
+}
+
 /// 编辑一条文本消息，并同步刷新 inline keyboard。
 pub async fn edit_markdown_message_with_inline_keyboard(
     text: String,

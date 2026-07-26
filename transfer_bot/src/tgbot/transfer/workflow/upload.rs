@@ -16,6 +16,26 @@ const TELEGRAM_ALBUM_MAX_ITEMS: usize = 10;
 const UPLOAD_FINAL_MESSAGE_ID_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const UPLOAD_CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// 仅表示第一条目标发送请求被 TDLib 直接拒绝。
+///
+/// 该错误发生时尚未收到任何 Message，因此允许调用方尝试一次 user 上传回退；一旦
+/// TDLib 返回临时消息、进入等待完成或已经发送相册分组，就不能回退，以免重复发送。
+#[derive(Debug, thiserror::Error)]
+#[error("initial upload request rejected before target message acceptance: {message}")]
+pub(super) struct InitialUploadRejected {
+    message: String,
+}
+
+pub(super) fn is_initial_upload_rejected(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<InitialUploadRejected>().is_some()
+}
+
+fn initial_upload_rejected(error: tdlib_rs::types::Error) -> anyhow::Error {
+    anyhow::Error::new(InitialUploadRejected {
+        message: format!("code={} message={}", error.code, error.message),
+    })
+}
+
 fn is_upload_control_status(status: &str) -> bool {
     matches!(
         status,
@@ -126,7 +146,7 @@ pub(super) async fn upload_prepared(
             client_id,
         )
         .await
-        .map_err(|e| anyhow::Error::new(TdError(e)))?;
+        .map_err(initial_upload_rejected)?;
         let tdlib_rs::enums::Message::Message(message) = sent;
         register_message_upload_files(
             app_context,
@@ -200,7 +220,13 @@ pub(super) async fn upload_prepared(
             client_id,
         )
         .await
-        .map_err(|e| anyhow::Error::new(TdError(e)))?;
+        .map_err(|error| {
+            if entries.is_empty() {
+                initial_upload_rejected(error)
+            } else {
+                anyhow::Error::new(TdError(error))
+            }
+        })?;
         let tdlib_rs::enums::Messages::Messages(messages) = rs;
         for (position, message) in messages.messages.iter().enumerate() {
             let Some(message) = message else {
@@ -398,7 +424,22 @@ pub(super) fn validate_album_kinds(kinds: &[UploadKind]) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_upload_control_status, message_upload_files};
+    use super::{
+        InitialUploadRejected, is_initial_upload_rejected, is_upload_control_status,
+        message_upload_files,
+    };
+
+    #[test]
+    fn initial_upload_rejection_is_explicitly_marked_for_safe_fallback() {
+        let error = anyhow::Error::new(InitialUploadRejected {
+            message: "request rejected".to_owned(),
+        });
+
+        assert!(is_initial_upload_rejected(&error));
+        assert!(!is_initial_upload_rejected(&anyhow::anyhow!(
+            "later upload failure"
+        )));
+    }
 
     #[test]
     fn test_upload_control_status_interrupts_pending_upload() {

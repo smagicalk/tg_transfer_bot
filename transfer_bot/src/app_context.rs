@@ -23,6 +23,7 @@ pub struct AppContext {
     pub(crate) inflight_downloads: Arc<InflightDownloadRegistry>,
     pub(crate) transfer_guards: Arc<TransferExecutionGuards>,
     pub(crate) send_capabilities: Arc<SendCapabilities>,
+    pub(crate) executor_runtime: Arc<ExecutorRuntimeState>,
     pub(crate) lookup_retry: Arc<LookupRetryState>,
     pub(crate) retransfer_confirm: Arc<RetransferConfirmState>,
 }
@@ -38,9 +39,196 @@ impl Default for AppContext {
             inflight_downloads: Arc::new(InflightDownloadRegistry::default()),
             transfer_guards: Arc::new(TransferExecutionGuards::default()),
             send_capabilities: Arc::new(SendCapabilities::default()),
+            executor_runtime: Arc::new(ExecutorRuntimeState::default()),
             lookup_retry: Arc::new(LookupRetryState::default()),
             retransfer_confirm: Arc::new(RetransferConfirmState::default()),
         }
+    }
+}
+
+/// 按需登录用户执行器的运行状态。
+///
+/// Bot 始终独立运行；用户执行器只在需要读取私有源或 Bot 权限不足时由 owner 登录。
+/// 状态只保存 client 与交互定位，不保存二维码链接、密码或其他登录凭据。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExecutorPhase {
+    #[default]
+    Offline,
+    Starting,
+    WaitingQr,
+    WaitingPassword,
+    Ready,
+    Draining,
+    LoggingOut,
+}
+
+#[derive(Default)]
+pub struct ExecutorRuntimeState {
+    phase: RwLock<ExecutorPhase>,
+    user_client_id: RwLock<Option<i32>>,
+    owner_chat_id: RwLock<Option<i64>>,
+    qr_image_path: RwLock<Option<PathBuf>>,
+    qr_message_id: RwLock<Option<i64>>,
+    password_prompt_message_id: RwLock<Option<i64>>,
+    identity: RwLock<Option<ExecutorIdentity>>,
+}
+
+/// 已登录执行器的非敏感账号摘要，用于 owner 在面板中确认当前会话。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutorIdentity {
+    pub user_id: i64,
+    pub display_name: String,
+    pub username: Option<String>,
+}
+
+impl ExecutorRuntimeState {
+    pub fn phase(&self) -> ExecutorPhase {
+        *recover_rwlock_read(&self.phase, "executor phase")
+    }
+
+    pub fn user_client_id(&self) -> Option<i32> {
+        *recover_rwlock_read(&self.user_client_id, "executor user client id")
+    }
+
+    pub fn owner_chat_id(&self) -> Option<i64> {
+        *recover_rwlock_read(&self.owner_chat_id, "executor owner chat id")
+    }
+
+    pub fn begin_login(&self, user_client_id: i32, owner_chat_id: i64) {
+        *recover_rwlock_write(&self.user_client_id, "executor user client id") =
+            Some(user_client_id);
+        *recover_rwlock_write(&self.owner_chat_id, "executor owner chat id") = Some(owner_chat_id);
+        *recover_rwlock_write(&self.qr_message_id, "executor qr message id") = None;
+        *recover_rwlock_write(&self.identity, "executor identity") = None;
+        *recover_rwlock_write(&self.phase, "executor phase") = ExecutorPhase::Starting;
+    }
+
+    pub fn role_for_client_id(&self, client_id: i32) -> Option<ClientRole> {
+        (self.user_client_id() == Some(client_id)).then_some(ClientRole::User)
+    }
+
+    pub fn request_qr_if_starting(&self, client_id: i32) -> bool {
+        if self.user_client_id() != Some(client_id) {
+            return false;
+        }
+        let mut phase = recover_rwlock_write(&self.phase, "executor phase");
+        if *phase != ExecutorPhase::Starting {
+            return false;
+        }
+        *phase = ExecutorPhase::WaitingQr;
+        true
+    }
+
+    pub fn set_waiting_password(&self, client_id: i32) -> bool {
+        if self.user_client_id() != Some(client_id) {
+            return false;
+        }
+        *recover_rwlock_write(&self.phase, "executor phase") = ExecutorPhase::WaitingPassword;
+        true
+    }
+
+    pub fn mark_ready(&self, client_id: i32) -> bool {
+        if self.user_client_id() != Some(client_id) {
+            return false;
+        }
+        *recover_rwlock_write(&self.phase, "executor phase") = ExecutorPhase::Ready;
+        true
+    }
+
+    pub fn mark_logging_out(&self, client_id: i32) -> bool {
+        if self.user_client_id() != Some(client_id) {
+            return false;
+        }
+        *recover_rwlock_write(&self.phase, "executor phase") = ExecutorPhase::LoggingOut;
+        true
+    }
+
+    pub fn begin_draining(&self, client_id: i32) -> bool {
+        if self.user_client_id() != Some(client_id) || self.phase() != ExecutorPhase::Ready {
+            return false;
+        }
+        *recover_rwlock_write(&self.phase, "executor phase") = ExecutorPhase::Draining;
+        true
+    }
+
+    pub fn cancel_draining(&self, client_id: i32) -> bool {
+        if self.user_client_id() != Some(client_id) || self.phase() != ExecutorPhase::Draining {
+            return false;
+        }
+        *recover_rwlock_write(&self.phase, "executor phase") = ExecutorPhase::Ready;
+        true
+    }
+
+    pub fn restore_ready_after_logout_failure(&self, client_id: i32) -> bool {
+        if self.user_client_id() != Some(client_id) || self.phase() != ExecutorPhase::LoggingOut {
+            return false;
+        }
+        *recover_rwlock_write(&self.phase, "executor phase") = ExecutorPhase::Ready;
+        true
+    }
+
+    pub fn clear_user_client_if(&self, client_id: i32) -> bool {
+        if self.user_client_id() != Some(client_id) {
+            return false;
+        }
+        *recover_rwlock_write(&self.user_client_id, "executor user client id") = None;
+        *recover_rwlock_write(&self.owner_chat_id, "executor owner chat id") = None;
+        *recover_rwlock_write(&self.qr_message_id, "executor qr message id") = None;
+        *recover_rwlock_write(&self.identity, "executor identity") = None;
+        *recover_rwlock_write(&self.phase, "executor phase") = ExecutorPhase::Offline;
+        true
+    }
+
+    pub fn replace_qr_image_path(&self, path: PathBuf) -> Option<PathBuf> {
+        recover_rwlock_write(&self.qr_image_path, "executor qr image path").replace(path)
+    }
+
+    pub fn take_qr_image_path(&self) -> Option<PathBuf> {
+        recover_rwlock_write(&self.qr_image_path, "executor qr image path").take()
+    }
+
+    /// 保存首次发送的二维码消息，后续二维码刷新时只编辑该消息。
+    pub fn replace_qr_message_id(&self, message_id: i64) -> Option<i64> {
+        recover_rwlock_write(&self.qr_message_id, "executor qr message id").replace(message_id)
+    }
+
+    pub fn qr_message_id(&self) -> Option<i64> {
+        *recover_rwlock_read(&self.qr_message_id, "executor qr message id")
+    }
+
+    pub fn set_identity_if_ready(&self, client_id: i32, identity: ExecutorIdentity) -> bool {
+        if self.user_client_id() != Some(client_id) || self.phase() != ExecutorPhase::Ready {
+            return false;
+        }
+        *recover_rwlock_write(&self.identity, "executor identity") = Some(identity);
+        true
+    }
+
+    pub fn identity(&self) -> Option<ExecutorIdentity> {
+        recover_rwlock_read(&self.identity, "executor identity").clone()
+    }
+
+    pub fn replace_password_prompt_message_id(&self, message_id: i64) -> Option<i64> {
+        recover_rwlock_write(
+            &self.password_prompt_message_id,
+            "executor password prompt message id",
+        )
+        .replace(message_id)
+    }
+
+    pub fn take_password_prompt_message_id(&self) -> Option<i64> {
+        recover_rwlock_write(
+            &self.password_prompt_message_id,
+            "executor password prompt message id",
+        )
+        .take()
+    }
+
+    pub fn password_prompt_message_id(&self) -> Option<i64> {
+        *recover_rwlock_read(
+            &self.password_prompt_message_id,
+            "executor password prompt message id",
+        )
     }
 }
 
@@ -253,15 +441,34 @@ impl SendCapabilities {
     }
 }
 
-#[derive(Default)]
 pub struct TransferRuntimeState {
     runtime_config: RwLock<TransferConfig>,
     runtime_default_config: RwLock<TransferConfig>,
     tdlib_files_directories: RwLock<HashMap<ClientRole, PathBuf>>,
     active_transfer_jobs: AtomicUsize,
     transfer_slot_notify: tokio::sync::Notify,
+    accepting_new_transfers: AtomicBool,
+    admitted_transfer_jobs: AtomicUsize,
+    transfer_admission_notify: tokio::sync::Notify,
     transfer_client_ids: RwLock<Option<TransferClientIds>>,
     background_services_started: AtomicBool,
+}
+
+impl Default for TransferRuntimeState {
+    fn default() -> Self {
+        Self {
+            runtime_config: RwLock::new(TransferConfig::default()),
+            runtime_default_config: RwLock::new(TransferConfig::default()),
+            tdlib_files_directories: RwLock::new(HashMap::new()),
+            active_transfer_jobs: AtomicUsize::new(0),
+            transfer_slot_notify: tokio::sync::Notify::new(),
+            accepting_new_transfers: AtomicBool::new(true),
+            admitted_transfer_jobs: AtomicUsize::new(0),
+            transfer_admission_notify: tokio::sync::Notify::new(),
+            transfer_client_ids: RwLock::new(None),
+            background_services_started: AtomicBool::new(false),
+        }
+    }
 }
 
 impl TransferRuntimeState {
@@ -330,6 +537,52 @@ impl TransferRuntimeState {
         }
     }
 
+    /// 接纳一项新建或恢复转存。执行器排空期间返回 `None`，已接纳的任务不受影响。
+    pub fn try_admit_transfer(self: &Arc<Self>) -> Option<TransferAdmissionGuard> {
+        loop {
+            if !self.accepting_new_transfers.load(Ordering::SeqCst) {
+                return None;
+            }
+            let current = self.admitted_transfer_jobs.load(Ordering::SeqCst);
+            if self
+                .admitted_transfer_jobs
+                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                // `begin_transfer_drain` 可能刚好发生在 compare-exchange 之后；撤销这次
+                // 接纳，确保排空开始后的新任务不会漏进来。
+                if self.accepting_new_transfers.load(Ordering::SeqCst) {
+                    return Some(TransferAdmissionGuard {
+                        state: self.clone(),
+                    });
+                }
+                self.admitted_transfer_jobs.fetch_sub(1, Ordering::SeqCst);
+                self.transfer_admission_notify.notify_waiters();
+                return None;
+            }
+        }
+    }
+
+    pub fn begin_transfer_drain(&self) {
+        self.accepting_new_transfers.store(false, Ordering::SeqCst);
+        self.transfer_admission_notify.notify_waiters();
+    }
+
+    pub fn cancel_transfer_drain(&self) {
+        self.accepting_new_transfers.store(true, Ordering::SeqCst);
+        self.transfer_admission_notify.notify_waiters();
+    }
+
+    pub async fn wait_for_transfer_drain(&self) {
+        loop {
+            let notified = self.transfer_admission_notify.notified();
+            if self.admitted_transfer_jobs.load(Ordering::SeqCst) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     pub fn set_transfer_client_ids(&self, client_ids: TransferClientIds) {
         *recover_rwlock_write(&self.transfer_client_ids, "transfer client ids") = Some(client_ids);
     }
@@ -360,6 +613,20 @@ impl TransferRuntimeState {
 
 pub struct TransferExecGuard {
     state: Arc<TransferRuntimeState>,
+}
+
+/// 从任务创建到后台 workflow 结束的接纳凭证。
+pub struct TransferAdmissionGuard {
+    state: Arc<TransferRuntimeState>,
+}
+
+impl Drop for TransferAdmissionGuard {
+    fn drop(&mut self) {
+        self.state
+            .admitted_transfer_jobs
+            .fetch_sub(1, Ordering::SeqCst);
+        self.state.transfer_admission_notify.notify_waiters();
+    }
 }
 
 impl Drop for TransferExecGuard {
@@ -824,6 +1091,69 @@ mod tests {
         assert!(capabilities.reply_markup_enabled());
         capabilities.set_reply_markup_enabled(false);
         assert!(!capabilities.reply_markup_enabled());
+    }
+
+    #[test]
+    fn executor_runtime_keeps_user_client_lifecycle_separate_from_bot() {
+        let state = ExecutorRuntimeState::default();
+
+        state.begin_login(71, 1001);
+        assert_eq!(state.phase(), ExecutorPhase::Starting);
+        assert_eq!(state.role_for_client_id(71), Some(ClientRole::User));
+        assert!(state.request_qr_if_starting(71));
+        assert_eq!(state.phase(), ExecutorPhase::WaitingQr);
+        assert!(state.set_waiting_password(71));
+        assert_eq!(state.phase(), ExecutorPhase::WaitingPassword);
+        assert!(state.mark_ready(71));
+        assert_eq!(state.phase(), ExecutorPhase::Ready);
+        assert!(state.begin_draining(71));
+        assert_eq!(state.phase(), ExecutorPhase::Draining);
+        assert!(state.cancel_draining(71));
+        assert_eq!(state.phase(), ExecutorPhase::Ready);
+        assert!(state.clear_user_client_if(71));
+        assert_eq!(state.phase(), ExecutorPhase::Offline);
+        assert_eq!(state.user_client_id(), None);
+    }
+
+    #[test]
+    fn executor_runtime_keeps_qr_message_and_identity_with_current_session() {
+        let state = ExecutorRuntimeState::default();
+        state.begin_login(71, 1001);
+        assert_eq!(state.replace_qr_message_id(500), None);
+        assert_eq!(state.qr_message_id(), Some(500));
+        assert!(state.mark_ready(71));
+        assert!(state.set_identity_if_ready(
+            71,
+            ExecutorIdentity {
+                user_id: 2002,
+                display_name: "测试账号".to_owned(),
+                username: Some("tester".to_owned()),
+            },
+        ));
+        assert_eq!(state.identity().expect("executor identity").user_id, 2002);
+
+        assert!(state.clear_user_client_if(71));
+        assert_eq!(state.qr_message_id(), None);
+        assert_eq!(state.identity(), None);
+    }
+
+    #[tokio::test]
+    async fn transfer_admission_rejects_new_work_while_drain_waits_for_existing_work() {
+        let state = Arc::new(TransferRuntimeState::default());
+        let guard = state.try_admit_transfer().expect("initial admission");
+
+        state.begin_transfer_drain();
+        assert!(state.try_admit_transfer().is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), state.wait_for_transfer_drain())
+                .await
+                .is_err()
+        );
+
+        drop(guard);
+        tokio::time::timeout(Duration::from_millis(100), state.wait_for_transfer_drain())
+            .await
+            .expect("drain should finish after admitted task exits");
     }
 
     #[test]

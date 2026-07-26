@@ -69,7 +69,6 @@ $env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
 
 - `tdlib_defaults.api_id`
 - `tdlib_defaults.api_hash`
-- `clients.user.login_info`
 - `clients.user.tdlib.database_encryption_key`
 - `clients.bot.token`
 - `clients.bot.tdlib.database_encryption_key`
@@ -85,8 +84,8 @@ cargo run -p transfer_bot -- -c config.json
 
 首次运行时：
 
-- `user` client 可能需要二维码、验证码或二次密码登录。
 - `bot` client 会使用 `token` 登录。
+- Bot 登录后即可使用；需要 user 执行器时，仅 owner 在“管理 -> 执行器”中点击登录并扫描二维码。
 - 程序会自动执行数据库 migration；SQLite 文件库会自动创建运行目录。
 
 首次启动后，用 `owner_user_id` 或 `admin_user_ids` 中的账号私聊 bot 并打开 `/menu`，按下面顺序完成运行态检查：
@@ -166,8 +165,7 @@ cargo run -p transfer_bot -- -c config.json
 
 - `tdlib_defaults`：user/bot 共用的 TDLib 公共参数。
 - `storage`：业务数据库位置，保存任务、缓存、恢复、菜单草稿和动态授权名单。
-- `clients.user` / `clients.bot`：两个 Telegram client 的本地目录和登录方式。
-- `workflow`：上传使用哪个 client。
+- `clients.user` / `clients.bot`：两个 Telegram client 的本地目录；user 由 owner 在 Bot 内按需二维码登录。
 - `owner_user_id`：必填的所有者 Telegram 用户 ID。
 - `admin_user_ids`：可选的同权管理员 Telegram 用户 ID 白名单。
 - 运行参数和目标配置以数据库为准，通过 `/config`、`/targets` 或菜单管理。
@@ -180,9 +178,9 @@ cargo run -p transfer_bot -- -c config.json
 | `owner_user_id` | 所有者用户 ID；必须大于 `0`，始终拥有完整权限 |
 | `admin_user_ids` | 其他同权管理员用户 ID 数组；ID 必须大于 `0`，可为空 |
 | `storage.database_url` | 业务数据库连接串，支持 `sqlite://...`、`postgres://...`、`postgresql://...` |
-| `clients.user.login_info` | user 登录方式，支持 `OCR`、`PHONE` |
+| `clients.user.login_info` | 兼容旧配置；仅接受 `OCR`，新配置可省略 |
 | `clients.bot.token` | BotFather 生成的 bot token |
-| `workflow.upload_client` | 上传使用 `bot` 或 `user` |
+| `workflow.upload_client` | 兼容旧配置；仅接受 `bot`，新配置可省略 |
 
 以下字段不再建议写入 `config.json`，运行时以数据库为准：
 
@@ -192,21 +190,11 @@ cargo run -p transfer_bot -- -c config.json
 | 并发、文件清理、分页、菜单输入超时 | `/config show`、`/config ...` 或菜单“管理 -> 运行配置” |
 | 动态授权用户 | 仅 owner 使用 `/auth` 交互面板；也可使用 `/auth list`、`/auth add <user_id>`、`/auth del <user_id>` |
 
-### 推荐 workflow
-
-```json
-{
-  "workflow": {
-    "upload_client": "bot"
-  }
-}
-```
-
-默认推荐 `bot` 上传。当前实现的源读取策略是：
+默认由 `bot` 读取、下载和上传。当前实现的源读取策略是：
 
 - 链接源优先走 `bot`。
-- `bot` 无法读取或准备文件时自动回退 `user`。
-- 最终上传端由 `workflow.upload_client` 决定。
+- `bot` 无法读取或准备文件且执行器已登录时，自动回退 `user`。
+- 执行器未登录时，任务会明确提示需要在“管理 -> 执行器”完成登录。
 
 `/config` 只开放运行时参数，例如并发、GC 间隔、进度刷新、分页大小和菜单超时。命令修改会直接写入业务数据库并立即生效，不再回写 `config.json`。TDLib 登录、API ID、API Hash、bot token、数据库目录等启动级配置仍需手工修改配置文件后重启生效。
 

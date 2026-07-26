@@ -18,9 +18,6 @@
   },
   "clients": {
     "user": {
-      "login_info": {
-        "type": "OCR"
-      },
       "tdlib": {
         "database_directory": "tg/user/db",
         "files_directory": "tg/user/files",
@@ -41,8 +38,5 @@
         "use_message_database": true
       }
     }
-  },
-  "workflow": {
-    "upload_client": "bot"
   }
 }

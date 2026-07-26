@@ -10,7 +10,7 @@ use std::path::PathBuf;
 static CONFIG_FILE_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 // TDLib client 角色。
-// bot 固定负责命令、卡片和按钮交互；user 负责读取源消息和下载兜底。
+// bot 固定负责命令、卡片、按钮以及默认转存；user 是按需登录的回退执行器。
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ClientRole {
@@ -231,6 +231,7 @@ impl ClientTdlibConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct UserClientConfig {
+    #[serde(default)]
     pub login_info: LoginInfo,
     pub tdlib: ClientTdlibConfig,
 }
@@ -255,7 +256,7 @@ pub struct ClientsConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkflowConfig {
-    // 上传端是 workflow 中唯一需要用户主动选择的角色。
+    // 兼容旧配置字段；当前上传固定由 Bot 优先执行。
     #[serde(default = "default_client_role_bot")]
     pub upload_client: ClientRole,
 }
@@ -374,10 +375,13 @@ impl TransferClientIds {
     /// 按角色获取 TDLib client id。
     pub fn get(self, role: ClientRole) -> anyhow::Result<i32> {
         match role {
-            ClientRole::User => self.user,
-            ClientRole::Bot => self.bot,
+            ClientRole::User => self.user.ok_or_else(|| {
+                anyhow::anyhow!("执行器未登录；请由 owner 在“管理 -> 执行器”中完成登录")
+            }),
+            ClientRole::Bot => self
+                .bot
+                .ok_or_else(|| anyhow::anyhow!("bot client is not ready")),
         }
-        .ok_or_else(|| anyhow::anyhow!("{} client is not ready", role.as_str()))
     }
 }
 
@@ -425,13 +429,11 @@ impl BotConfig {
         )
     }
 
-    /// 当前进程需要启动哪些 TDLib client。
+    /// 当前进程启动时必须创建哪些 TDLib client。
+    ///
+    /// 用户执行器由所有者在 Bot 内按需发起二维码登录，不能阻塞 Bot 的正常使用。
     pub fn required_client_roles(&self) -> Vec<ClientRole> {
-        let mut roles = BTreeSet::new();
-        // 链接源采用 bot-first + user fallback；user 始终作为私有源链接的兜底读取/下载端启动。
-        roles.insert(ClientRole::User);
-        roles.insert(ClientRole::Bot);
-        roles.into_iter().collect()
+        vec![ClientRole::Bot]
     }
 
     /// 返回某个角色的运行期 TDLib 配置。
@@ -448,18 +450,46 @@ impl BotConfig {
             .ok_or_else(|| anyhow::anyhow!("interaction client is not ready"))
     }
 
-    /// 获取转存执行链需要的 client id。
-    pub fn transfer_client_ids(&self) -> anyhow::Result<TransferClientIds> {
+    /// 根据已就绪角色构造转存执行 client 组合。
+    ///
+    /// Bot 是唯一必需角色，承担默认读取、下载和上传；用户执行器仅在已经登录时
+    /// 填入 `user`，供私有源或 Bot 权限不足时回退使用。
+    pub fn transfer_client_ids_for_ready_roles(
+        &self,
+        ready_roles: &BTreeSet<ClientRole>,
+    ) -> anyhow::Result<TransferClientIds> {
+        let bot = ready_roles
+            .contains(&ClientRole::Bot)
+            .then_some(self.client_ids.bot)
+            .flatten()
+            .ok_or_else(|| anyhow::anyhow!("bot client is not ready"))?;
+        let user = ready_roles
+            .contains(&ClientRole::User)
+            .then_some(self.client_ids.user)
+            .flatten();
+
         Ok(TransferClientIds {
-            interaction: self.interaction_client_id()?,
-            download: self.interaction_client_id()?,
-            upload: self
-                .client_ids
-                .get(self.workflow.upload_client)
-                .ok_or_else(|| anyhow::anyhow!("upload client is not ready"))?,
-            user: self.client_ids.user,
-            bot: self.client_ids.bot,
+            interaction: bot,
+            download: bot,
+            upload: bot,
+            user,
+            bot: Some(bot),
         })
+    }
+
+    /// 获取当前已创建 client 的转存执行组合。
+    ///
+    /// 仅供启动兼容代码使用；处理消息时必须从 `TransferRuntimeState` 读取，避免
+    /// 使用已经退出的执行器 client id。
+    pub fn transfer_client_ids(&self) -> anyhow::Result<TransferClientIds> {
+        let mut ready_roles = BTreeSet::new();
+        if self.client_ids.bot.is_some() {
+            ready_roles.insert(ClientRole::Bot);
+        }
+        if self.client_ids.user.is_some() {
+            ready_roles.insert(ClientRole::User);
+        }
+        self.transfer_client_ids_for_ready_roles(&ready_roles)
     }
 
     /// 写入某个角色的 TDLib client id。
@@ -563,6 +593,18 @@ impl BotConfigV2 {
         }
         if !looks_like_bot_token(self.clients.bot.token.trim()) {
             anyhow::bail!("clients.bot.token format is invalid");
+        }
+
+        if !matches!(self.clients.user.login_info, LoginInfo::Ocr) {
+            anyhow::bail!(
+                "clients.user.login_info only supports QR login; remove the field or use legacy OCR"
+            );
+        }
+
+        if self.workflow.upload_client != ClientRole::Bot {
+            anyhow::bail!(
+                "workflow.upload_client only supports bot; remove the field or set it to bot"
+            );
         }
 
         let user_db = self.clients.user.tdlib.database_directory.trim();
@@ -708,16 +750,13 @@ mod tests {
         assert!(err.to_string().contains("config_version 2 is required"));
     }
 
-    // v2 配置应固定启动 user/bot，并保留可选上传角色。
+    // v2 配置启动时只创建 Bot；用户执行器由所有者在 Bot 内按需登录。
     #[test]
     fn test_v2_config_maps_to_runtime_clients() {
         let config = BotConfig::from_json_str(v2_config_text()).unwrap();
 
         assert_eq!(config.workflow.upload_client, ClientRole::Bot);
-        assert_eq!(
-            config.required_client_roles(),
-            vec![ClientRole::User, ClientRole::Bot]
-        );
+        assert_eq!(config.required_client_roles(), vec![ClientRole::Bot]);
         assert!(matches!(
             config.runtime_client(ClientRole::Bot).unwrap().login_info,
             LoginInfo::Token(_)
@@ -734,6 +773,56 @@ mod tests {
         assert!(config.request_actor(999, 1).is_none());
         assert!(config.request_actor(2, 2).is_none());
         assert!(config.request_actor(3, 3).is_none());
+    }
+
+    // 新配置不再需要声明 user 登录方式；执行器固定由 Bot 触发 QR 登录。
+    #[test]
+    fn test_v2_user_login_info_is_optional_and_defaults_to_qr() {
+        let config_text = v2_config_text().replace(
+            "              \"login_info\": {\n                \"type\": \"OCR\"\n              },\n",
+            "",
+        );
+
+        let config = BotConfig::from_json_str(&config_text).unwrap();
+
+        assert!(matches!(
+            config.runtime_client(ClientRole::User).unwrap().login_info,
+            LoginInfo::Ocr
+        ));
+    }
+
+    #[test]
+    fn test_v2_omits_legacy_executor_login_and_upload_selection() {
+        let config_text = v2_config_text()
+            .replace(
+                "              \"login_info\": {\n                \"type\": \"OCR\"\n              },\n",
+                "",
+            )
+            .replace(
+                ",\n          \"workflow\": {\n            \"upload_client\": \"bot\"\n          }",
+                "",
+            );
+
+        let config = BotConfig::from_json_str(&config_text).unwrap();
+
+        assert!(matches!(
+            config.runtime_client(ClientRole::User).unwrap().login_info,
+            LoginInfo::Ocr
+        ));
+        assert_eq!(config.workflow.upload_client, ClientRole::Bot);
+    }
+
+    #[test]
+    fn test_v2_phone_login_is_rejected_with_qr_migration_hint() {
+        let config_text = v2_config_text().replace(
+            "\"type\": \"OCR\"",
+            "\"type\": \"PHONE\", \"data\": \"+8613800000000\"",
+        );
+
+        let err = BotConfig::from_json_str(&config_text).unwrap_err();
+
+        assert!(err.to_string().contains("QR"));
+        assert!(err.to_string().contains("clients.user.login_info"));
     }
 
     #[test]
@@ -794,38 +883,19 @@ mod tests {
         );
     }
 
-    // 同一个链接转到同一个目标是否复用由数据库层 source_link + target_chat_id 决定，
-    // 配置里的 upload_client 只决定谁上传，不应被要求参与查重键。
+    // 上传由 Bot 首选执行，旧的 user 上传配置必须显式迁移，不能静默改变历史部署。
     #[test]
-    fn test_v2_upload_client_does_not_affect_target_defaults() {
-        let bot_upload = BotConfig::from_json_str(v2_config_text()).unwrap();
-        let user_upload = BotConfig::from_json_str(
+    fn test_v2_rejects_legacy_user_upload_client() {
+        let err = BotConfig::from_json_str(
             &v2_config_text().replace("\"upload_client\": \"bot\"", "\"upload_client\": \"user\""),
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(bot_upload.workflow.upload_client, ClientRole::Bot);
-        assert_eq!(user_upload.workflow.upload_client, ClientRole::User);
-        assert_eq!(bot_upload.targets, user_upload.targets);
+        assert!(err.to_string().contains("workflow.upload_client"));
+        assert!(err.to_string().contains("bot"));
     }
 
-    // bot 可以只负责命令交互，上传仍由 user 执行。
-    // 这对应“bot 做菜单和按钮，用户号做下载和上传”的保守部署模式。
-    #[test]
-    fn test_v2_supports_bot_interaction_with_user_upload() {
-        let config = BotConfig::from_json_str(
-            &v2_config_text().replace("\"upload_client\": \"bot\"", "\"upload_client\": \"user\""),
-        )
-        .unwrap();
-
-        assert_eq!(config.workflow.upload_client, ClientRole::User);
-        assert_eq!(
-            config.required_client_roles(),
-            vec![ClientRole::User, ClientRole::Bot]
-        );
-    }
-
-    // bot 默认负责上传和源读取；user 仍会作为链接源 fallback client 启动。
+    // bot 默认负责上传和源读取；user 登录完成后才作为链接源 fallback client。
     // 查重维度保持 source_link + target_chat_id，不因为上传者变化而分裂历史结果。
     #[test]
     fn test_v2_supports_bot_source_with_bot_upload() {
@@ -841,6 +911,25 @@ mod tests {
         assert_eq!(ids.interaction, 20);
         assert_eq!(ids.download, 20);
         assert_eq!(ids.upload, 20);
+    }
+
+    // Bot 登录完成后必须能够独立受理任务；用户执行器尚未登录时只是不提供回退能力。
+    #[test]
+    fn test_bot_ready_builds_bot_only_transfer_clients() {
+        let mut config = BotConfig::from_json_str(v2_config_text()).unwrap();
+        config.set_client_id(ClientRole::User, 10);
+        config.set_client_id(ClientRole::Bot, 20);
+        let ready_roles = BTreeSet::from([ClientRole::Bot]);
+
+        let ids = config
+            .transfer_client_ids_for_ready_roles(&ready_roles)
+            .unwrap();
+
+        assert_eq!(ids.interaction, 20);
+        assert_eq!(ids.download, 20);
+        assert_eq!(ids.upload, 20);
+        assert_eq!(ids.bot, Some(20));
+        assert_eq!(ids.user, None);
     }
 
     // 运行时默认 workflow 也保持 bot-first + bot-upload，避免测试或兜底构造误用 user 上传。

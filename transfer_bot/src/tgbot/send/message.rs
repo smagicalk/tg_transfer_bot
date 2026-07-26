@@ -16,8 +16,8 @@ use raw::{
 };
 
 pub use raw::{
-    answer_callback_query, edit_card_message_with_inline_keyboard,
-    edit_markdown_message_with_inline_keyboard,
+    answer_callback_query, edit_card_message_with_inline_keyboard, edit_local_photo,
+    edit_markdown_message_with_inline_keyboard, send_local_photo_returning,
 };
 pub use state::{
     SentMessageReceipt, observe_message_send_failed_for_client,
