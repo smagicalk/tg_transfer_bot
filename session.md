@@ -10,13 +10,14 @@
 
 ## 当前状态
 
-记录日期：2026-07-20
+记录日期：2026-07-26
 
 当前项目采用 owner + 静态管理员 + 数据库动态管理员模式：
 
 - `config.json` 顶层使用必填 `owner_user_id` 和可选 `admin_user_ids`。
 - 仅处理 `chat_id == sender_user_id`，且发送者为所有者或管理员白名单成员的 bot 私聊。
-- TDLib `user` client 保留，只用于 bot 无法读取私有源时 fallback，不是交互用户。
+- Bot 是唯一启动必需的 TDLib client，默认负责读取、下载、上传和交互；`user` 是 owner 按需扫码登录的执行器，只在 Bot 无法读取或首次上传被直接拒绝时 fallback。
+- owner 可在“管理 -> 执行器”中登录或退出执行器。二维码刷新会原地替换同一条图片；登录完成后面板展示执行器 Telegram ID、名称和用户名，不保存手机号、二维码链接或密码。
 - 普通使用者、分级角色、积分、计费、账户余额和流水代码已经删除；静态管理员与动态管理员之间同权。
 - `/auth` 仅 owner 可执行：打开管理员列表，显示名称/用户名/ID；可点击添加后选择 Telegram 用户或输入 ID，也可删除动态管理员。
 - 动态授权写入 `authorized_user`，同时保存可选名称快照；启动时加载到运行时权限集合。
@@ -27,7 +28,7 @@
 - Bot 命令仅保留 `menu / transfer / lookup / downloads / job / auth / config / health / cache / help`。
 - 管理员私聊模式下不可达的请求 chat 路由已经删除；目标配置只保留默认目标和别名。
 - 菜单旧选聊 callback、`ChatPicker` 草稿状态和共享选聊处理链已经删除。
-- 配置只暴露真实可变的 `workflow.upload_client`；交互固定 bot，源读取固定 bot-first + user fallback。
+- 配置版本为 v2：不再配置固定 `workflow.upload_client` 或 user 登录凭据；交互固定 Bot，源读取与上传均为 Bot-first + 已登录执行器 fallback。
 - 未使用的 `utils::retry` 与纯转发 `menu/input/callbacks.rs` 已删除。
 - 目标别名普通列表和搜索列表共用 `AliasListContext`，查看、删除、设默认不再各维护两套动作。
 - 用户可见命令统一为完整命令，下载页不再维护或展示短命令兼容形式。
@@ -45,7 +46,7 @@
 - 运行配置与目标配置的全量重置按钮改为危险样式“重置全部”，必须经过确认页；旧执行 callback 保持兼容。
 - 任务中心移除重复“下载列表”中转入口；“查询页”改为直接启动“指定目标”查询，“任务控制”改名“更多状态”。
 - 下载任务列表的返回按钮改为“任务中心”并直达任务中心，不再绕回旧下载筛选中转页；历史 `m:d` callback 仍可解析。
-- 任务详情、任务列表、任务中心最近任务、实时进度、后台状态和动作结果卡中的“停止”统一使用危险样式；仍先进入确认页，最终“确认停止”同样明确标为危险操作。
+- 任务详情、任务列表、任务中心最近任务、实时进度、后台状态和动作结果卡中的“停止”统一使用危险样式；一次点击直接请求停止，历史二次确认 callback 仍兼容为直接停止，避免进度刷新覆盖确认页。
 - 实时进度卡统一为“任务详情/控制”优先、“列表/菜单”导航其次；等待阶段没有 job_id 时仍只展示导航，不生成空操作行。
 - 查询命中进行中任务时统一为两层按钮：先展示“详情/暂停或恢复/停止”，再展示“返回列表/菜单”；停止使用危险样式，停止中状态不生成空控制行。
 - 转存失败卡无论是否已创建 job，都将“重新转存”保持为主操作；没有 job_id 时仍保留失败列表和菜单导航。
@@ -57,11 +58,20 @@
 当前验证基线：
 
 ```text
-cargo test --workspace
-413 passed; 0 failed
+cargo test -p transfer_bot
+458 passed; 0 failed
 ```
 
-交付检查已完成：`cargo fmt --all -- --check`、`cargo test --workspace`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings`、`git diff --check` 以及编码/BOM 检查均通过。
+交付检查已完成：`cargo fmt --all -- --check`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings`、`cargo build -p transfer_bot`、`git diff --check` 以及编码/BOM 检查均通过。
+
+## 最近更新（2026-07-26）
+
+- 转存任务在上传阶段支持真实上传进度；暂停、恢复与停止会检查运行控制状态。恢复上传前清除同任务的陈旧 file_id 与字节快照，避免进度停滞或复用旧进度。
+- 新任务与恢复任务均在后台执行前持有运行 guard；同源、同目标的不同请求允许并行创建，不会被错误合并成一次转存。重复已成功任务会先展示历史结果并要求确认再次转存。
+- 成功结果保存目标消息 ID 与链接。超级群/频道优先生成可点击的 `https://t.me/c/...` 链接，成功卡片与任务详情都提供“打开结果/打开目标消息”；普通群或私聊则保留 Telegram 原生回复锚点与定位信息。
+- 已新增 `.github/workflows/publish-alpine-image.yml`：手动运行后下载最新 GitHub Release 的 Alpine 3.23 包，推送 `ghcr.io/<owner>/tg_transfer_bot:<release-tag>` 与 `:latest`。`Dockerfile.alpine` 通过 `CONFIG_PATH` 支持映射任意配置文件位置。
+- `publish-tag-release.yml` 的 `source_ref` 下拉已同步 `v0.0.2`，并设为默认值；可保留选择 `dev`、`master` 与 `v0.0.1`。
+- 最近提交：`86e0ec1 feat: add executor fallback and alpine image publishing`、`8ab18e6 ci: add v0.0.2 release tag option`，均已推送到 `origin/dev`。
 
 ## 历史记录（2026-06 多用户版本，已失效）
 
