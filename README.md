@@ -45,6 +45,37 @@
 
 ## 快速开始
 
+### 使用 Release 包（推荐）
+
+最新正式包可从 [GitHub Releases](https://github.com/smagicalk/tg_transfer_bot/releases/latest) 下载。当前 `v0.0.2` 已提供以下 x86_64 产物及对应 `.sha256` 校验文件：
+
+- `transfer_bot-linux-x86_64-alpine3.23.tar.gz`
+- `transfer_bot-linux-x86_64-debian13.tar.gz`
+- `transfer_bot-linux-x86_64-ubuntu24.04.tar.gz`
+- `transfer_bot-windows-x86_64-msvc.zip`
+
+选择与运行系统一致的包。Linux 包已经包含 `run.sh`、TDLib 和运行时依赖，无需单独安装 TDLib：
+
+```sh
+tar -xzf transfer_bot-linux-x86_64-alpine3.23.tar.gz
+cd transfer_bot-linux-x86_64-alpine3.23
+cp config.example.json config.json
+# 填写 config.json 后启动
+./run.sh -c config.json
+```
+
+Windows 包提供 PowerShell 与 cmd 启动脚本：
+
+```powershell
+Expand-Archive .\transfer_bot-windows-x86_64-msvc.zip -DestinationPath .\release
+Set-Location .\release\transfer_bot-windows-x86_64-msvc
+Copy-Item .\config.example.json .\config.json
+# 填写 config.json 后启动
+.\run.ps1 -c .\config.json
+```
+
+### 从源码运行
+
 ### 1. 准备 TDLib
 
 项目通过 `tdjson` 连接 TDLib。构建和运行前需要设置 `LOCAL_TDLIB_PATH`。
@@ -141,7 +172,7 @@ ghcr.io/smagicalk/tg_transfer_bot:<release-tag>
 ghcr.io/smagicalk/tg_transfer_bot:latest
 ```
 
-工作流优先下载 Release 中的 `transfer_bot-linux-x86_64-alpine3.23.tar.gz`。如果最新 Release 尚未附带该包，则检出相同 tag 的源码，在 Alpine 3.23 内调用现有打包脚本构建后再生成镜像；镜像版本始终对应最新 Release tag。
+工作流直接下载 Release 中的 `transfer_bot-linux-x86_64-alpine3.23.tar.gz` 生成镜像；镜像版本始终对应最新 Release tag。仅当 Release 附件意外缺失时，才检出相同 tag 的源码并调用现有打包脚本兜底构建。
 
 Docker 部署时应同时持久化 `config.json` 和配置中相对路径使用的 `tg/` 数据目录：
 

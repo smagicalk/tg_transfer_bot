@@ -102,19 +102,43 @@
 
         <section id="quick-start">
           <h2>快速启动</h2>
-          <p class="section-intro">以下命令适用于 Windows PowerShell。构建前需要准备可用的 TDLib，并让目录包含 <code>include</code>、<code>lib</code> 和 <code>bin/tdjson.dll</code>。</p>
+          <p class="section-intro">优先使用 GitHub Release 中已打包的运行包；从源码构建时才需要单独准备 TDLib。</p>
 
-          <h3>1. 设置 TDLib 路径</h3>
+          <h3>1. 使用 Release 包</h3>
+          <p>从 <a href="https://github.com/smagicalk/tg_transfer_bot/releases/latest">GitHub Releases</a> 下载与系统一致的 x86_64 包。当前正式包覆盖 Alpine 3.23、Debian 13、Ubuntu 24.04 和 Windows，并附带 SHA-256 校验文件。</p>
+          <div class="code-block">
+            <div class="code-head">Linux · Alpine 3.23</div>
+            <button class="copy-button" type="button" aria-label="复制 Linux Release 启动命令">复制</button>
+            <pre><code>tar -xzf transfer_bot-linux-x86_64-alpine3.23.tar.gz
+cd transfer_bot-linux-x86_64-alpine3.23
+cp config.example.json config.json
+# 填写 config.json 后启动
+./run.sh -c config.json</code></pre>
+          </div>
+          <div class="code-block">
+            <div class="code-head">PowerShell · Windows</div>
+            <button class="copy-button" type="button" aria-label="复制 Windows Release 启动命令">复制</button>
+            <pre><code>Expand-Archive .\transfer_bot-windows-x86_64-msvc.zip -DestinationPath .\release
+Set-Location .\release\transfer_bot-windows-x86_64-msvc
+Copy-Item .\config.example.json .\config.json
+# 填写 config.json 后启动
+.\run.ps1 -c .\config.json</code></pre>
+          </div>
+
+          <h3>2. 从源码启动</h3>
+          <p>以下命令适用于 Windows PowerShell。构建前需要准备可用的 TDLib，并让目录包含 <code>include</code>、<code>lib</code> 和 <code>bin/tdjson.dll</code>。</p>
+
+          <h3>2.1 设置 TDLib 路径</h3>
           <div class="code-block">
             <div class="code-head">PowerShell</div>
             <button class="copy-button" type="button" aria-label="复制 TDLib 路径命令">复制</button>
             <pre><code>$env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"</code></pre>
           </div>
 
-          <h3>2. 准备配置</h3>
+          <h3>2.2 准备配置</h3>
           <p>以仓库中的 <code>config.example.json</code> 为模板创建本地 <code>config.json</code>。不要提交真实 token、API Hash 或数据库密钥。</p>
 
-          <h3>3. Debug 日志启动</h3>
+          <h3>2.3 Debug 日志启动</h3>
           <div class="code-block">
             <div class="code-head">PowerShell · config.json</div>
             <button class="copy-button" type="button" aria-label="复制 Debug 启动命令">复制</button>
@@ -157,7 +181,7 @@ cargo run -p transfer_bot -- -c config.json</code></pre>
           <p><code>CONFIG_PATH</code> 默认是 <code>/app/config.json</code>，配置文件映射到其他位置时修改该环境变量即可。若 GHCR 包仍为私有包，先执行 <code>docker login ghcr.io</code>。</p>
           <div class="callout">
             <strong>镜像发布流程</strong>
-            手动运行 <code>Publish Alpine Container Image</code> 时，工作流优先下载最新 Release 的 Alpine 包；若该附件尚未发布，则从同一 Release tag 的源码构建运行包后再推送镜像。镜像 tag 始终与最新 Release tag 保持一致。
+            手动运行 <code>Publish Alpine Container Image</code> 时，工作流直接下载最新 Release 的 Alpine 包并生成镜像。仅当附件意外缺失时，才从同一 Release tag 的源码构建运行包兜底；镜像 tag 始终与最新 Release tag 保持一致。
           </div>
         </section>
 
