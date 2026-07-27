@@ -6,11 +6,12 @@ on:
       source_ref:
         description: "Existing Git tag or branch to build"
         required: true
-        default: "dev"
+        default: "v0.0.2"
         type: choice
         options:
           - "dev"
           - "master"
+          - "v0.0.2"
           - "v0.0.1"
       release_mode:
         description: "Build only or publish a GitHub Release"
