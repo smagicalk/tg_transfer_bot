@@ -41,18 +41,58 @@ jobs:
           esac
 
           mkdir -p release-assets image-root
-          gh release download "$version" \
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "$version" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern "$RELEASE_ASSET" \
-            --dir release-assets \
-            --clobber
+            --json assets \
+            --jq '.assets[].name' \
+            | grep -Fqx "$RELEASE_ASSET"; then
+            gh release download "$version" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "$RELEASE_ASSET" \
+              --dir release-assets \
+              --clobber
+            echo "has_release_asset=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Latest release has no $RELEASE_ASSET; build the package from tag $version."
+            echo "has_release_asset=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout release source for package fallback
+        if: steps.release.outputs.has_release_asset != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.version }}
+          path: release-source
+          fetch-depth: 1
+
+      - name: Build missing Alpine release package
+        if: steps.release.outputs.has_release_asset != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/release-source:/work" \
+            -w /work \
+            -e "CI_DISTRO_ID=alpine-3.23" \
+            -e "CI_IMAGE=alpine:3.23" \
+            -e "CI_ARTIFACT_NAME=transfer_bot-linux-x86_64-alpine3.23" \
+            -e "PACKAGE_MODE=package" \
+            -e "PACKAGE_RETENTION_KIND=full" \
+            -e "TD_GIT_REF=master" \
+            -e "RUN_CHECKS=false" \
+            alpine:3.23 sh /work/.github/scripts/build_linux_package.sh
+          cp "release-source/dist/$RELEASE_ASSET" "release-assets/$RELEASE_ASSET"
+
+      - name: Prepare image context
+        shell: bash
+        run: |
+          set -euo pipefail
           tar -xzf "release-assets/$RELEASE_ASSET" --strip-components=1 -C image-root
           cp Dockerfile.alpine image-root/Dockerfile.alpine
-
           test -x image-root/bin/transfer_bot
           test -f image-root/bin/libtdjson.so
           test -x image-root/run.sh
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

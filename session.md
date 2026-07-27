@@ -69,7 +69,7 @@ cargo test -p transfer_bot
 - 转存任务在上传阶段支持真实上传进度；暂停、恢复与停止会检查运行控制状态。恢复上传前清除同任务的陈旧 file_id 与字节快照，避免进度停滞或复用旧进度。
 - 新任务与恢复任务均在后台执行前持有运行 guard；同源、同目标的不同请求允许并行创建，不会被错误合并成一次转存。重复已成功任务会先展示历史结果并要求确认再次转存。
 - 成功结果保存目标消息 ID 与链接。超级群/频道优先生成可点击的 `https://t.me/c/...` 链接，成功卡片与任务详情都提供“打开结果/打开目标消息”；普通群或私聊则保留 Telegram 原生回复锚点与定位信息。
-- 已新增 `.github/workflows/publish-alpine-image.yml`：手动运行后下载最新 GitHub Release 的 Alpine 3.23 包，推送 `ghcr.io/<owner>/tg_transfer_bot:<release-tag>` 与 `:latest`。`Dockerfile.alpine` 通过 `CONFIG_PATH` 支持映射任意配置文件位置。
+- 已新增 `.github/workflows/publish-alpine-image.yml`：手动运行后优先下载最新 GitHub Release 的 Alpine 3.23 包；若 Release 尚无该附件，则检出同一 tag 源码并调用现有打包脚本兜底构建。随后推送 `ghcr.io/<owner>/tg_transfer_bot:<release-tag>` 与 `:latest`。`Dockerfile.alpine` 通过 `CONFIG_PATH` 支持映射任意配置文件位置。
 - `publish-tag-release.yml` 的 `source_ref` 下拉已同步 `v0.0.2`，并设为默认值；可保留选择 `dev`、`master` 与 `v0.0.1`。
 - 最近提交：`86e0ec1 feat: add executor fallback and alpine image publishing`、`8ab18e6 ci: add v0.0.2 release tag option`，均已推送到 `origin/dev`。
 
