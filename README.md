@@ -23,7 +23,7 @@
 - `/menu` 卡片式入口，覆盖转存、查询、任务控制、配置、健康和缓存。
 - `/downloads` 查看任务列表、状态筛选、分页和真实下载进度。
 - `/lookup` 按源链接查询已成功转存结果，并返回 URL 或 Telegram 消息引用入口。
-- `/job` 手动暂停、恢复、停止任务；按钮入口的停止动作会二次确认。
+- `/job` 手动暂停、恢复、停止任务；按钮入口的停止动作会直接请求安全停止。
 - `/auth` 打开 owner 专用授权面板，可查看管理员名称、选择 Telegram 用户、输入 ID 或删除动态管理员；修改后立即生效并持久化。
 - `/targets` 管理默认目标和目标别名。
 - `/config` 动态调整已开放的转存运行时参数并写入数据库。
@@ -100,11 +100,12 @@ cargo run -p transfer_bot -- -c config.json
 
 ## GitHub Actions
 
-仓库内提供三个手动 workflow：
+仓库内提供四个手动 workflow：
 
 - `release-packages.yml`：面向正式发布，手动构建全部目标系统。
 - `test-single-target.yml`：面向单系统验证，手动只构建一个目标系统。
 - `publish-tag-release.yml`：选择已有 tag 或分支，构建全部目标；tag 可继续发布为 GitHub Release。
+- `publish-alpine-image.yml`：按最新 GitHub Release 构建并推送 Alpine 容器镜像到 GHCR。
 
 ### release-packages.yml
 
@@ -122,14 +123,41 @@ cargo run -p transfer_bot -- -c config.json
 
 所有参数均为下拉框：
 
-- `source_ref`：选择构建来源，当前可选 `dev`、`master` 和 `v0.0.1`。
+- `source_ref`：选择构建来源，当前可选 `dev`、`master`、`v0.0.2` 和 `v0.0.1`。
 - `release_mode`
   - `build_only`：只构建并上传 workflow artifact，适合使用分支测试。
   - `publish_release`：构建后发布 GitHub Release，只允许搭配 tag 使用。
 - `td_ref`：选择 TDLib 版本来源，当前为 `master`。
 - `run_checks`：选择是否先执行格式化、测试和 Clippy 检查。
 
-默认使用 `dev + build_only`，避免测试时误创建 Release。GitHub Actions 的 `workflow_dispatch.choice` 不支持动态读取仓库 tag 或分支；创建新 tag 或分支后，需要同时将名称加入 `publish-tag-release.yml` 的 `source_ref.options`。
+默认使用 `v0.0.2 + build_only`，避免测试时误创建 Release。GitHub Actions 的 `workflow_dispatch.choice` 不支持动态读取仓库 tag 或分支；创建新 tag 或分支后，需要同时将名称加入 `publish-tag-release.yml` 的 `source_ref.options`。
+
+### publish-alpine-image.yml
+
+手动运行 `Publish Alpine Container Image` 会读取最新 GitHub Release tag，并推送：
+
+```text
+ghcr.io/smagicalk/tg_transfer_bot:<release-tag>
+ghcr.io/smagicalk/tg_transfer_bot:latest
+```
+
+工作流优先下载 Release 中的 `transfer_bot-linux-x86_64-alpine3.23.tar.gz`。如果最新 Release 尚未附带该包，则检出相同 tag 的源码，在 Alpine 3.23 内调用现有打包脚本构建后再生成镜像；镜像版本始终对应最新 Release tag。
+
+Docker 部署时应同时持久化 `config.json` 和配置中相对路径使用的 `tg/` 数据目录：
+
+```powershell
+docker pull ghcr.io/smagicalk/tg_transfer_bot:latest
+
+docker run -d --name tg_transfer_bot `
+  --restart unless-stopped `
+  --mount "type=bind,source=F:/tg-transfer-bot/config.json,target=/config/config.json,readonly" `
+  --mount "type=bind,source=F:/tg-transfer-bot/tg,target=/app/tg" `
+  -e CONFIG_PATH=/config/config.json `
+  -e RUST_LOG=debug `
+  ghcr.io/smagicalk/tg_transfer_bot:latest
+```
+
+`CONFIG_PATH` 默认值为 `/app/config.json`；挂载到其他位置时只需修改该环境变量。若 GHCR 包仍为私有包，先执行 `docker login ghcr.io`。
 
 当前正式发布目标：
 
@@ -450,7 +478,7 @@ all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | can
 7. 文件引用归零后进入延迟删除队列。
 8. 程序重启后自动恢复未完成任务。
 
-任务详情、下载列表、最近任务和 lookup 命中运行任务时，`停止` 按钮只会打开确认卡片；确认卡片里的 `确认停止` 才会执行真实停止。旧消息里已经存在的停止 callback 仍然兼容，不会因为协议更新失效。
+任务详情、下载列表、最近任务和 lookup 命中运行任务时，`停止` 按钮会直接请求安全停止。旧消息里已经存在的二次确认 callback 仍然兼容，点击后同样直接执行停止，不会因为协议更新失效。
 
 ### 内部设计要点
 
