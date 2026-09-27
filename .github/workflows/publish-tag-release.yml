@@ -4,15 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: "Existing Git tag or branch to build"
+        description: "Git tag, branch or commit to build"
         required: true
         default: "v0.0.2"
-        type: choice
-        options:
-          - "dev"
-          - "master"
-          - "v0.0.2"
-          - "v0.0.1"
+        type: string
       release_mode:
         description: "Build only or publish a GitHub Release"
         required: true
@@ -22,12 +17,10 @@ on:
           - "build_only"
           - "publish_release"
       td_ref:
-        description: "TDLib git branch/tag/commit"
+        description: "TDLib git branch, tag or commit"
         required: true
         default: "master"
-        type: choice
-        options:
-          - "master"
+        type: string
       run_checks:
         description: "Run fmt/test/clippy before release build"
         required: false

@@ -163,16 +163,16 @@ cargo run -p transfer_bot -- -c config.json
 
 ### publish-tag-release.yml
 
-所有参数均为下拉框：
+支持手动触发并输入任意版本参数：
 
-- `source_ref`：选择构建来源，当前可选 `dev`、`master`、`v0.0.2` 和 `v0.0.1`。
-- `release_mode`
-  - `build_only`：只构建并上传 workflow artifact，适合使用分支测试。
-  - `publish_release`：构建后发布 GitHub Release，只允许搭配 tag 使用。
-- `td_ref`：选择 TDLib 版本来源，当前为 `master`。
-- `run_checks`：选择是否先执行格式化、测试和 Clippy 检查。
+- `source_ref`：构建来源，可自由输入任意已有 Git tag、分支名或 commit hash（默认 `v0.0.2`）。
+- `release_mode`（下拉选择）：
+  - `build_only`：只构建并上传 workflow artifact，适合测试任意分支或 commit。
+  - `publish_release`：构建后发布 GitHub Release，要求 `source_ref` 必须是已有的 Git tag。
+- `td_ref`：TDLib 依赖版本来源，可自由输入分支、tag 或 commit hash（默认 `master`）。
+- `run_checks`（下拉选择）：选择是否先执行格式化、测试和 Clippy 检查。
 
-默认使用 `v0.0.2 + build_only`，避免测试时误创建 Release。GitHub Actions 的 `workflow_dispatch.choice` 不支持动态读取仓库 tag 或分支；创建新 tag 或分支后，需要同时将名称加入 `publish-tag-release.yml` 的 `source_ref.options`。
+默认使用 `v0.0.2 + build_only`，避免测试时误创建 Release。参数采用输入框设计，打新 Tag 或使用指定 TDLib commit 时无需再修改 workflow 源码。
 
 ### publish-alpine-image.yml
 
