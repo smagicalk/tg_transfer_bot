@@ -303,7 +303,7 @@ git diff --check</code></pre>
                 <tr><td>纯单元测试</td><td>callback payload、状态决策、文案和键盘布局</td><td>快、确定，不依赖 TDLib。</td></tr>
                 <tr><td>运行时状态测试</td><td>进度 store、single-flight、执行 guard</td><td>并发、client 隔离和清理。</td></tr>
                 <tr><td>数据库测试</td><td>migration、引用计数、任务终态、缓存 GC</td><td>使用测试锁，验证 SQLite 实际 schema。</td></tr>
-                <tr><td>构建检查</td><td>TDLib 链接、依赖和平台兼容</td><td>设置 <code>LOCAL_TDLIB_PATH</code> 后执行。</td></tr>
+                <tr><td>构建检查</td><td>TDLib 链接、依赖和平台兼容</td><td>设置 <code>LOCAL_TDLIB_PATH</code> 后执行。兼容基准：<code>tdlib/td</code> <code>master</code> commit <code>42e6a5259551178d1dab54a22ad96d14bd906e20</code> (v1.8.67)。</td></tr>
               </tbody>
             </table>
           </div>

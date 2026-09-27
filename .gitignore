@@ -26,9 +26,11 @@ target
 
 # Local runtime config contains TDLib api_hash, encryption key and login data.
 config.json
+config.jsonc
 
 # Keep a safe template in git so new environments know the required config shape.
 !config.example.json
+!config.example.jsonc
 
 # TDLib owns this directory. It may contain local database, cache and downloaded files.
 tg/

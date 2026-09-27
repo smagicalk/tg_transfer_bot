@@ -129,7 +129,7 @@ Copy-Item .\config.example.json .\config.json
           </div>
 
           <h3>2. 从源码启动</h3>
-          <p>以下命令适用于 Windows PowerShell。构建前需要准备可用的 TDLib，并让目录包含 <code>include</code>、<code>lib</code> 和 <code>bin/tdjson.dll</code>。</p>
+          <p>以下命令适用于 Windows PowerShell。构建前需要准备与本项目兼容的 TDLib（官方仓库 <a href="https://github.com/tdlib/td" target="_blank" rel="noopener">tdlib/td</a> 默认 <code>master</code> 分支最新 Commit <code>42e6a5259551178d1dab54a22ad96d14bd906e20</code>，对应 TDLib 1.8.67），并让本地目录包含 <code>include</code>、<code>lib</code> 和 <code>bin/tdjson.dll</code>。</p>
 
           <h3>2.1 设置 TDLib 路径</h3>
           <div class="code-block">
@@ -139,7 +139,7 @@ Copy-Item .\config.example.json .\config.json
           </div>
 
           <h3>2.2 准备配置</h3>
-          <p>以仓库中的 <code>config.example.json</code> 为模板创建本地 <code>config.json</code>。不要提交真实 token、API Hash 或数据库密钥。</p>
+          <p>以仓库中的 <code>config.example.json</code>（纯净版）或 <code>config.example.jsonc</code>（带详细字段中文注释版）为模板创建本地 <code>config.json</code>（或 <code>config.jsonc</code>）。系统内置注释安全剥离能力，可直接在配置中保留注释。请勿将包含真实凭据的配置文件提交到仓库。</p>
 
           <h3>2.3 Debug 日志启动</h3>
           <div class="code-block">

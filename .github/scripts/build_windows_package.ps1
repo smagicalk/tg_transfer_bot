@@ -174,6 +174,7 @@ Get-ChildItem "$dist\bin" -Filter "*.dll" |
 
 Copy-Item (Join-Path $workspace "README.md") "$dist\README.md" -Force
 Copy-Item (Join-Path $workspace "config.example.json") "$dist\config.example.json" -Force
+Copy-Item (Join-Path $workspace "config.example.jsonc") "$dist\config.example.jsonc" -Force
 Copy-Item (Join-Path $workspace "LICENSE") "$dist\LICENSE" -Force
 
 @(

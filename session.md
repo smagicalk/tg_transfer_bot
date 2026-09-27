@@ -10,8 +10,25 @@
 
 ## 当前状态
 
-记录日期：2026-07-26
+记录日期：2026-09-27
 
+### 核心兼容与依赖基线
+- **TDLib 官方版本与 Commit**：
+  - 官方仓库：[tdlib/td](https://github.com/tdlib/td)
+  - 默认分支：`master`
+  - 最新兼容基线 Commit：[`42e6a5259551178d1dab54a22ad96d14bd906e20`](https://github.com/tdlib/td/commit/42e6a5259551178d1dab54a22ad96d14bd906e20)（对应 TDLib 1.8.67，Commit 日期：2026-09-25）。
+  - 动态库构建要求：`>1.8.29`，经实测完全兼容最新 TDLib master 分支。
+
+### 配置管理与注释支持
+- 采用 **双轨配置模板**：
+  - `config.example.json`：符合严格 RFC 8259 规范的标准纯 JSON（无注释），与当前代码架构及 `config.json` 保持严格一致，方便 diff 和自动化工具处理。
+  - `config.example.jsonc`：带详细字段中文注释版，详细解释每个配置项的含义、取值范围以及可选模板（`targets`、`transfer_config`）。
+- `transfer_bot/src/config.rs` 实现了 `strip_json_comments` 预处理器，在送入 `serde_json` 之前自动剥除 `//` 与 `/* */` 注释，同时严格保护字符串字面量（如 URL 和转义符），使用户在 `config.json` 或 `config.jsonc` 中直接写注释也能顺利启动。
+- `.gitignore` 补充了 `config.jsonc` 忽略与 `!config.example.jsonc` 跟踪规则。
+- 打包脚本 `build_linux_package.sh`、`build_windows_package.ps1` 及相关文档同步分发 `config.example.jsonc`。
+- 自动化单元测试 `test_config_example_json_is_valid` 与 `test_config_example_jsonc_is_valid` 保证两套模板持续有效。
+
+### 业务与架构状态
 当前项目采用 owner + 静态管理员 + 数据库动态管理员模式：
 
 - `config.json` 顶层使用必填 `owner_user_id` 和可选 `admin_user_ids`。
@@ -59,7 +76,7 @@
 
 ```text
 cargo test -p transfer_bot
-458 passed; 0 failed
+461 passed; 0 failed
 ```
 
 交付检查已完成：`cargo fmt --all -- --check`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings`、`cargo build -p transfer_bot`、`git diff --check` 以及编码/BOM 检查均通过。

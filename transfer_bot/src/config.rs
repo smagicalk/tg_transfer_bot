@@ -491,12 +491,13 @@ pub struct BotConfig {
 }
 
 impl BotConfig {
-    /// 从 JSON 文本解析运行时配置。
+    /// 从 JSON 文本解析运行时配置（支持包含 `//` 或 `/* */` 注释）。
     ///
     /// 这里集中处理 v1/v2 兼容，业务模块只使用运行时视图，避免命令层散落配置版本判断。
     pub fn from_json_str(text: &str) -> anyhow::Result<Self> {
-        if is_v2_config(text)? {
-            let config = serde_json::from_str::<BotConfigV2>(text)?;
+        let stripped = strip_json_comments(text);
+        if is_v2_config(&stripped)? {
+            let config = serde_json::from_str::<BotConfigV2>(&stripped)?;
             return Self::from_v2(config);
         }
 
@@ -710,9 +711,63 @@ pub fn init_runtime_config_path(path: impl Into<PathBuf>) {
     let _ = CONFIG_FILE_PATH.set(path.into());
 }
 
-/// 判断配置文件是否是 v2 结构。
+/// 去除 JSON 文本中的单行注释（`//`）与多行注释（`/* ... */`），支持字符串内部包含斜杠等转义情况。
+pub fn strip_json_comments(json: &str) -> String {
+    let mut result = String::with_capacity(json.len());
+    let mut chars = json.chars().peekable();
+    let mut in_string = false;
+    let mut escape = false;
+
+    while let Some(ch) = chars.next() {
+        if in_string {
+            result.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+        } else if ch == '"' {
+            in_string = true;
+            result.push(ch);
+        } else if ch == '/' {
+            match chars.peek() {
+                Some('/') => {
+                    // 单行注释：跳过当前行直到换行符
+                    chars.next();
+                    for next_ch in chars.by_ref() {
+                        if next_ch == '\n' {
+                            result.push('\n');
+                            break;
+                        }
+                    }
+                }
+                Some('*') => {
+                    // 多行注释：跳过直到遇到 */
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '*' && chars.peek() == Some(&'/') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    result.push(ch);
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// 判断配置文件是否是 v2 结构（自动剥离注释后校验）。
 fn is_v2_config(text: &str) -> anyhow::Result<bool> {
-    let value = serde_json::from_str::<serde_json::Value>(text)?;
+    let stripped = strip_json_comments(text);
+    let value = serde_json::from_str::<serde_json::Value>(&stripped)?;
     Ok(value
         .get("config_version")
         .and_then(|v| v.as_i64())
@@ -1069,6 +1124,99 @@ mod tests {
         let serialized = serde_json::to_string(&cfg).unwrap();
         assert!(serialized.contains("file_delete_delay_minutes"));
         assert!(!serialized.contains("file_delete_delay_hours"));
+    }
+
+    /// 验证支持解析带有 `//` 和 `/* */` 注释的 JSON 配置文件。
+    #[test]
+    fn test_v2_config_accepts_comments() {
+        let text_with_comments = r#"
+        // 顶层配置文件
+        {
+          /* 配置文件协议版本 */
+          "config_version": 2,
+          "owner_user_id": 1, // 超管用户 ID
+          "tdlib_defaults": {
+            "use_test_dc": false,
+            "api_id": 1,
+            "api_hash": "hash//with-slashes",
+            "system_language_code": "zh-hans",
+            "device_model": "tg_transfer_bot",
+            "system_version": "1.8.62",
+            "application_version": "0.0.1",
+            "use_secret_chats": false,
+            "log_verbosity_level": 1
+          },
+          "storage": {
+            // 数据库连接串
+            "database_url": "sqlite://tg/app/transfer.sqlite?mode=rwc"
+          },
+          "clients": {
+            "user": {
+              "login_info": {
+                "type": "OCR"
+              },
+              "tdlib": {
+                "database_directory": "tg/user/db",
+                "files_directory": "tg/user/files",
+                "database_encryption_key": "user-key",
+                "use_file_database": true,
+                "use_chat_info_database": true,
+                "use_message_database": true
+              }
+            },
+            "bot": {
+              "token": "123456789:abcdefghijklmnopqrstuvwxyzABCDEF",
+              "tdlib": {
+                "database_directory": "tg/bot/db",
+                "files_directory": "tg/bot/files",
+                "database_encryption_key": "bot-key",
+                "use_file_database": true,
+                "use_chat_info_database": true,
+                "use_message_database": true
+              }
+            }
+          },
+          "workflow": {
+            "upload_client": "bot"
+          }
+        }"#;
+
+        let config = BotConfig::from_json_str(text_with_comments).expect("must parse with comments");
+        assert_eq!(config.owner_user_id, 1);
+        assert_eq!(
+            config.runtime_client(ClientRole::Bot).unwrap().tdlib_config.api_hash,
+            "hash//with-slashes"
+        );
+    }
+
+    /// 验证仓库根目录的 `config.example.json` 模板能够被正确解析且符合规范（不带注释的标准 JSON）。
+    #[test]
+    fn test_config_example_json_is_valid() {
+        let example_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("config.example.json");
+        let content = std::fs::read_to_string(example_path).expect("read config.example.json");
+        // 确保纯原生 serde_json 也能直接解析（无任何注释）
+        let _raw: serde_json::Value = serde_json::from_str(&content).expect("raw serde_json must parse config.example.json");
+        let config = BotConfig::from_json_str(&content).expect("config.example.json must parse successfully");
+        assert_eq!(config.owner_user_id, 123456789);
+        assert_eq!(config.admin_user_ids.len(), 0);
+        assert_eq!(config.workflow.upload_client, ClientRole::Bot);
+    }
+
+    /// 验证仓库根目录的 `config.example.jsonc` 模板能够被正确解析且符合规范（带有详细注释）。
+    #[test]
+    fn test_config_example_jsonc_is_valid() {
+        let example_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("config.example.jsonc");
+        let content = std::fs::read_to_string(example_path).expect("read config.example.jsonc");
+        let config = BotConfig::from_json_str(&content).expect("config.example.jsonc must parse successfully");
+        assert_eq!(config.owner_user_id, 123456789);
+        assert_eq!(config.admin_user_ids.len(), 0);
+        assert_eq!(config.workflow.upload_client, ClientRole::Bot);
     }
 
     fn v2_config_text() -> &'static str {
