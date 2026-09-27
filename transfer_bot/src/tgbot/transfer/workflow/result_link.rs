@@ -13,15 +13,37 @@ use super::super::store;
 const TDLIB_MESSAGE_ID_SHIFT: u32 = 20;
 
 /// 为上传结果构建入口消息链接。
+///
+/// 尝试顺序：
+/// 1. 优先调用 TDLib 的 `get_message_link`；若返回正常可打开 URL 则直接采用；
+/// 2. 若返回非标准 URL 或报错，尝试查询该 Chat 类型：若为 Supergroup/Channel，换算为可见消息序号并拼接 `https://t.me/c/<id>/<visible_id>` 兜底链接；
+/// 3. 若为私聊或普通群，由于 Telegram 协议不提供直链，回退为 `chat_id=... message_id=...` 明文定位串。
+///
+/// # 参数
+/// - `chat_id`: 目标频道或聊天 ID。
+/// - `message_id`: 目标消息的 TDLib 内部 ID。
+/// - `is_album`: 是否属于媒体相册组。
+/// - `client_id`: 负责发送的 TDLib 客户端 ID。
+///
+/// # 返回值
+/// - 最终确定的链接字符串或定位描述。
 pub(super) async fn build_result_message_link(
     chat_id: i64,
     message_id: i64,
     is_album: bool,
     client_id: i32,
 ) -> anyhow::Result<String> {
-    let rs =
-        tdlib_rs::functions::get_message_link(chat_id, message_id, 0, is_album, false, client_id)
-            .await;
+    let rs = tdlib_rs::functions::get_message_link(
+        chat_id,
+        message_id,
+        0,
+        0,
+        String::new(),
+        is_album,
+        false,
+        client_id,
+    )
+    .await;
 
     match rs {
         Ok(rs) => {
@@ -71,6 +93,16 @@ pub(super) async fn build_result_message_link(
 /// 旧版本可能保存过不可点击的 `tg://openmessage` 或纯定位字符串；重复转存
 /// 和 `/lookup` 命中历史成功任务时会调用这里，尽量用当前 TDLib 状态修复成
 /// 可点击的 HTTPS 链接，并写回数据库供后续直接复用。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+/// - `target_chat_id`: 目标频道 ID。
+/// - `result_message_id`: 目标消息 ID。
+/// - `current_link`: 数据库内当前存储的原始链接或定位字符串。
+/// - `client_id`: 负责请求的 TDLib 客户端 ID。
+///
+/// # 返回值
+/// - 刷新后（或无法刷新而维持原状）的链接字符串。
 pub(in crate::tgbot::transfer) async fn refresh_stored_result_link(
     job_id: i64,
     target_chat_id: i64,
@@ -131,6 +163,14 @@ pub(in crate::tgbot::transfer) async fn refresh_stored_result_link(
 ///
 /// 主表 `transfer_job.result_message_link` 只代表第一个结果入口；多 album 分组记录在
 /// `transfer_result_message`。因此这里刷新非首个入口时只更新结果表，不能覆盖主表首链接。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+/// - `records`: 待刷新的多结果记录列表。
+/// - `client_id`: 客户端 ID。
+///
+/// # 返回值
+/// - 刷新更新后的结果记录列表。
 pub(in crate::tgbot::transfer) async fn refresh_stored_result_messages(
     job_id: i64,
     mut records: Vec<store::ResultMessageRecord>,
@@ -178,10 +218,17 @@ pub(in crate::tgbot::transfer) async fn refresh_stored_result_messages(
     Ok(records)
 }
 
-/// 构造结果消息的兜底定位。
+/// 构造结果消息的兜底定位字符串。
 ///
 /// 注意：TDLib 的 `message_id` 是 TDLib 内部消息 ID，不能随意拼成 t.me 链接。
 /// 只有 supergroup/channel 兜底会先换算为可见消息 ID；其他 chat 只能保存排查用定位。
+///
+/// # 参数
+/// - `chat_id`: 聊天会话 ID。
+/// - `message_id`: TDLib 内部消息 ID。
+///
+/// # 返回值
+/// - 形如 `chat_id={chat_id} message_id={message_id}` 的纯文本定位。
 pub(super) fn fallback_result_message_locator(chat_id: i64, message_id: i64) -> String {
     format!("chat_id={chat_id} message_id={message_id}")
 }
@@ -191,6 +238,12 @@ pub(super) fn fallback_result_message_locator(chat_id: i64, message_id: i64) -> 
 /// 兼容两类旧数据：
 /// - `tg://openmessage?chat_id=...&message_id=...`
 /// - `chat_id=... message_id=...`
+///
+/// # 参数
+/// - `link`: 原始保存的字符串。
+///
+/// # 返回值
+/// - 提取并解析出的消息 ID（若有）。
 pub(in crate::tgbot::transfer) fn extract_tdlib_message_id_from_stored_link(
     link: &str,
 ) -> Option<i64> {
@@ -202,6 +255,14 @@ pub(in crate::tgbot::transfer) fn extract_tdlib_message_id_from_stored_link(
 ///
 /// `getMessageLink` 是首选路径；只有它失败时才进入这里。basic group、私聊、
 /// secret chat 都没有稳定的 `t.me/c` 链接，因此会返回 None，调用方再保存定位信息。
+///
+/// # 参数
+/// - `chat_id`: 目标聊天 ID。
+/// - `message_id`: TDLib 内部消息 ID。
+/// - `client_id`: 客户端 ID。
+///
+/// # 返回值
+/// - 若为 Supergroup/Channel 则换算生成链接，否则返回 `None`。
 async fn build_private_supergroup_message_link_from_chat(
     chat_id: i64,
     message_id: i64,
@@ -241,6 +302,13 @@ async fn build_private_supergroup_message_link_from_chat(
 ///
 /// 这里的 `message_id` 必须先从 TDLib 内部 ID 换算为 Telegram 链接里的可见 ID，
 /// 否则会出现旧版本那种“链接可点击但无法跳转到消息”的问题。
+///
+/// # 参数
+/// - `supergroup_id`: 超级群/频道无符号 ID。
+/// - `tdlib_message_id`: TDLib 内部消息 ID。
+///
+/// # 返回值
+/// - 拼接成功的 `https://t.me/c/...` 链接（若换算合法）。
 pub(super) fn build_private_supergroup_message_link(
     supergroup_id: i64,
     tdlib_message_id: i64,
@@ -254,6 +322,12 @@ pub(super) fn build_private_supergroup_message_link(
 /// 把 TDLib 内部消息 ID 换算成 Telegram 链接使用的可见消息 ID。
 ///
 /// 如果换算结果不是正数，说明该 ID 不是正常的已发送消息 ID，不能构造链接。
+///
+/// # 参数
+/// - `tdlib_message_id`: 内部消息 ID（右移 20 位得到可见序号）。
+///
+/// # 返回值
+/// - 可见服务端消息序号。
 pub(super) fn tdlib_message_id_to_visible_id(tdlib_message_id: i64) -> Option<i64> {
     let visible_message_id = tdlib_message_id >> TDLIB_MESSAGE_ID_SHIFT;
     (visible_message_id > 0).then_some(visible_message_id)

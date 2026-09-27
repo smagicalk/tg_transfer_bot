@@ -6,9 +6,19 @@ use crate::tgbot::transfer::store;
 
 use super::{TransferOutcome, file_delete_delay_minutes};
 
-/// 检查用户控制状态，并在需要时执行暂停/取消收尾。
+/// 检查用户控制状态，并在需要时执行暂停或取消收尾。
 ///
-/// 返回 Some 表示当前任务应停止继续执行；返回 None 表示可以继续。
+/// 在流水线的各循环轮次与关键检查点（准备前、下载后、上传前）调用：
+/// - 若状态为 `pending` 或 `running`，返回 `None` 表示可安全继续执行；
+/// - 若检测到被置为 `paused`，返回 `Some(TransferOutcome::Paused)` 退出执行；
+/// - 若检测到处于 `cancelling` 等停止态，调用 `cancel_job_now` 完成收尾并释放物理文件引用，返回 `Some(TransferOutcome::Cancelled)`。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `job_id`: 任务主键 ID。
+///
+/// # 返回值
+/// - `Some(TransferOutcome)` 表示当前任务已被控制态中断，调用方应立即终止；`None` 表示可以继续。
 pub(super) async fn apply_job_control(
     app_context: &crate::app_context::AppContext,
     job_id: i64,
@@ -38,7 +48,14 @@ pub(super) async fn apply_job_control(
     }
 }
 
-/// finish_job 被用户控制状态抢先占用时，统一切回控制流程。
+/// 当 `finish_job` 被用户并发控制状态（暂停或取消）抢先占用时，统一切回控制流程产物。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `job_id`: 任务主键 ID。
+///
+/// # 返回值
+/// - 对应的中断产物（如 `TransferOutcome::Paused` 或 `TransferOutcome::Cancelled`）。
 pub(super) async fn finish_skipped_by_control(
     app_context: &crate::app_context::AppContext,
     job_id: i64,

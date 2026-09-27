@@ -11,7 +11,7 @@ use crate::tgbot::transfer::types::SourceKind;
 use crate::tgbot::transfer::{store, types};
 use base64::{Engine as _, engine::general_purpose};
 
-// 字节格式化用于实时下载进度面板，应保持和 `/downloads` 类似的展示风格。
+/// 测试用例：字节格式化用于实时下载进度面板，应保持和 `/downloads` 类似的展示风格
 #[test]
 fn test_format_progress_bytes() {
     assert_eq!(format_progress_bytes(100), "100 B");
@@ -19,7 +19,7 @@ fn test_format_progress_bytes() {
     assert_eq!(format_progress_bytes(1024 * 1024), "1.0 MB");
 }
 
-// 等待面板应给出当前阶段和源链接，方便用户确认后台是否已经接收任务。
+/// 测试用例：等待面板应给出当前阶段和源链接，方便用户确认后台是否已经接收任务
 #[test]
 fn test_format_transfer_waiting_text() {
     let text = format_transfer_waiting_text(&types::TransferPlan {
@@ -39,13 +39,14 @@ fn test_format_transfer_waiting_text() {
         force_retransfer: false,
     });
 
+    // 验证包含状态行、阶段标识以及源链接区域
     assert!(text.contains("转存进度 · 等待"));
     assert!(text.contains("状态：‹waiting›"));
     assert!(text.contains("■ 当前阶段"));
     assert!(text.contains("■ 源链接"));
 }
 
-// 运行中面板应展示聚合进度和 TDLib 实时下载进度。
+/// 测试用例：运行中面板应展示聚合进度和 TDLib 实时下载进度
 #[test]
 fn test_format_transfer_progress_text_card_layout() {
     let mut snapshot = snapshot_with_status(store::JOB_STATUS_RUNNING);
@@ -55,6 +56,7 @@ fn test_format_transfer_progress_text_card_layout() {
 
     let text = format_transfer_progress_text(&snapshot, "https://t.me/c/1/2");
 
+    // 验证标题、摘要行、总进度、完成率以及实时下载指示
     assert!(text.contains("转存进度 ‹#42›"));
     assert!(text.contains("状态：‹running›  job：‹#42›  目标：‹-100›"));
     assert!(text.contains("总进度：‹1/3›"));
@@ -63,6 +65,7 @@ fn test_format_transfer_progress_text_card_layout() {
     assert!(text.contains("成功/失败：‹1/0›"));
     assert!(text.contains("真实下载：1 个文件 1.0 KB/2.0 KB"));
     assert!(text.contains("||||||||||---------- 50%"));
+    // 命令默认不直接平铺输出，提示通过按钮查看
     assert!(!text.contains("■ 命令"));
     assert!(!text.contains("/job status 42"));
     assert!(!text.contains("/job pause 42"));
@@ -70,7 +73,7 @@ fn test_format_transfer_progress_text_card_layout() {
     assert!(text.contains("需要命令时点击“查看命令”"));
 }
 
-// 主进度卡必须展示真实上传字节，不能只在任务详情页显示。
+/// 测试用例：主进度卡必须展示真实上传字节，不能只在任务详情页显示
 #[test]
 fn test_format_transfer_progress_text_shows_live_upload_progress() {
     let mut snapshot = snapshot_with_status(store::JOB_STATUS_RUNNING);
@@ -80,11 +83,12 @@ fn test_format_transfer_progress_text_shows_live_upload_progress() {
 
     let text = format_transfer_progress_text(&snapshot, "https://t.me/c/1/2");
 
+    // 验证包含真实上传文件数及字节比率
     assert!(text.contains("真实上传：1 个文件 50.0 MB/100.0 MB"));
     assert!(text.contains("50%"));
 }
 
-// 控制态正文默认隐藏命令，恢复入口由按钮提供。
+/// 测试用例：控制态正文默认隐藏命令，恢复入口由按钮提供
 #[test]
 fn test_format_transfer_control_text_hides_commands() {
     let text = format_transfer_control_text(
@@ -105,7 +109,7 @@ fn test_format_transfer_control_text_hides_commands() {
     assert!(text.contains("需要命令时点击“查看命令”"));
 }
 
-// 最终结果按钮应按成功/失败切换列表筛选命令。
+/// 测试用例：最终结果按钮应按成功/失败切换列表筛选命令
 #[test]
 fn test_build_transfer_result_keyboard_uses_result_state_filter() {
     let success_keyboard = build_transfer_result_keyboard(
@@ -116,7 +120,9 @@ fn test_build_transfer_result_keyboard_uses_result_state_filter() {
     );
     let fail_keyboard = build_transfer_result_keyboard("https://t.me/c/1/2", -100, None, None);
 
+    // 成功时第三行导航为“查看完成列表”
     assert_eq!(success_keyboard.rows[2][0].text, "查看完成列表");
+    // 失败时第一行导航为“查看失败列表”
     assert_eq!(fail_keyboard.rows[0][0].text, "查看失败列表");
     assert_eq!(success_keyboard.rows[2][1].text, "查看命令");
     assert_eq!(success_keyboard.rows[2][2].text, "菜单");
@@ -132,7 +138,7 @@ fn test_build_transfer_result_keyboard_uses_result_state_filter() {
     ));
 }
 
-// 非 HTTP(S) 定位信息不能生成“打开转存消息”按钮；正文已经展示定位信息，因此按钮区应保持精简。
+/// 测试用例：非 HTTP(S) 定位信息不能生成“打开转存消息”按钮；正文已经展示定位信息，因此按钮区应保持精简
 #[test]
 fn test_build_transfer_result_keyboard_skips_locator_button() {
     let keyboard = build_transfer_result_keyboard(
@@ -142,6 +148,7 @@ fn test_build_transfer_result_keyboard_skips_locator_button() {
         Some("chat_id=-5106953357 message_id=769654784"),
     );
 
+    // 只有 2 行（详情与完成列表），没有外部 URL 按钮
     assert_eq!(keyboard.rows.len(), 2);
     assert_eq!(keyboard.rows[0][0].text, "查看任务详情");
     assert_eq!(keyboard.rows[1][0].text, "查看完成列表");
@@ -149,7 +156,7 @@ fn test_build_transfer_result_keyboard_skips_locator_button() {
     assert_eq!(keyboard.rows[1][2].text, "菜单");
 }
 
-// HTTP(S) 结果链接保留“打开转存消息”按钮，由 Telegram 客户端负责跳转。
+/// 测试用例：HTTP(S) 结果链接保留“打开转存消息”按钮，由 Telegram 客户端负责跳转
 #[test]
 fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
     let keyboard = build_transfer_result_keyboard(
@@ -165,6 +172,7 @@ fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
         .and_then(|row| row.first())
         .expect("keyboard must have first button");
 
+    // 第一行第一个为 URL 按钮
     assert_eq!(first.text, "打开转存消息");
     assert_eq!(keyboard.rows[0].len(), 1);
     assert_eq!(keyboard.rows[1][0].text, "查看任务详情");
@@ -177,8 +185,7 @@ fn test_build_transfer_result_keyboard_uses_url_for_http_link() {
     ));
 }
 
-// 运行中进度面板应把任务操作放在导航前，减少控制任务时的视觉查找。
-// 停止按钮只打开确认页，避免进度卡片误触后直接取消任务。
+/// 测试用例：运行中进度面板应把任务操作放在导航前，减少控制任务时的视觉查找。停止按钮只打开确认页，避免进度卡片误触后直接取消任务
 #[test]
 fn test_build_transfer_progress_keyboard_has_callback_buttons() {
     let keyboard = build_transfer_progress_keyboard(
@@ -188,6 +195,7 @@ fn test_build_transfer_progress_keyboard_has_callback_buttons() {
         -100,
     );
 
+    // 第一行包含查看详情、暂停和停止
     assert_eq!(keyboard.rows[0][0].text, "查看任务详情");
     assert_eq!(keyboard.rows[0][1].text, "暂停");
     assert_eq!(keyboard.rows[0][2].text, "停止");
@@ -196,6 +204,7 @@ fn test_build_transfer_progress_keyboard_has_callback_buttons() {
         tdlib_rs::enums::ButtonStyle::Danger
     );
     assert_eq!(decoded_callback_data(&keyboard.rows[0][2]), "j:sc:42");
+    // 第二行包含查看列表、查看命令和菜单
     assert_eq!(keyboard.rows[1][0].text, "查看运行列表");
     assert_eq!(keyboard.rows[1][1].text, "查看命令");
     assert_eq!(keyboard.rows[1][2].text, "菜单");
@@ -224,8 +233,7 @@ fn test_build_transfer_progress_keyboard_has_callback_buttons() {
     assert!(!labels.contains(&"复制查询命令"));
 }
 
-// 暂停态进度面板应展示恢复按钮，避免用户只能复制命令恢复。
-// 暂停态的停止按钮同样只进入确认页。
+/// 测试用例：暂停态进度面板应展示恢复按钮，避免用户只能复制命令恢复。暂停态的停止按钮同样只进入确认页
 #[test]
 fn test_build_transfer_progress_keyboard_for_paused_job() {
     let keyboard = build_transfer_progress_keyboard(
@@ -249,7 +257,7 @@ fn test_build_transfer_progress_keyboard_for_paused_job() {
     ));
 }
 
-// 停止态进度面板不能再给出暂停/停止动作，只保留定位和列表入口。
+/// 测试用例：停止态进度面板不能再给出暂停/停止动作，只保留定位和列表入口
 #[test]
 fn test_build_transfer_progress_keyboard_for_cancelled_job() {
     let keyboard = build_transfer_progress_keyboard(
@@ -267,7 +275,7 @@ fn test_build_transfer_progress_keyboard_for_cancelled_job() {
     assert_eq!(keyboard.rows.len(), 2);
 }
 
-// 等待阶段还没有 job_id，只展示列表、命令和菜单，不能因主操作重排生成空行。
+/// 测试用例：等待阶段还没有 job_id，只展示列表、命令和菜单，不能因主操作重排生成空行
 #[test]
 fn test_build_transfer_progress_keyboard_without_job_has_navigation_only() {
     let keyboard = build_transfer_progress_keyboard(None, None, "https://t.me/c/1/2", -100);
@@ -278,7 +286,7 @@ fn test_build_transfer_progress_keyboard_without_job_has_navigation_only() {
     assert_eq!(keyboard.rows[0][2].text, "菜单");
 }
 
-// 构造最小进度快照，避免文本测试依赖数据库。
+/// 构造最小进度快照测试辅助函数，避免文本测试依赖数据库
 fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
     let now = store::now_utc8();
     store::JobProgressSnapshot {
@@ -310,9 +318,11 @@ fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
     }
 }
 
+/// 解码按钮中的 Base64 回调数据测试辅助函数
 fn decoded_callback_data(button: &tdlib_rs::types::InlineKeyboardButton) -> String {
     let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type else {
         panic!("button must be callback");
     };
     String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap()
 }
+

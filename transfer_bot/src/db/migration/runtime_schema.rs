@@ -1,6 +1,7 @@
-// 运行时业务 schema 定义：
-// - 按业务域拆成多个子模块，便于后续 migration 继续增量扩展
-// - migration 文件只负责声明版本和调用这些 helper，避免把大量 DDL 塞进单个 migration 文件
+//! 运行时业务 Schema 定义与 DDL 调度模块。
+//!
+//! 按业务域解耦为子模块（权限、转存、缓存、菜单、配置），
+//! Migration 迁移文件仅负责声明版本号并调用本模块的构建函数，避免单文件臃肿。
 
 mod access;
 mod cache;
@@ -11,7 +12,7 @@ mod transfer;
 use sea_orm::ConnectionTrait;
 use sea_orm::StatementBuilder;
 
-/// 创建当前版本所需的全部业务表与索引。
+/// 批量创建当前应用程序版本所需的全部业务数据表与索引结构。
 pub(crate) async fn create_runtime_schema<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -24,7 +25,7 @@ where
     Ok(())
 }
 
-/// 按依赖反序删表；测试重建和 migration down 共用。
+/// 按外键与依赖反序级联删除全部业务表；供测试重置环境与 Migration 回滚（Down）复用。
 pub(crate) async fn drop_runtime_schema<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -37,6 +38,7 @@ where
     Ok(())
 }
 
+/// 删除授权白名单相关数据表结构。
 pub(crate) async fn drop_access_schema<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -44,7 +46,7 @@ where
     access::drop(db).await
 }
 
-/// 执行单条 schema builder。
+/// 执行单条 DDL Schema 构建语句。
 async fn exec_schema_statement<S>(db: &impl ConnectionTrait, statement: S) -> anyhow::Result<()>
 where
     S: StatementBuilder,

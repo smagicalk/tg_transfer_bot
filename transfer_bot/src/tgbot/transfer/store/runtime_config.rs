@@ -9,9 +9,13 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use crate::config::TransferConfig;
 use crate::db;
 
+/// 运行时配置单行主键 ID，数据库中仅持久化一行当前生效参数。
 const RUNTIME_CONFIG_ROW_ID: i32 = 1;
 
 /// 统一生成 UTC+8 时间戳。
+///
+/// # 返回值
+/// - 北京时区时间戳。
 fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
     let Some(offset) = chrono::FixedOffset::east_opt(8 * 3600) else {
         tracing::error!("failed to build runtime config UTC+8 fixed offset, fallback to UTC");
@@ -22,6 +26,12 @@ fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
 
 /// 启动时确保数据库里存在一份运行参数。
 /// 如果表里没有记录，则把 config.json 里的默认值写进去。
+///
+/// # 参数
+/// - `default_config`: 本地配置文件或硬编码提供的默认转存配置。
+///
+/// # 返回值
+/// - 最终生效的 `TransferConfig`。
 #[cfg(test)]
 pub(crate) async fn ensure_transfer_runtime_config(
     default_config: &TransferConfig,
@@ -33,6 +43,13 @@ pub(crate) async fn ensure_transfer_runtime_config(
 ///
 /// 正常运行走全局连接池；测试 PostgreSQL 启动链路时会直接传入独立连接，
 /// 这样验证的就是和启动同一套 seed 逻辑，而不是另一份测试专用分支。
+///
+/// # 参数
+/// - `db_conn`: 目标数据库连接。
+/// - `default_config`: 默认转存配置。
+///
+/// # 返回值
+/// - 最终载入或落库后的 `TransferConfig`。
 pub(crate) async fn ensure_transfer_runtime_config_on(
     db_conn: &sea_orm::DatabaseConnection,
     default_config: &TransferConfig,
@@ -46,6 +63,9 @@ pub(crate) async fn ensure_transfer_runtime_config_on(
 }
 
 /// 读取数据库中的单行运行参数。
+///
+/// # 返回值
+/// - `Some(Model)` 存在记录，或 `None`。
 #[cfg(test)]
 pub(crate) async fn load_transfer_runtime_config()
 -> anyhow::Result<Option<db::transfer_runtime_config::Model>> {
@@ -53,6 +73,12 @@ pub(crate) async fn load_transfer_runtime_config()
 }
 
 /// 在显式数据库连接上读取单行运行参数。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接。
+///
+/// # 返回值
+/// - 读出的数据库模型。
 pub(crate) async fn load_transfer_runtime_config_on(
     db_conn: &sea_orm::DatabaseConnection,
 ) -> anyhow::Result<Option<db::transfer_runtime_config::Model>> {
@@ -63,11 +89,18 @@ pub(crate) async fn load_transfer_runtime_config_on(
 }
 
 /// 写回数据库中的运行参数。
+///
+/// # 参数
+/// - `config`: 待持久化的新运行时配置。
 pub(crate) async fn save_transfer_runtime_config(config: &TransferConfig) -> anyhow::Result<()> {
     save_transfer_runtime_config_on(db::get_db().await?, config).await
 }
 
-/// 在显式数据库连接上写回运行参数。
+/// 在显式数据库连接上写回运行参数（UPSERT 语法）。
+///
+/// # 参数
+/// - `db_conn`: 目标数据库连接。
+/// - `config`: 新的运行时配置。
 pub(crate) async fn save_transfer_runtime_config_on(
     db_conn: &sea_orm::DatabaseConnection,
     config: &TransferConfig,

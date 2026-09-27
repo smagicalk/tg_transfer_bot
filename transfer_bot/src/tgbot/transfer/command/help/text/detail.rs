@@ -22,14 +22,17 @@ use super::super::super::{
 use super::super::topic::{RuntimeAdminHelpTopic, normalize_help_topic, runtime_admin_help_topic};
 use crate::tgbot::transfer::card;
 
-/// 构造命令详细帮助。
+/// 构造命令详细帮助正文文本。
 pub(in crate::tgbot::transfer::command::help) fn build_help_detail_text(
     command_name: &str,
 ) -> anyhow::Result<String> {
+    // 归一化输入的主题名称
     let command_name = normalize_help_topic(command_name)?;
+    // 判断是否属于统一运行态管理主题
     if let Some(topic) = runtime_admin_help_topic(command_name) {
         return Ok(build_runtime_admin_topic_detail(topic));
     }
+    // 分发不同命令的详细帮助文本构造函数
     let text = match command_name {
         "help" => build_help_detail(),
         "transfer" => build_transfer_help_detail_text(),
@@ -45,7 +48,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_detail_text(
     Ok(text)
 }
 
-/// 构造 `/help` 自身的说明。
+/// 构造 `/help` 命令自身的详细帮助说明。
 fn build_help_detail() -> String {
     [
         "help".to_owned(),
@@ -61,17 +64,21 @@ fn build_help_detail() -> String {
     .join("\n")
 }
 
-/// 运行态管理 help 详情规格。
+/// 运行态管理 help 详情规格结构体。
 ///
-/// 这四页都复用同一套正文模板，只是“说明 / 额外摘要 / descriptor”来自各自模块。
+/// 这类页面都复用同一套正文模板，只是“说明 / 额外摘要 / descriptor”来自各自模块。
 struct RuntimeAdminDetailSpec {
+    /// 帮助标题文本
     title: &'static str,
+    /// 产生说明文本行的生成函数指针
     detail_lines: fn() -> Vec<String>,
+    /// 产生额外摘要文本行的生成函数指针
     extra_lines: fn() -> Vec<String>,
+    /// 产生统一命令帮助 descriptor 的生成函数指针
     descriptor: fn() -> RuntimeAdminHelpDescriptor,
 }
 
-/// 构造运行态管理类 topic 的 help 详情。
+/// 构造运行态管理类 topic 的 help 详情文本。
 fn build_runtime_admin_topic_detail(topic: RuntimeAdminHelpTopic) -> String {
     let spec = runtime_admin_detail_spec(topic);
     build_runtime_admin_help_detail_text(
@@ -82,7 +89,7 @@ fn build_runtime_admin_topic_detail(topic: RuntimeAdminHelpTopic) -> String {
     )
 }
 
-/// 返回四个运行态管理 topic 对应的正文规格。
+/// 返回运行态管理 topic 对应的正文规格。
 fn runtime_admin_detail_spec(topic: RuntimeAdminHelpTopic) -> RuntimeAdminDetailSpec {
     match topic {
         RuntimeAdminHelpTopic::Config => RuntimeAdminDetailSpec {
@@ -105,6 +112,7 @@ mod config_detail_tests {
     use super::{build_help_detail_text, build_runtime_admin_topic_detail};
     use crate::tgbot::transfer::command::help::topic::RuntimeAdminHelpTopic;
 
+    /// 测试 config 详情页包含 reset 命令与可调字段说明
     #[test]
     fn test_build_config_detail_mentions_reset() {
         let text = build_runtime_admin_topic_detail(RuntimeAdminHelpTopic::Config);
@@ -113,6 +121,7 @@ mod config_detail_tests {
         assert!(text.contains("■ 可调字段"));
     }
 
+    /// 测试运行态管理帮助详情展示输入入口分区与示例命令
     #[test]
     fn test_runtime_admin_help_details_show_entry_sections() {
         let targets = build_runtime_admin_topic_detail(RuntimeAdminHelpTopic::Targets);
@@ -121,6 +130,7 @@ mod config_detail_tests {
         assert!(targets.contains("/targets set-default 123456789"));
     }
 
+    /// 测试 auth 帮助详情限制仅 owner 且包含完整子命令列表
     #[test]
     fn test_auth_help_detail_is_owner_only_and_complete() -> anyhow::Result<()> {
         let text = build_help_detail_text("auth")?;

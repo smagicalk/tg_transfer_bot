@@ -9,19 +9,41 @@ pub(in crate::tgbot) const DIVIDER: &str = "━━━━━━━━━━━━
 const PROGRESS_BAR_WIDTH: i64 = 20;
 
 /// 构造行内代码字段。
+///
 /// 发送层会把 `‹...›` 解析成 TDLib `textEntityTypeCode`。
+///
+/// # 参数
+/// - `value`: 支持 `Display` trait 的字段值。
+///
+/// # 返回值
+/// - 包装为 `‹转义值›` 的字符串。
 pub(in crate::tgbot) fn code(value: impl std::fmt::Display) -> String {
     format!("‹{}›", escape_marker_text(value.to_string()))
 }
 
 /// 构造多行等宽代码块。
+///
 /// 发送层会把 `«... »` 解析成 TDLib `textEntityTypePreCode`，适合错误详情。
+///
+/// # 参数
+/// - `value`: 支持 `Display` trait 的代码块内容。
+///
+/// # 返回值
+/// - 包装为 `«转义文本»` 的多行代码块格式字符串。
 pub(in crate::tgbot) fn pre_code(value: impl std::fmt::Display) -> String {
     format!("«{}»", escape_pre_code_text(value.to_string()))
 }
 
-/// 构造原生文本链接。
+/// 构造原生文本超链接。
+///
 /// 发送层会把 `【文本】(url)` 解析成 TDLib `textEntityTypeTextUrl`。
+///
+/// # 参数
+/// - `label`: 链接展示给用户看的显示文本。
+/// - `url`: 目标超链接 URL 地址。
+///
+/// # 返回值
+/// - 格式化后的 `【转义文本】(转义URL)` 字符串。
 pub(in crate::tgbot) fn link(label: &str, url: &str) -> String {
     format!(
         "【{}】({})",
@@ -30,7 +52,13 @@ pub(in crate::tgbot) fn link(label: &str, url: &str) -> String {
     )
 }
 
-/// 构造一个分区标题。
+/// 构造一个卡片分区标题。
+///
+/// # 参数
+/// - `title`: 分区标题名称。
+///
+/// # 返回值
+/// - 格式如 `■ 标题` 的分区标题文本。
 pub(in crate::tgbot) fn section(title: &str) -> String {
     format!("■ {title}")
 }
@@ -38,6 +66,12 @@ pub(in crate::tgbot) fn section(title: &str) -> String {
 /// 构造普通说明行。
 ///
 /// 说明文字不使用 code 实体，保留自然换行和可读性。
+///
+/// # 参数
+/// - `value`: 说明文本内容。
+///
+/// # 返回值
+/// - 带有统一前缀的说明行 `说明：{value}`。
 pub(in crate::tgbot) fn note(value: &str) -> String {
     format!("说明：{value}")
 }
@@ -45,11 +79,27 @@ pub(in crate::tgbot) fn note(value: &str) -> String {
 /// 构造单个 `label：value` 字段。
 ///
 /// 卡片正文大量使用短字段；统一入口可以避免不同模块出现半角冒号、空格等展示差异。
+///
+/// # 参数
+/// - `label`: 字段名称标签。
+/// - `value`: 字段值（将自动被包裹为行内 code 标记）。
+///
+/// # 返回值
+/// - 格式如 `标签：‹字段值›` 的文本行。
 pub(in crate::tgbot) fn field(label: &str, value: impl std::fmt::Display) -> String {
     format!("{}：{}", label, code(value))
 }
 
 /// 构造同一行上的两个字段，适合状态/目标、进度/更新时间这类高频摘要。
+///
+/// # 参数
+/// - `left_label`: 左侧字段名标签。
+/// - `left_value`: 左侧字段值（包裹为行内 code）。
+/// - `right_label`: 右侧字段名标签。
+/// - `right_value`: 右侧字段值（包裹为行内 code）。
+///
+/// # 返回值
+/// - 格式如 `左标签：‹左值›  右标签：‹右值›` 的同一行多字段文本。
 pub(in crate::tgbot) fn field_pair(
     left_label: &str,
     left_value: impl std::fmt::Display,
@@ -68,6 +118,14 @@ pub(in crate::tgbot) fn field_pair(
 /// 构造三段式状态摘要。
 ///
 /// 用于等待、进度、结果卡片的第二行，保证用户第一眼能看到状态、job 和目标。
+///
+/// # 参数
+/// - `status`: 当前执行状态字符串。
+/// - `job_id`: 关联的转存任务 ID（若存在）。
+/// - `target_chat_id`: 目标频道或聊天 ID。
+///
+/// # 返回值
+/// - 格式化后的状态摘要文本行。
 pub(in crate::tgbot) fn summary_line(
     status: &str,
     job_id: Option<i64>,
@@ -80,11 +138,26 @@ pub(in crate::tgbot) fn summary_line(
 }
 
 /// 构造状态 + 目标行。
+///
+/// # 参数
+/// - `status`: 状态描述。
+/// - `target_chat_id`: 目标聊天 ID。
+///
+/// # 返回值
+/// - 格式如 `状态：‹status›  目标：‹target_chat_id›` 的字符串。
 pub(in crate::tgbot) fn status_target(status: &str, target_chat_id: i64) -> String {
     format!("状态：{}  目标：{}", code(status), code(target_chat_id))
 }
 
 /// 构造状态 + job + 目标行。
+///
+/// # 参数
+/// - `status`: 状态描述。
+/// - `job_id`: 任务 ID。
+/// - `target_chat_id`: 目标聊天 ID。
+///
+/// # 返回值
+/// - 格式如 `状态：‹status›  job：‹#job_id›  目标：‹target_chat_id›` 的字符串。
 pub(in crate::tgbot) fn status_job_target(
     status: &str,
     job_id: i64,
@@ -99,6 +172,12 @@ pub(in crate::tgbot) fn status_job_target(
 }
 
 /// 构造 job 引用字段，统一展示为 `#id`。
+///
+/// # 参数
+/// - `job_id`: 任务 ID。
+///
+/// # 返回值
+/// - 格式如 `‹#job_id›` 的代码引用标记。
 pub(in crate::tgbot) fn job_ref(job_id: i64) -> String {
     code(format!("#{job_id}"))
 }
@@ -106,6 +185,13 @@ pub(in crate::tgbot) fn job_ref(job_id: i64) -> String {
 /// 构造固定宽度文本进度条。
 ///
 /// 输出示例：`||||||||||---------- 50%`。使用 ASCII 是为了避免不同 Telegram 客户端对 Unicode 宽度渲染不一致。
+///
+/// # 参数
+/// - `done`: 当前已完成量（例如已处理字节数）。
+/// - `total`: 总量（例如文件总字节数）。
+///
+/// # 返回值
+/// - 文本进度条字符串。若 total <= 0 则展示未知占位条。
 pub(in crate::tgbot) fn progress_bar(done: i64, total: i64) -> String {
     if total <= 0 {
         return "||||................ --".to_owned();
@@ -120,6 +206,12 @@ pub(in crate::tgbot) fn progress_bar(done: i64, total: i64) -> String {
 }
 
 /// 按百分比构造固定宽度文本进度条。
+///
+/// # 参数
+/// - `percent`: 0 到 100 之间的百分比值。
+///
+/// # 返回值
+/// - 填充固定格数后的文本进度条字符串。
 pub(in crate::tgbot) fn progress_bar_percent(percent: impl TryInto<i64>) -> String {
     let percent = percent.try_into().unwrap_or(0).clamp(0, 100);
     let filled = (percent * PROGRESS_BAR_WIDTH + 50) / 100;
@@ -133,6 +225,12 @@ pub(in crate::tgbot) fn progress_bar_percent(percent: impl TryInto<i64>) -> Stri
 }
 
 /// 构造来源链接分区。
+///
+/// # 参数
+/// - `source_link`: 来源 Telegram 链接。
+///
+/// # 返回值
+/// - 包含分区标题和代码化来源链接的字符串列表。
 pub(in crate::tgbot) fn source_block(source_link: &str) -> Vec<String> {
     vec![section("来源"), code(source_link)]
 }
@@ -140,6 +238,12 @@ pub(in crate::tgbot) fn source_block(source_link: &str) -> Vec<String> {
 /// 构造源链接分区。
 ///
 /// 进度面板里标题已经是“转存进度”，这里用更短的“源链接”避免重复出现“来源/源链接”两层标题。
+///
+/// # 参数
+/// - `source_link`: 来源 Telegram 链接。
+///
+/// # 返回值
+/// - 包含短标题与链接代码的字符串列表。
 pub(in crate::tgbot) fn source_link_block(source_link: &str) -> Vec<String> {
     vec![section("源链接"), code(source_link)]
 }
@@ -147,6 +251,12 @@ pub(in crate::tgbot) fn source_link_block(source_link: &str) -> Vec<String> {
 /// 构造结果链接分区。
 ///
 /// HTTP(S) 结果会同时给出原生文本链接和可复制的明文链接；不可打开的定位只展示为代码字段。
+///
+/// # 参数
+/// - `result_link`: 转存成功后的消息链接或消息定位描述。
+///
+/// # 返回值
+/// - 构造好的结果分区多行文本。
 pub(in crate::tgbot) fn result_block(result_link: &str) -> String {
     if crate::tgbot::send::is_openable_url(result_link) {
         return format!(
@@ -167,6 +277,12 @@ pub(in crate::tgbot) fn result_block(result_link: &str) -> String {
 /// 清理卡片标记字段里的保留字符。
 ///
 /// 用户输入可能包含 `‹›【】` 这些标记符；直接拼进去会破坏发送层实体解析。
+///
+/// # 参数
+/// - `value`: 待清理的原始字符串。
+///
+/// # 返回值
+/// - 替换保留标记字符后的安全字符串。
 fn escape_marker_text(value: impl AsRef<str>) -> String {
     value
         .as_ref()
@@ -177,11 +293,23 @@ fn escape_marker_text(value: impl AsRef<str>) -> String {
 }
 
 /// 清理代码块字段里的保留结束符，避免错误文本截断卡片解析。
+///
+/// # 参数
+/// - `value`: 待转义的多行文本。
+///
+/// # 返回值
+/// - 转义后的安全代码块文本。
 fn escape_pre_code_text(value: impl AsRef<str>) -> String {
     value.as_ref().replace('»', ">")
 }
 
 /// 清理文本链接 URL 里的右括号，避免提前结束 `【label】(url)` 标记。
+///
+/// # 参数
+/// - `value`: 原始 URL。
+///
+/// # 返回值
+/// - 将 `)` 转义为 `%29` 的 URL 字符串。
 fn escape_link_url(value: &str) -> String {
     value.replace(')', "%29")
 }

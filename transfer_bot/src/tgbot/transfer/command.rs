@@ -154,22 +154,36 @@ pub(in crate::tgbot::transfer) fn build_cache_button_data() -> String {
     cache::build_cache_default_callback_data()
 }
 
-/// callback payload 路由。
+/// callback payload 路由分类枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CallbackRoute {
+    /// 重新转存命令回调
     Retransfer,
+    /// 授权用户管理回调
     Auth,
+    /// 帮助命令回调
     Help,
+    /// 详情检索与重试回调
     Lookup,
+    /// 下载任务列表回调
     Downloads,
+    /// 单个任务操作控制回调（状态/暂停/恢复/停止）
     Job,
+    /// 运行配置管理回调
     Config,
+    /// 目标频道管理回调
     Targets,
+    /// 执行器控制回调
     Executor,
+    /// 健康检查回调
     Health,
+    /// 文件缓存管理回调
     Cache,
+    /// 主交互菜单回调
     Menu,
+    /// 未知格式回调
     Unknown,
+    /// 不支持的非 Data 类型回调
     Unsupported,
 }
 
@@ -182,7 +196,9 @@ pub async fn transfer_callback_query(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 获取全局应用上下文
     let app_context = crate::app_context::app_context();
+    // 分发到指定上下文的回调处理器
     transfer_callback_query_on(app_context.as_ref(), update, config, actor, client_id).await
 }
 
@@ -194,6 +210,7 @@ pub(in crate::tgbot) async fn transfer_callback_query_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 根据 callback payload 分类得到具体子模块路由
     let route = classify_callback_route(&update.payload);
     tracing::debug!(
         route = ?route,
@@ -203,6 +220,7 @@ pub(in crate::tgbot) async fn transfer_callback_query_on(
         "transfer callback query routed"
     );
 
+    // 根据路由分发至对应子模块的处理函数
     match route {
         CallbackRoute::Retransfer => {
             transfer_cmd::retransfer_callback_query_on(app, update, config, client_id).await
@@ -333,7 +351,7 @@ mod tests {
         build_menu_home_button_data, classify_callback_route,
     };
 
-    // callback 分发只看短前缀，具体参数合法性由各命令模块自行校验。
+    /// 测试 callback 分发只看短前缀，具体参数合法性由各命令模块自行校验。
     #[test]
     fn test_classify_callback_route() {
         assert_eq!(
@@ -386,13 +404,13 @@ mod tests {
         );
         assert_eq!(
             classify_callback_route(&tdlib_rs::enums::CallbackQueryPayload::Game(
-                tdlib_rs::types::CallbackQueryPayloadGame::default(),
+                Box::default(),
             )),
             CallbackRoute::Unsupported
         );
     }
 
-    // 卡片按钮使用的 callback 包装应继续落到统一 callback 路由。
+    /// 测试卡片按钮使用的 callback 包装应继续准确落到统一 callback 路由。
     #[test]
     fn test_card_callback_builders_route_back_to_commands() {
         let job_data = build_job_status_button_data(42);
@@ -446,7 +464,7 @@ mod tests {
         assert!(build_downloads_filter_button_data("unknown", 8).is_none());
     }
 
-    // 当前所有 callback 前缀必须互不覆盖，否则统一路由会把按钮分发到错误模块。
+    /// 测试当前所有 callback 前缀必须互不覆盖，避免把按钮分发到错误模块。
     #[test]
     fn test_callback_prefixes_are_unique_by_route() {
         let samples = [
@@ -468,9 +486,12 @@ mod tests {
         }
     }
 
+    /// 构造测试用 CallbackQueryPayloadData
     fn payload(data: &str) -> tdlib_rs::enums::CallbackQueryPayload {
-        tdlib_rs::enums::CallbackQueryPayload::Data(tdlib_rs::types::CallbackQueryPayloadData {
-            data: data.to_owned(),
-        })
+        tdlib_rs::enums::CallbackQueryPayload::Data(Box::new(
+            tdlib_rs::types::CallbackQueryPayloadData {
+                data: data.to_owned(),
+            },
+        ))
     }
 }

@@ -1,43 +1,45 @@
-// transfer_item 实体：
-// 记录任务内每条源消息的处理状态。
+//! 转存任务关联的子文件或子消息条目数据表实体模型。
+//!
+//! 记录主转存任务内包含的每一条源消息的细粒度处理进度与生命周期状态。
 
 use sea_orm::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// 单条源消息/文件的转存子条目数据库模型。
 #[sea_orm::model]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "transfer_item")]
 pub struct Model {
-    /// 主键，自增子项 ID。
+    /// 自增主键，单条子项记录唯一 ID。
     #[sea_orm(primary_key, auto_increment = true)]
     pub id: i64,
-    /// 所属主任务 ID（`transfer_job.id`）。
+    /// 所属主转存任务 ID（对应 `transfer_job.id`）。
     #[sea_orm(indexed)]
     pub job_id: i64,
-    /// 爬虫侧：源消息 chat_id。
+    /// 爬虫侧：源消息所在的 Telegram Chat ID。
     pub source_chat_id: i64,
-    /// 爬虫侧：源消息 message_id。
+    /// 爬虫侧：源消息在源频道内的 Message ID。
     pub source_message_id: i64,
-    /// 文件去重键（优先 `remote.unique_id`，无文件时可退化为文本键）。
+    /// 文件全局唯一识别键（优先采用 `remote.unique_id`，纯文本消息使用生成的文本摘要键）。
     pub file_key: String,
-    /// 该文件归属的 TDLib client 角色。
+    /// 该文件归属的 TDLib 客户端角色（`bot` 或 `user`）。
     ///
-    /// bot/user 下载同一 Telegram 文件时，`td_file_id` 和本地路径都可能不同，因此缓存必须按角色隔离。
+    /// 相同文件在不同的 TDLib Client 实例下其下载 ID 与本地目录各异，需按角色隔离。
     pub file_owner_client_role: String,
-    /// 子项状态：`pending/preparing/prepared/uploading/success/failed/cancelled` 等。
+    /// 子项当前流转状态（例如 `pending`、`preparing`、`prepared`、`uploading`、`success`、`failed`、`cancelled`）。
     #[sea_orm(indexed)]
     pub status: String,
-    /// 子项重试次数（预留字段）。
+    /// 该子项在错误发生后的重试执行计数。
     pub retry_count: i32,
-    /// 子项错误信息（失败时记录）。
+    /// 子项执行失败时的具体错误日志描述。
     pub error_message: Option<String>,
-    /// 文件引用是否已经释放。
+    /// 该子项对应的文件缓存引用是否已经释放。
     ///
-    /// 恢复对齐可能提前释放消失或文件变化的子项引用，最终完成/取消时用该字段避免重复扣减。
+    /// 恢复对齐阶段可能提前释放已无效条目的引用计数，最终结算时用该标志防止重复扣减。
     pub file_ref_released: bool,
-    /// 创建时间。
+    /// 子项创建入库时间戳。
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
-    /// 最后更新时间。
+    /// 子项状态最后更新时间戳。
     pub updated_at: chrono::DateTime<chrono::FixedOffset>,
 }
 

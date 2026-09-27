@@ -74,6 +74,7 @@ async fn insert_item_with_file_ref(job_id: i64) -> anyhow::Result<(i64, String)>
         rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 24)
     );
 
+    // 插入文件缓存记录
     db::file_cache::ActiveModel {
         owner_client_role: sea_orm::ActiveValue::Set("user".to_owned()),
         file_key: sea_orm::ActiveValue::Set(file_key.clone()),
@@ -92,6 +93,7 @@ async fn insert_item_with_file_ref(job_id: i64) -> anyhow::Result<(i64, String)>
     .insert(db_conn)
     .await?;
 
+    // 插入关联的转存子项记录
     let item = db::transfer_item::ActiveModel {
         job_id: sea_orm::ActiveValue::Set(job_id),
         source_chat_id: sea_orm::ActiveValue::Set(rand::rng().random_range(1..=1000000)),
@@ -111,21 +113,21 @@ async fn insert_item_with_file_ref(job_id: i64) -> anyhow::Result<(i64, String)>
     Ok((item.id, file_key))
 }
 
-// 文档与图片混合时应拒绝 album。
+/// 测试文档与图片混合时应拒绝 album 相册发送。
 #[test]
 fn test_validate_album_kinds_for_document_mix() {
     let rs = validate_album_kinds(&[UploadKind::Document, UploadKind::Photo]);
     assert!(rs.is_err());
 }
 
-// 图片+视频允许混合 album。
+/// 测试图片与视频允许混合组成 album 相册。
 #[test]
 fn test_validate_album_kinds_for_photo_video_mix() {
     let rs = validate_album_kinds(&[UploadKind::Photo, UploadKind::Video]);
     assert!(rs.is_ok());
 }
 
-// Telegram 单个 album 最多 10 条；正好 10 条应允许一次发送。
+/// 测试 Telegram 单个 album 最多 10 条；正好 10 条应允许一次发送。
 #[test]
 fn test_validate_album_kinds_allows_ten_items() {
     let kinds = vec![UploadKind::Photo; 10];
@@ -133,7 +135,7 @@ fn test_validate_album_kinds_allows_ten_items() {
     assert!(rs.is_ok());
 }
 
-// 超过 10 条会在上传阶段分成多个 album；类型校验本身不应该拒绝。
+/// 测试超过 10 条会在上传阶段分成多个 album；类型校验本身不应该拒绝。
 #[test]
 fn test_validate_album_kinds_allows_more_than_ten_items() {
     let kinds = vec![UploadKind::Photo; 11];
@@ -141,7 +143,7 @@ fn test_validate_album_kinds_allows_more_than_ten_items() {
     assert!(rs.is_ok());
 }
 
-// album 分组应避免尾部只剩 1 条，否则 11 条会退化成 10 条 album + 1 条单发。
+/// 测试 album 分组应避免尾部只剩 1 条，否则 11 条会退化成 10 条 album + 1 条单发。
 #[test]
 fn test_album_chunk_sizes_avoid_trailing_single_item() {
     assert_eq!(album_chunk_sizes(0), Vec::<usize>::new());
@@ -153,42 +155,42 @@ fn test_album_chunk_sizes_avoid_trailing_single_item() {
     assert_eq!(album_chunk_sizes(31), vec![10, 10, 9, 2]);
 }
 
-// 语音消息不能放进 album；单条语音会走 send_message。
+/// 测试语音消息不能放进 album；单条语音会走 send_message。
 #[test]
 fn test_validate_album_kinds_rejects_voice_in_album() {
     let rs = validate_album_kinds(&[UploadKind::Voice, UploadKind::Voice]);
     assert!(rs.is_err());
 }
 
-// GIF/animation 不能放进 album；单条 GIF 会走 send_message。
+/// 测试 GIF/animation 不能放进 album；单条 GIF 会走 send_message。
 #[test]
 fn test_validate_album_kinds_rejects_animation_in_album() {
     let rs = validate_album_kinds(&[UploadKind::Animation, UploadKind::Animation]);
     assert!(rs.is_err());
 }
 
-// 非 supergroup/channel 场景无法生成稳定链接时，只保留定位信息。
+/// 测试非 supergroup/channel 场景无法生成稳定链接时，只保留定位信息字符串。
 #[test]
 fn test_fallback_result_message_locator() {
     let locator = fallback_result_message_locator(-5106953357, 769654784);
     assert_eq!(locator, "chat_id=-5106953357 message_id=769654784");
 }
 
-// TDLib 内部消息 ID 必须换算成 Telegram 链接里的可见消息 ID，否则 t.me/c 会点不开。
+/// 测试 TDLib 内部消息 ID 必须换算成 Telegram 链接里的可见消息 ID，否则 t.me/c 会点不开。
 #[test]
 fn test_tdlib_message_id_to_visible_id() {
     assert_eq!(tdlib_message_id_to_visible_id(769654784), Some(734));
     assert_eq!(tdlib_message_id_to_visible_id(0), None);
 }
 
-// 私有 supergroup/channel 兜底链接使用 t.me/c 和换算后的可见消息 ID。
+/// 测试私有 supergroup/channel 兜底链接使用 t.me/c 和换算后的可见消息 ID 正确拼接。
 #[test]
 fn test_build_private_supergroup_message_link() {
     let link = build_private_supergroup_message_link(1835352976, 769654784);
     assert_eq!(link.as_deref(), Some("https://t.me/c/1835352976/734"));
 }
 
-// 历史保存的 tg:// 或定位字符串可以提取 message_id，用于刷新旧结果链接。
+/// 测试从历史保存的 tg:// 或定位字符串中提取 message_id，用于刷新旧结果链接。
 #[test]
 fn test_extract_tdlib_message_id_from_stored_link() {
     assert_eq!(
@@ -207,10 +209,11 @@ fn test_extract_tdlib_message_id_from_stored_link() {
     );
 }
 
-// 同 source_link + target_chat_id 的创建锁应阻止并发穿透查重窗口。
+/// 测试同 source_link + target_chat_id 的创建锁应阻止并发穿透查重窗口。
 #[tokio::test]
 async fn test_source_target_create_guard_is_exclusive() {
     let app_context = test_app_context();
+    // 首次获取互斥守卫
     let first = acquire_source_target_create_guard(
         app_context.as_ref(),
         "https://t.me/c/1/2".to_owned(),
@@ -218,6 +221,7 @@ async fn test_source_target_create_guard_is_exclusive() {
     )
     .await;
 
+    // 尝试在后台异步并发获取相同来源和目标的守卫
     let waiting = tokio::spawn(async {
         let app_context = test_app_context();
         acquire_source_target_create_guard(
@@ -228,9 +232,12 @@ async fn test_source_target_create_guard_is_exclusive() {
         .await
     });
     tokio::time::sleep(Duration::from_millis(20)).await;
+    // 互斥未释放前，后台任务必须处于阻塞等待状态
     assert!(!waiting.is_finished());
 
+    // 释放首次获取的锁
     drop(first);
+    // 后台任务应在首次锁释放后成功获取并完成
     let second = tokio::time::timeout(Duration::from_secs(1), waiting)
         .await
         .expect("guard should be released")
@@ -238,21 +245,25 @@ async fn test_source_target_create_guard_is_exclusive() {
     drop(second);
 }
 
-// job 运行锁应在同一进程内阻止同一任务被重复执行。
+/// 测试 job 运行锁应在同一进程内阻止同一任务被重复并发执行。
 #[tokio::test]
 async fn test_job_guard_is_exclusive() {
     let job_id = rand::rng().random_range(1_000_000..=2_000_000);
     let app_context = test_app_context();
+    // 首次获取运行锁
     let first = acquire_job_guard(app_context.as_ref(), job_id)
         .await
         .expect("first guard should be acquired");
+    // 未释放前二次获取必须返回 None
     assert!(
         acquire_job_guard(app_context.as_ref(), job_id)
             .await
             .is_none()
     );
 
+    // 释放首次持有的锁
     drop(first);
+    // 释放后应能再次成功获取
     let second = tokio::time::timeout(Duration::from_secs(1), async {
         let app_context = test_app_context();
         loop {
@@ -267,7 +278,7 @@ async fn test_job_guard_is_exclusive() {
     drop(second);
 }
 
-// workflow 控制检查遇到 paused 时应立即返回暂停结果，不继续执行后续流程。
+/// 测试 workflow 控制检查遇到 paused 状态时应立即返回暂停结果，不继续执行后续流程。
 #[tokio::test]
 async fn test_apply_job_control_paused() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
@@ -284,7 +295,7 @@ async fn test_apply_job_control_paused() -> anyhow::Result<()> {
     Ok(())
 }
 
-// workflow 控制检查遇到 cancelling 时应收敛任务，并释放文件引用。
+/// 测试 workflow 控制检查遇到 cancelling 状态时应收敛任务为 cancelled 并释放关联文件引用。
 #[tokio::test]
 async fn test_apply_job_control_cancelling() -> anyhow::Result<()> {
     let _guard = db::TEST_DB_LOCK.lock().await;
@@ -293,6 +304,7 @@ async fn test_apply_job_control_cancelling() -> anyhow::Result<()> {
     let (item_id, file_key) = insert_item_with_file_ref(job.id).await?;
     let app_context = test_app_context();
 
+    // 触发任务控制收敛检查
     let outcome = apply_job_control(app_context.as_ref(), job.id)
         .await?
         .expect("cancelling job should stop workflow");
@@ -301,17 +313,20 @@ async fn test_apply_job_control_cancelling() -> anyhow::Result<()> {
         other => panic!("unexpected outcome: {other:?}"),
     }
 
+    // 验证数据库中任务主状态已更新为 cancelled
     let status = store::get_job_status(job.id)
         .await?
         .expect("job status must exist");
     assert_eq!(status, store::JOB_STATUS_CANCELLED);
 
+    // 验证子项状态已更新为 cancelled
     let item = db::transfer_item::Entity::find_by_id(item_id)
         .one(db_conn)
         .await?
         .expect("item must exist");
     assert_eq!(item.status, "cancelled");
 
+    // 验证文件缓存的活跃引用计数已归零，并设置了延迟清理时间
     let cache = db::file_cache::Entity::find_by_id(("user".to_owned(), file_key))
         .one(db_conn)
         .await?

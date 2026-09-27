@@ -1,8 +1,11 @@
+//! 本地文件缓存表（`file_cache`）DDL 定义与索引创建。
+
 use sea_orm::ConnectionTrait;
 use sea_orm::sea_query::{ColumnDef, Index, Table};
 
 use super::exec_schema_statement;
 
+/// 创建 `file_cache` 数据表以及状态、GC 过期检索相关的复合索引。
 pub(super) async fn create<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -79,6 +82,7 @@ where
     Ok(())
 }
 
+/// 删除 `file_cache` 数据表结构（若存在）。
 pub(super) async fn drop<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,

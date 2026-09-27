@@ -1,8 +1,11 @@
+//! 动态授权用户白名单表（`authorized_user`）DDL 定义与迁移。
+
 use sea_orm::ConnectionTrait;
 use sea_orm::sea_query::{ColumnDef, Table};
 
 use super::exec_schema_statement;
 
+/// 创建 `authorized_user` 数据表结构（若不存在）。
 pub(super) async fn create<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -30,6 +33,7 @@ where
     .await
 }
 
+/// 删除 `authorized_user` 数据表结构（若存在）。
 pub(super) async fn drop<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,

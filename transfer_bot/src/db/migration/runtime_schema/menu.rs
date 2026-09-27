@@ -1,8 +1,11 @@
+//! 交互菜单输入草稿表（`menu_input_draft`）DDL 定义与过期索引创建。
+
 use sea_orm::ConnectionTrait;
 use sea_orm::sea_query::{ColumnDef, Index, Table};
 
 use super::exec_schema_statement;
 
+/// 创建 `menu_input_draft` 数据表与过期时间检索索引。
 pub(super) async fn create<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -53,6 +56,7 @@ where
     Ok(())
 }
 
+/// 删除 `menu_input_draft` 数据表结构（若存在）。
 pub(super) async fn drop<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,

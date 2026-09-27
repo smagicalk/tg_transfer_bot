@@ -12,7 +12,21 @@ use super::super::{
     FILE_CACHE_STATUS_READY, now_utc8,
 };
 
-/// 读取当前 client 可复用的本地缓存；数据库记录存在但文件已被外部删除时视为未命中。
+/// 读取当前 client 可复用的本地缓存。
+///
+/// 校验条件包括：
+/// 1. 数据库记录存在且本地路径不为空；
+/// 2. 状态为 `ready`；
+/// 3. 活跃引用数 `active_refs > 0`；
+/// 4. 磁盘上的实际文件仍然存在（`is_file() == true`）。
+/// 数据库记录存在但文件已被外部误删时视为未命中并返回 None。
+///
+/// # 参数
+/// - `owner_client_role`: 客户端角色（如 "user"、"bot"）。
+/// - `file_key`: 文件键。
+///
+/// # 返回值
+/// - `Some(PreparedCacheMeta)` 包含准备好的元数据与本地路径；`None` 表示缓存未命中或已失效。
 pub(in crate::tgbot::transfer) async fn find_ready_file_cache(
     owner_client_role: &str,
     file_key: &str,
@@ -44,8 +58,12 @@ pub(in crate::tgbot::transfer) async fn find_ready_file_cache(
     }))
 }
 
-/// 将 file_cache 标记为“下载中”。
-/// 同时预写入 td_file_id 和 size_bytes，供实时进度查询使用。
+/// 将 file_cache 标记为“下载中”（downloading）。
+/// 同时预写入 TDLib 的 `td_file_id` 和 `size_bytes`，供实时进度轮询查询使用。
+///
+/// # 参数
+/// - `owner_client_role`: 客户端角色。
+/// - `seed`: 下载种子信息（包含 TDLib 文件 ID 与已知大小）。
 pub(in crate::tgbot::transfer) async fn mark_file_cache_downloading(
     owner_client_role: &str,
     seed: &DownloadSeed,
@@ -83,7 +101,11 @@ pub(in crate::tgbot::transfer) async fn mark_file_cache_downloading(
     Ok(())
 }
 
-/// 回填 file_cache 的就绪信息（路径/文件ID/大小）。
+/// 回填 file_cache 的就绪信息（路径/文件ID/大小），状态变更为 `ready`。
+///
+/// # 参数
+/// - `owner_client_role`: 客户端角色。
+/// - `meta`: 已准备好的缓存元数据，包含下载完成的磁盘文件路径。
 pub(in crate::tgbot::transfer) async fn mark_file_cache_ready(
     owner_client_role: &str,
     meta: &PreparedCacheMeta,
@@ -123,6 +145,11 @@ pub(in crate::tgbot::transfer) async fn mark_file_cache_ready(
 }
 
 /// 标记 file_cache 失败信息（不变更引用计数）。
+///
+/// # 参数
+/// - `owner_client_role`: 客户端角色。
+/// - `file_key`: 文件键。
+/// - `err`: 发生的错误详情描述。
 pub(in crate::tgbot::transfer) async fn mark_file_cache_failed(
     owner_client_role: &str,
     file_key: &str,

@@ -1,5 +1,8 @@
-// 加解密工具模块。
-// 方案：Argon2 派生密钥 + AES-256-GCM 加密，统一输出/输入 base64 文本。
+//! 加解密工具模块。
+//!
+//! 方案：Argon2 强哈希派生密钥 + AES-256-GCM 认证加密，统一采用 Base64 文本作为序列化格式。
+//! 密文封装格式为：`[16 字节 Salt] + [12 字节 Nonce] + [密文数据 + 16 字节认证标签 Auth Tag]`。
+
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use anyhow::Result;
@@ -8,8 +11,9 @@ use base64::{Engine as _, engine::general_purpose};
 use rand::Rng;
 use tokio::fs;
 
-// 根据用户口令和盐值派生 32 字节对称密钥。
-// Argon2 失败时向上返回错误，避免配置加解密路径里出现不可控 panic。
+/// 根据用户密码口令与随机盐值，使用 Argon2id 算法安全派生 32 字节（256 位）对称密钥。
+///
+/// Argon2 计算失败时向上返回错误，避免在配置加解密路径中发生不可控 panic。
 fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32]> {
     let argon2 = Argon2::default();
     let mut key = [0u8; 32];
@@ -17,8 +21,10 @@ fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32]> {
     Ok(key)
 }
 
-// 加密字节并返回 base64 字符串。
-// 输出格式：salt(16) + nonce(12) + ciphertext。
+/// 加密明文字节数组，返回 Base64 编码的密文字符串。
+///
+/// 内部每次自动生成 16 字节随机 Salt 和 12 字节随机 Nonce，
+/// 输出载荷布局：`salt(16) + nonce(12) + ciphertext(带 auth tag)`。
 pub fn encrypt_bytes(plaintext: &[u8], password: &str) -> Result<String> {
     let mut salt = [0u8; 16];
     rand::rng().fill_bytes(&mut salt);
@@ -39,7 +45,9 @@ pub fn encrypt_bytes(plaintext: &[u8], password: &str) -> Result<String> {
     Ok(general_purpose::STANDARD.encode(out))
 }
 
-// 解密 base64 字符串，返回明文字节。
+/// 解密 Base64 密文字符串，返回明文字节数组。
+///
+/// 提取开头的 16 字节 Salt 与 12 字节 Nonce，通过 Argon2 派生出密钥后使用 AES-256-GCM 验证并解密。
 pub fn decrypt_bytes(ciphertext_b64: &str, password: &str) -> Result<Vec<u8>> {
     let data = general_purpose::STANDARD.decode(ciphertext_b64)?;
     if data.len() < 16 + 12 {
@@ -56,51 +64,51 @@ pub fn decrypt_bytes(ciphertext_b64: &str, password: &str) -> Result<Vec<u8>> {
     Ok(plaintext)
 }
 
-// 异步读取文件为字节数组。
+/// 异步读取指定路径的文件完整内容为字节数组。
 pub async fn read_file(path: &str) -> Result<Vec<u8>> {
     Ok(fs::read(path).await?)
 }
 
-// 异步写入字节到文件。
+/// 异步将字节数组写入指定路径的目标文件。
 pub async fn write_file(path: &str, data: &[u8]) -> Result<()> {
     fs::write(path, data).await?;
     Ok(())
 }
 
-// 输入文件加密后写入输出文件（base64 文本）。
+/// 读取输入文件，对其内容进行加密后将 Base64 文本写入输出文件。
 pub async fn encrypt_file_to_file(input: &str, output: &str, password: &str) -> Result<()> {
     let data = read_file(input).await?;
     let enc_b64 = encrypt_bytes(&data, password)?;
     write_file(output, enc_b64.as_bytes()).await
 }
 
-// 输入文件加密后直接返回 base64 字符串。
+/// 读取输入文件，对其内容进行加密后直接返回 Base64 字符串。
 pub async fn encrypt_file_to_string(input: &str, password: &str) -> Result<String> {
     let data = read_file(input).await?;
     encrypt_bytes(&data, password)
 }
 
-// 明文字符串加密后写入文件。
+/// 将明文字符串加密为 Base64 文本并写入输出文件。
 pub async fn encrypt_string_to_file(plaintext: &str, output: &str, password: &str) -> Result<()> {
     let enc_b64 = encrypt_bytes(plaintext.as_bytes(), password)?;
     write_file(output, enc_b64.as_bytes()).await
 }
 
-// 读取加密文件并解密写入输出文件。
+/// 读取 Base64 密文文件并将其解密写入目标明文文件。
 pub async fn decrypt_file_to_file(input: &str, output: &str, password: &str) -> Result<()> {
     let enc_b64 = String::from_utf8(read_file(input).await?)?;
     let plain = decrypt_bytes(&enc_b64, password)?;
     write_file(output, &plain).await
 }
 
-// 读取加密文件并解密为字符串。
+/// 读取 Base64 密文文件并解密还原为 UTF-8 明文字符串。
 pub async fn decrypt_file_to_string(input: &str, password: &str) -> Result<String> {
     let enc_b64 = String::from_utf8(read_file(input).await?)?;
     let plain = decrypt_bytes(&enc_b64, password)?;
     Ok(String::from_utf8(plain)?)
 }
 
-// 直接解密 base64 字符串并写入文件。
+/// 直接解密 Base64 密文字符串并将还原后的明文字节写入输出文件。
 pub async fn decrypt_string_to_file(
     ciphertext_b64: &str,
     output: &str,

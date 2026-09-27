@@ -6,38 +6,58 @@ use super::super::command::{
     build_job_status_button_data, build_lookup_retry_transfer_button_data,
 };
 
-/// 转存错误的稳定分类。
+/// 转存错误的稳定业务分类枚举。
 ///
 /// TDLib 和 anyhow 的错误类型不稳定，外层展示不能依赖具体 error type；
 /// 用文本关键词做保守分类，保证命令错误卡片和后台失败卡片的解释口径一致。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot) enum TransferErrorKind {
+    /// TDLib 客户端请求协议格式或 base64 padding 解析错误。
     TdlibRequest,
+    /// 未配置目标且命令中未显式指定目标会话。
     MissingTarget,
+    /// 源消息已被删除或当前账号无法读取。
     SourceDenied,
+    /// 目标会话或源会话权限不足（如未加入群组、无发消息权限）。
     PermissionDenied,
+    /// 命令行参数格式非法或链接无法识别。
     InvalidArgs,
+    /// 媒体相册组合违反 Telegram 原生约束（如混排不支持类型）。
     AlbumUnsupported,
+    /// 文件从 Telegram 服务器下载或落盘准备失败。
     DownloadFailed,
+    /// 将准备好的文件上传并发送至目标会话时失败。
     UploadFailed,
+    /// 其它未归类的未知异常。
     Unknown,
 }
 
-/// 转存错误的用户提示。
+/// 转存错误的用户友好提示结构体。
 ///
 /// `title/status` 适合卡片摘要，`reason/advice` 适合正文说明；按钮和命令入口由调用方决定。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot) struct TransferErrorHint {
+    /// 错误分类枚举。
     pub kind: TransferErrorKind,
+    /// 展示在卡片顶部的标题（如 "权限不足"）。
     pub title: &'static str,
+    /// 机器可读或短状态标签（如 "permission-denied"）。
     pub status: &'static str,
+    /// 故障发生的具体业务原因解释。
     pub reason: &'static str,
+    /// 针对用户的排查与恢复操作建议。
     pub advice: &'static str,
 }
 
-/// 根据错误文本选择用户可执行的提示。
+/// 根据错误文本选择用户可执行的排查提示。
 ///
 /// 顺序很重要：先匹配 TDLib 请求解析、目标等明确错误，再匹配较宽泛的权限和下载关键词。
+///
+/// # 参数
+/// - `error_text`: 包含具体错误的异常文本。
+///
+/// # 返回值
+/// - `TransferErrorHint`: 分类并填充好文案的提示结构体。
 pub(in crate::tgbot) fn classify_transfer_error_text(error_text: &str) -> TransferErrorHint {
     let lower = error_text.to_ascii_lowercase();
 
@@ -188,7 +208,18 @@ fn transfer_error_hint(
     }
 }
 
-/// 发送失败信息。
+/// 发送转存执行失败通知卡片。
+///
+/// 包含错误堆栈、业务排查建议、任务详情按钮和“重新转存”按钮。
+///
+/// # 参数
+/// - `title`: 卡片标题。
+/// - `source_link`: 原始源链接。
+/// - `target_chat_id`: 目标聊天 ID。
+/// - `job_id`: 关联任务 ID（若已有记录）。
+/// - `err`: 捕获的具体异常。
+/// - `notify_chat_id`: 接收通知的聊天 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub(in crate::tgbot::transfer) async fn send_failure_message(
     title: &str,
     source_link: &str,
@@ -250,6 +281,14 @@ fn build_failure_buttons(
 
 /// 构造失败卡片正文。
 ///
+/// 包含摘要状态行、详细错误堆栈（等宽预格式化块）、结构化排查原因与处理建议、源链接段落。
+///
+/// # 参数
+/// - `title`: 卡片顶部大标题。
+/// - `source_link`: 原始源链接。
+/// - `target_chat_id`: 目标聊天 ID。
+/// - `job_id`: 任务 ID（若有）。
+/// - `err`: 捕获的具体异常。
 pub(in crate::tgbot::transfer) fn format_failure_card_text(
     title: &str,
     source_link: &str,
@@ -274,10 +313,13 @@ pub(in crate::tgbot::transfer) fn format_failure_card_text(
     lines.join("\n")
 }
 
-/// 根据错误文本生成用户可执行的排查建议。
+/// 根据错误文本生成用户可执行的排查建议行。
 ///
 /// TDLib 错误来自远端状态和本地 client 状态，类型不稳定；这里用保守的文本分类给出下一步，
 /// 但原始错误仍保留在“错误”代码块里，方便日志排查时回到真实原因。
+///
+/// # 参数
+/// - `err`: 异常对象。
 fn build_failure_advice_lines(err: &anyhow::Error) -> Vec<String> {
     let err_text = format!("{err:#}");
     let hint = classify_transfer_error_text(&err_text);
@@ -287,7 +329,7 @@ fn build_failure_advice_lines(err: &anyhow::Error) -> Vec<String> {
     ]
 }
 
-/// 判断错误文本是否包含任一关键词。
+/// 判断错误文本是否包含任一指定的关键词（不区分大小写匹配已在外层处理）。
 fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
 }

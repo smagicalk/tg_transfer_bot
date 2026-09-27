@@ -7,6 +7,18 @@ use super::super::command::{build_job_status_button_data, require_downloads_filt
 use super::super::store::ResultMessageRecord;
 
 /// 发送“命中历史结果 / 已完成”的结果卡片。
+///
+/// 当用户请求转存某个源链接时，若数据库已存在成功转存记录且未强制 `--force`，
+/// 则无需重新下载上传，直接组装成功结果卡片并推送给用户。
+///
+/// # 参数
+/// - `title`: 卡片顶部大标题。
+/// - `source_link`: 源消息链接。
+/// - `target_chat_id`: 目标聊天 ID。
+/// - `job_id`: 关联的任务 ID。
+/// - `result_link`: 数据库记录的主结果链接。
+/// - `notify_chat_id`: 接收成功通知的聊天 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub(in crate::tgbot::transfer) async fn send_history_hit_message(
     title: &str,
     source_link: &str,
@@ -47,6 +59,9 @@ pub(in crate::tgbot::transfer) async fn send_history_hit_message(
 /// 构造结果卡片任务导航行。
 ///
 /// 结果页第一条导航行只保留任务详情入口，列表、命令和菜单统一落到下一行。
+///
+/// # 参数
+/// - `job_id`: 任务 ID。
 fn build_result_job_row(job_id: i64) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
     vec![crate::tgbot::send::build_callback_button(
         "查看任务详情",
@@ -56,6 +71,10 @@ fn build_result_job_row(job_id: i64) -> Vec<tdlib_rs::types::InlineKeyboardButto
 }
 
 /// 构造结果卡片第二行：进入列表、查看命令、菜单。
+///
+/// # 参数
+/// - `list_label`: 列表按钮的标题（如 "查看完成列表"）。
+/// - `list_filter`: 列表过滤条件（如 "done"）。
 pub(in crate::tgbot::transfer) fn build_list_menu_row(
     list_label: &str,
     list_filter: &str,
@@ -79,6 +98,11 @@ pub(in crate::tgbot::transfer) fn build_list_menu_row(
 ///
 /// 结果入口在最上面，随后固定是“任务详情”一行，再是“列表 + 菜单”一行；
 /// 这样 `progress`、`success`、`lookup` 三类结果页能保持同一层级。
+///
+/// # 参数
+/// - `job_id`: 任务 ID（若为 None 则省略任务详情行）。
+/// - `list_label`: 列表按钮文字。
+/// - `list_filter`: 过滤状态标签。
 pub(in crate::tgbot::transfer) fn build_result_navigation_rows(
     job_id: Option<i64>,
     list_label: &str,
@@ -96,6 +120,13 @@ pub(in crate::tgbot::transfer) fn build_result_navigation_rows(
 ///
 /// 正文只对 HTTP(S) 结果使用 TDLib 原生文本链接；旧的 `tg://openmessage`
 /// 或纯定位字符串只作为代码字段展示，避免客户端显示成不可用链接。
+///
+/// # 参数
+/// - `title`: 大标题。
+/// - `source_link`: 源链接。
+/// - `target_chat_id`: 目标聊天 ID。
+/// - `job_id`: 可选任务 ID。
+/// - `result_messages`: 转存产出的各批次结果消息记录。
 pub(in crate::tgbot::transfer) fn format_result_card_text(
     title: &str,
     source_link: &str,
@@ -116,6 +147,11 @@ pub(in crate::tgbot::transfer) fn format_result_card_text(
 }
 
 /// 将结果表缺失的旧数据补成单条结果，保证旧任务仍能正常显示。
+///
+/// # 参数
+/// - `result_messages`: 从数据库查询出的多条结果记录。
+/// - `fallback_link`: 主表记录的兜底结果链接。
+/// - `target_chat_id`: 目标聊天 ID。
 pub(in crate::tgbot::transfer) fn normalize_result_messages(
     mut result_messages: Vec<ResultMessageRecord>,
     fallback_link: &str,
@@ -147,7 +183,10 @@ pub(in crate::tgbot::transfer) fn normalize_result_messages(
     result_messages
 }
 
-/// 构造多结果正文块。
+/// 构造多结果或单结果正文展示块。
+///
+/// # 参数
+/// - `result_messages`: 结果记录切片。
 fn format_result_messages_block(result_messages: &[ResultMessageRecord]) -> String {
     if result_messages.len() == 1 {
         return card::result_block(&result_messages[0].message_link);
@@ -179,6 +218,9 @@ fn format_result_messages_block(result_messages: &[ResultMessageRecord]) -> Stri
 }
 
 /// 返回可作为 Telegram 回复锚点的第一条结果消息坐标。
+///
+/// 当目标群组为私有群或无法获得外部公开链接时，返回 `(target_chat_id, message_id)`，
+/// 允许通过回复引用该消息实现快速定位跳转。
 pub(in crate::tgbot::transfer) fn result_reply_target(
     result_messages: &[ResultMessageRecord],
 ) -> Option<(i64, i64)> {
@@ -191,6 +233,13 @@ pub(in crate::tgbot::transfer) fn result_reply_target(
 }
 
 /// 发送统一结果卡片；不可生成 URL 时用 Telegram 原生回复引用作为跳转入口。
+///
+/// # 参数
+/// - `text`: 格式化文本。
+/// - `rows`: 按钮行定义。
+/// - `result_messages`: 结果记录切片。
+/// - `notify_chat_id`: 目标通知聊天 ID。
+/// - `client_id`: TDLib 客户端 ID。
 pub(in crate::tgbot::transfer) async fn send_result_card(
     text: String,
     rows: Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>,
@@ -225,10 +274,14 @@ pub(in crate::tgbot::transfer) async fn send_result_card(
     crate::tgbot::send::send_card_message_with_buttons(text, notify_chat_id, rows, client_id).await
 }
 
-/// 构造结果入口按钮。
+/// 构造结果入口跳转按钮。
 ///
 /// 开放 URL 已经同时出现在正文里，按钮区只保留“打开”动作；
 /// 不可点击的定位字符串已经在正文里完整展示，这里不再重复给复制按钮。
+/// 最多展示前 6 个结果按钮。
+///
+/// # 参数
+/// - `result_messages`: 结果记录切片。
 pub(in crate::tgbot::transfer) fn build_result_message_rows(
     result_messages: &[ResultMessageRecord],
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {

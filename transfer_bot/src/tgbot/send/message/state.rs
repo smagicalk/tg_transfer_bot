@@ -19,8 +19,11 @@ type SendResult = Result<SentMessageReceipt, String>;
 /// Windows debug worker 的深异步调用栈上触发栈溢出。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SentMessageReceipt {
+    /// 消息 ID（可能是临时负数 ID 或已对齐的最终正数 ID）。
     pub id: i64,
+    /// 消息所属的聊天 ID。
     pub chat_id: i64,
+    /// 是否仍为临时消息 ID（当 TDLib 响应包含 `sending_state` 时为 true）。
     pub is_temporary: bool,
 }
 
@@ -29,19 +32,29 @@ const COMPLETED_CACHE_LIMIT: usize = 256;
 /// 等待普通文本消息发送成功的时间。超时后仍返回临时消息，避免命令入口卡死。
 const SEND_SUCCEEDED_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// 全局发送消息对齐状态管理器。
 static SEND_STATE: LazyLock<Mutex<SendState>> = LazyLock::new(|| Mutex::new(SendState::default()));
 
+/// 内部发送状态集合。
 #[derive(Default)]
 struct SendState {
-    /// 临时消息键 -> 最终发送成功的轻量回执。
+    /// 临时消息键 `(client_id, chat_id, temporary_message_id)` -> 最终发送成功的轻量回执。
     completed: HashMap<SendKey, SentMessageReceipt>,
-    /// 临时消息键 -> 正在等待最终发送结果的调用方。
+    /// 临时消息键 -> 正在等待最终发送结果的 oneshot 发送端列表。
     waiters: HashMap<SendKey, Vec<oneshot::Sender<SendResult>>>,
 }
 
 /// 等待 TDLib 把临时 message_id 替换成最终 message_id。
 ///
-/// 如果消息没有 sending_state，说明已经是最终消息，直接返回。
+/// 如果消息没有 sending_state，说明已经是最终消息，直接返回；
+/// 否则等待默认 10 秒超时窗口。
+///
+/// # 参数
+/// - `message`: 初次发送返回的原始 Message。
+/// - `client_id`: TDLib 客户端实例 ID。
+///
+/// # 返回值
+/// - `Ok(Message)`: 替换为最终 ID 并重新获取的完整 Message。
 pub async fn wait_for_sent_message(
     message: tdlib_rs::types::Message,
     client_id: i32,
@@ -53,6 +66,11 @@ pub async fn wait_for_sent_message(
 ///
 /// 媒体上传可能在服务端处理较慢，上传调用方应使用更长窗口；普通机器人文本仍使用
 /// `wait_for_sent_message` 的短窗口，避免单条回复长时间阻塞。
+///
+/// # 参数
+/// - `message`: 初次发送返回的 Message。
+/// - `client_id`: TDLib 客户端 ID。
+/// - `timeout`: 最长等待时间。
 pub async fn wait_for_sent_message_with_timeout(
     message: tdlib_rs::types::Message,
     client_id: i32,
@@ -77,7 +95,7 @@ pub async fn wait_for_sent_message_with_timeout(
         .await
         .map(|message| {
             let tdlib_rs::enums::Message::Message(message) = message;
-            message
+            *message
         })
         .map_err(|error| {
             anyhow::anyhow!(
@@ -89,6 +107,12 @@ pub async fn wait_for_sent_message_with_timeout(
 }
 
 /// 等待文本消息从临时 ID 对齐到最终 ID，全程只传递轻量回执。
+///
+/// 避免反序列化大体积的完整 `Message`，降低 debug worker 栈压力。
+///
+/// # 参数
+/// - `receipt`: 临时轻量回执。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn wait_for_sent_message_receipt(
     receipt: SentMessageReceipt,
     client_id: i32,
@@ -97,6 +121,15 @@ pub async fn wait_for_sent_message_receipt(
         .await
 }
 
+/// 带有指定超时的轻量回执等待实现。
+///
+/// 内部通过 oneshot 通道订阅 `observe_message_send_succeeded_for_client` 触发的结果。
+/// 超时后回退返回初始临时回执，同时异步清理无效通道。
+///
+/// # 参数
+/// - `receipt`: 初始发送拿到的临时回执。
+/// - `client_id`: TDLib 客户端 ID。
+/// - `timeout`: 最大等待时间。
 async fn wait_for_sent_message_receipt_with_timeout(
     receipt: SentMessageReceipt,
     client_id: i32,
@@ -147,6 +180,16 @@ async fn wait_for_sent_message_receipt_with_timeout(
 ///
 /// 编辑消息遇到 `Message not found` 时使用这个兜底：如果之前用的是临时 ID，
 /// 这里会等到 `updateMessageSendSucceeded` 后返回最终 ID，再让调用方重试编辑。
+///
+/// # 参数
+/// - `client_id`: TDLib 客户端 ID。
+/// - `chat_id`: 消息所属的聊天 ID。
+/// - `temporary_message_id`: 发送时获取到的临时消息 ID。
+/// - `timeout`: 最长等待时间。
+///
+/// # 返回值
+/// - `Some(i64)`: 成功获取到的最终服务端消息 ID。
+/// - `None`: 超时或未获取到最终 ID。
 pub async fn wait_for_sent_message_id(
     client_id: i32,
     chat_id: i64,
@@ -172,6 +215,10 @@ pub async fn wait_for_sent_message_id(
 ///
 /// 双 client 模式下 user 和 bot 可能在同一个 chat 中同时发送消息，TDLib 临时
 /// message_id 不能假设跨 client 唯一，因此缓存键必须包含 client_id。
+///
+/// # 参数
+/// - `update`: TDLib 抛出的 `UpdateMessageSendSucceeded` 事件。
+/// - `client_id`: 产生该事件的 TDLib 客户端实例 ID。
 pub fn observe_message_send_succeeded_for_client(
     update: tdlib_rs::types::UpdateMessageSendSucceeded,
     client_id: i32,
@@ -199,6 +246,12 @@ pub fn observe_message_send_succeeded_for_client(
 }
 
 /// 记录指定 TDLib client 的发送失败 update。
+///
+/// 通知所有订阅该临时 ID 的等待者发送失败原因，并清理等待队列。
+///
+/// # 参数
+/// - `update`: TDLib 抛出的 `UpdateMessageSendFailed` 事件。
+/// - `client_id`: 产生该事件的客户端 ID。
 pub fn observe_message_send_failed_for_client(
     update: tdlib_rs::types::UpdateMessageSendFailed,
     client_id: i32,
@@ -220,7 +273,7 @@ pub fn observe_message_send_failed_for_client(
     }
 }
 
-/// 防止极端竞态下 completed 缓存无界增长。
+/// 防止极端竞态下 completed 缓存无界增长（最多保留 `COMPLETED_CACHE_LIMIT` 条）。
 fn trim_completed_cache(state: &mut SendState) {
     while state.completed.len() > COMPLETED_CACHE_LIMIT {
         let Some(key) = state.completed.keys().next().copied() else {
@@ -278,53 +331,24 @@ mod tests {
     ) -> tdlib_rs::types::Message {
         tdlib_rs::types::Message {
             id: message_id,
-            sender_id: tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
-                user_id: 1,
-            }),
+            sender_id: tdlib_rs::enums::MessageSender::User(Box::new(
+                tdlib_rs::types::MessageSenderUser { user_id: 1 },
+            )),
             chat_id,
             sending_state,
-            scheduling_state: None,
             is_outgoing: true,
-            is_pinned: false,
-            is_from_offline: false,
             can_be_saved: true,
-            has_timestamped_media: false,
-            is_channel_post: false,
-            is_paid_star_suggested_post: false,
-            is_paid_ton_suggested_post: false,
-            contains_unread_mention: false,
-            date: 0,
-            edit_date: 0,
-            forward_info: None,
-            import_info: None,
-            interaction_info: None,
-            unread_reactions: vec![],
-            fact_check: None,
-            suggested_post_info: None,
-            reply_to: None,
-            topic_id: None,
-            self_destruct_type: None,
-            self_destruct_in: 0.0,
-            auto_delete_in: 0.0,
-            via_bot_user_id: 0,
-            sender_business_bot_user_id: 0,
-            sender_boost_count: 0,
-            sender_tag: String::new(),
-            paid_message_star_count: 0,
-            author_signature: String::new(),
-            media_album_id: 0,
-            effect_id: 0,
-            restriction_info: None,
-            summary_language_code: String::new(),
-            content: tdlib_rs::enums::MessageContent::MessageText(tdlib_rs::types::MessageText {
-                text: tdlib_rs::types::FormattedText {
-                    text: "test".to_owned(),
-                    entities: vec![],
+            content: tdlib_rs::enums::MessageContent::MessageText(Box::new(
+                tdlib_rs::types::MessageText {
+                    text: tdlib_rs::types::FormattedText {
+                        text: "test".to_owned(),
+                        entities: vec![],
+                    },
+                    link_preview: None,
+                    link_preview_options: None,
                 },
-                link_preview: None,
-                link_preview_options: None,
-            }),
-            reply_markup: None,
+            )),
+            ..crate::tgbot::mock_message()
         }
     }
 

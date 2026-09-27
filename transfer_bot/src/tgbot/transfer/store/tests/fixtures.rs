@@ -188,45 +188,12 @@ pub(super) fn message_with_document(
 ) -> tdlib_rs::types::Message {
     tdlib_rs::types::Message {
         id: source_message_id,
-        sender_id: tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
-            user_id: 1,
-        }),
+        sender_id: tdlib_rs::enums::MessageSender::User(Box::new(
+            tdlib_rs::types::MessageSenderUser { user_id: 1 },
+        )),
         chat_id: source_chat_id,
-        sending_state: None,
-        scheduling_state: None,
-        is_outgoing: false,
-        is_pinned: false,
-        is_from_offline: false,
         can_be_saved: true,
-        has_timestamped_media: false,
-        is_channel_post: false,
-        is_paid_star_suggested_post: false,
-        is_paid_ton_suggested_post: false,
-        contains_unread_mention: false,
-        date: 0,
-        edit_date: 0,
-        forward_info: None,
-        import_info: None,
-        interaction_info: None,
-        unread_reactions: vec![],
-        fact_check: None,
-        suggested_post_info: None,
-        reply_to: None,
-        topic_id: None,
-        self_destruct_type: None,
-        self_destruct_in: 0.0,
-        auto_delete_in: 0.0,
-        via_bot_user_id: 0,
-        sender_business_bot_user_id: 0,
-        sender_boost_count: 0,
-        sender_tag: String::new(),
-        paid_message_star_count: 0,
-        author_signature: String::new(),
-        media_album_id: 0,
-        effect_id: 0,
-        restriction_info: None,
-        summary_language_code: String::new(),
-        content: tdlib_rs::enums::MessageContent::MessageDocument(
+        content: tdlib_rs::enums::MessageContent::MessageDocument(Box::new(
             tdlib_rs::types::MessageDocument {
                 document: tdlib_rs::types::Document {
                     file_name: "test.bin".to_owned(),
@@ -247,7 +214,7 @@ pub(super) fn message_with_document(
                 },
                 caption: tdlib_rs::types::FormattedText::default(),
             },
-        ),
-        reply_markup: None,
+        )),
+        ..crate::tgbot::mock_message()
     }
 }

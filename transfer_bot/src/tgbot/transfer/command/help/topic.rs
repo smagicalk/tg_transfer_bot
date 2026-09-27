@@ -5,20 +5,29 @@
 ///
 /// topic 归一化、目录按钮和目录示例命令都依赖同一份最小定义，
 /// 避免新增命令时漏改其中一处。
+/// help 目录页按钮元数据。
+///
+/// topic 归一化、目录按钮和目录示例命令都依赖同一份最小定义，
+/// 避免新增命令时漏改其中一处。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct HelpTopicButtonSpec {
+    /// 按钮显示文本（如“转存”、“查询”）
     pub label: &'static str,
+    /// 对应的帮助主题标识符（如 "transfer", "lookup"）
     pub topic: &'static str,
+    /// 是否作为主高亮样式（Primary）展示
     pub primary: bool,
 }
 
-/// 运行态管理类 help topic。
+/// 运行态管理类 help topic 枚举。
 ///
-/// 这四页都遵循“统一帮助正文 + 统一 footer + 模块自带入口按钮”的结构，
+/// 这类页面都遵循“统一帮助正文 + 统一 footer + 模块自带入口按钮”的结构，
 /// 单独标记后，`detail.rs` 和 `keyboard.rs` 可以复用同一套路由逻辑。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RuntimeAdminHelpTopic {
+    /// 运行时配置主题
     Config,
+    /// 目标频道配置主题
     Targets,
 }
 
@@ -31,10 +40,13 @@ pub(super) enum RuntimeAdminHelpTopic {
 /// 后续如果继续推进“同源化”，可以在这里继续补充更高层的详情元数据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct HelpDetailTopicSpec {
+    /// 主题标识符
     pub topic: &'static str,
+    /// 运行态管理分类（若有）
     pub runtime_admin: Option<RuntimeAdminHelpTopic>,
 }
 
+/// 所有支持的帮助主题规格定义列表
 const HELP_DETAIL_TOPIC_SPECS: &[HelpDetailTopicSpec] = &[
     HelpDetailTopicSpec {
         topic: "help",
@@ -82,6 +94,7 @@ const HELP_DETAIL_TOPIC_SPECS: &[HelpDetailTopicSpec] = &[
     },
 ];
 
+/// 目录页主要按键第 1 行（核心转存、查询、下载）
 const HELP_INDEX_PRIMARY_ROW_ONE: [HelpTopicButtonSpec; 3] = [
     HelpTopicButtonSpec {
         label: "转存",
@@ -100,6 +113,7 @@ const HELP_INDEX_PRIMARY_ROW_ONE: [HelpTopicButtonSpec; 3] = [
     },
 ];
 
+/// 目录页主要按键第 2 行（任务控制、交互菜单）
 const HELP_INDEX_PRIMARY_ROW_TWO: [HelpTopicButtonSpec; 2] = [
     HelpTopicButtonSpec {
         label: "任务控制",
@@ -113,9 +127,11 @@ const HELP_INDEX_PRIMARY_ROW_TWO: [HelpTopicButtonSpec; 2] = [
     },
 ];
 
+/// 目录页所有基础导航行
 const HELP_INDEX_PRIMARY_ROWS: [&[HelpTopicButtonSpec]; 2] =
     [&HELP_INDEX_PRIMARY_ROW_ONE, &HELP_INDEX_PRIMARY_ROW_TWO];
 
+/// 目录页管理按键第 1 行（健康、缓存、配置）
 const HELP_INDEX_ADMIN_ROW_ONE: [HelpTopicButtonSpec; 3] = [
     HelpTopicButtonSpec {
         label: "运行健康",
@@ -134,6 +150,7 @@ const HELP_INDEX_ADMIN_ROW_ONE: [HelpTopicButtonSpec; 3] = [
     },
 ];
 
+/// 目录页管理按键第 2 行（目标配置、授权管理）
 const HELP_INDEX_ADMIN_ROW_TWO: [HelpTopicButtonSpec; 2] = [
     HelpTopicButtonSpec {
         label: "目标配置",
@@ -147,9 +164,11 @@ const HELP_INDEX_ADMIN_ROW_TWO: [HelpTopicButtonSpec; 2] = [
     },
 ];
 
+/// 目录页所有管理功能行
 const HELP_INDEX_ADMIN_ROWS: [&[HelpTopicButtonSpec]; 2] =
     [&HELP_INDEX_ADMIN_ROW_ONE, &HELP_INDEX_ADMIN_ROW_TWO];
 
+/// 目录页“示例命令”中展示的主题序列
 const HELP_INDEX_EXAMPLE_TOPICS: &[&str] = &[
     "transfer",
     "lookup",
@@ -215,6 +234,7 @@ pub(super) fn normalize_help_topic(command_name: &str) -> anyhow::Result<&'stati
 mod tests {
     use super::*;
 
+    /// 测试运行态管理主题识别
     #[test]
     fn test_runtime_admin_help_topic_marks_runtime_pages() {
         assert_eq!(
@@ -228,6 +248,7 @@ mod tests {
         assert_eq!(runtime_admin_help_topic("downloads"), None);
     }
 
+    /// 测试授权管理主题能够被正确归一化并解析为合法规格
     #[test]
     fn test_auth_help_topic_is_available() -> anyhow::Result<()> {
         assert_eq!(normalize_help_topic("auth")?, "auth");

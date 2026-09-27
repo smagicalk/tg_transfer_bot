@@ -60,7 +60,7 @@ pub(super) fn parse_help_message_callback_data(data: &str) -> Option<Option<&str
     }
 }
 
-/// help 目录页按钮。
+/// 构造 help 目录页完整按钮布局。
 pub(super) fn build_help_index_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let mut rows = build_help_topic_navigation_rows();
 
@@ -96,7 +96,7 @@ pub(super) fn build_help_topic_navigation_rows() -> Vec<Vec<tdlib_rs::types::Inl
     rows
 }
 
-/// 详细帮助页按钮。
+/// 构建特定主题的详细帮助页按钮布局。
 pub(super) fn build_help_detail_buttons(
     command_name: &str,
 ) -> anyhow::Result<Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>> {
@@ -146,7 +146,7 @@ fn build_runtime_admin_help_detail_buttons(
     build_help_entry_footer_rows(entry_rows)
 }
 
-/// 构建 help 页面切换按钮。
+/// 构建 help 页面切换跳转按钮。
 fn help_nav_button(
     text: &str,
     topic: &str,
@@ -173,7 +173,7 @@ fn menu_home_button() -> tdlib_rs::types::InlineKeyboardButton {
     )
 }
 
-/// help 运行态详情页统一 footer。
+/// help 运行态详情页统一导航 footer 行。
 fn build_runtime_admin_detail_footer() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![build_return_menu_row(
         help_index_button(),
@@ -204,6 +204,7 @@ fn build_help_topic_button_row(
 mod tests {
     use super::*;
 
+    /// 测试独立发送帮助消息使用的 callback 前缀解析与生成
     #[test]
     fn test_help_message_callback_data_uses_separate_prefix() {
         assert_eq!(build_help_message_callback_data(Some("job")), "h:new:job");
@@ -214,6 +215,7 @@ mod tests {
         assert_eq!(parse_help_message_callback_data("h:job"), None);
     }
 
+    /// 测试详情页导航按钮位于最后一行
     #[test]
     fn test_help_detail_buttons_put_navigation_on_last_row() -> anyhow::Result<()> {
         let rows = build_help_detail_buttons("transfer")?;
@@ -224,6 +226,7 @@ mod tests {
         Ok(())
     }
 
+    /// 测试 job 帮助详情页优先展示可点击的快捷列表按钮
     #[test]
     fn test_help_job_detail_buttons_prefer_clickable_lists() -> anyhow::Result<()> {
         let rows = build_help_detail_buttons("job")?;
@@ -250,6 +253,7 @@ mod tests {
         Ok(())
     }
 
+    /// 测试 downloads 帮助详情页保持快捷方式紧凑
     #[test]
     fn test_help_detail_buttons_keep_downloads_shortcuts_compact() -> anyhow::Result<()> {
         let rows = build_help_detail_buttons("downloads")?;
@@ -269,6 +273,7 @@ mod tests {
         Ok(())
     }
 
+    /// 测试只读帮助详情按键优先采用 callback 跳转而非复制文本
     #[test]
     fn test_readonly_help_detail_buttons_prefer_callbacks_without_copy() -> anyhow::Result<()> {
         let health = build_help_detail_buttons("health")?;
@@ -293,6 +298,7 @@ mod tests {
         Ok(())
     }
 
+    /// 测试 config 帮助页按键覆盖运行态关键入口
     #[test]
     fn test_config_help_detail_buttons_cover_runtime_entry_points() -> anyhow::Result<()> {
         let rows = build_help_detail_buttons("config")?;
@@ -311,6 +317,7 @@ mod tests {
         Ok(())
     }
 
+    /// 测试 targets 运行态管理帮助按键链接到实际页面
     #[test]
     fn test_runtime_admin_help_detail_buttons_link_to_real_pages() -> anyhow::Result<()> {
         for (topic, expected) in [("targets", vec!["打开目标页", "默认目标", "别名列表"])]
@@ -331,6 +338,7 @@ mod tests {
         Ok(())
     }
 
+    /// 测试运行态管理详情页不包含多余的复制按键
     #[test]
     fn test_runtime_admin_help_detail_buttons_drop_copy_buttons() -> anyhow::Result<()> {
         let targets = build_help_detail_buttons("targets")?;

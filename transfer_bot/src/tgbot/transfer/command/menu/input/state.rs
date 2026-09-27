@@ -15,29 +15,33 @@ use db_store::{
     update_draft_if_current,
 };
 
-/// 输入草稿索引。
+/// 输入草稿索引类型定义。
 ///
 /// 输入草稿使用 `(chat_id, user_id)` 做隔离，避免不同会话互相覆盖。
 pub(super) type DraftKey = (i64, i64);
 
-/// 最近一次确认执行的目标。
+/// 最近一次确认执行的目标缓存映射表。
 ///
+/// 键为 `(chat_id, user_id)`，值为最近确认过的目标聊天 ID (`target_chat_id`)。
 /// 这是纯交互优化，不参与转存幂等和任务恢复；进程重启后丢失也不会影响真实任务。
 static MENU_LAST_TARGETS: LazyLock<std::sync::Mutex<HashMap<DraftKey, i64>>> =
     LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
-/// 进程内草稿互斥键。
+
+/// 进程内草稿互斥键集合。
 ///
 /// 数据库主键保证最终只有一行草稿；这里额外保证同进程内的“读出并删除”不会被两个 callback
 /// 同时执行，避免确认按钮连点时同一份草稿被消费两次。
 static MENU_DRAFT_ACTIVE_KEYS: LazyLock<std::sync::Mutex<HashSet<DraftKey>>> =
     LazyLock::new(|| std::sync::Mutex::new(HashSet::new()));
-/// 当前草稿对应的原生选聊提示消息。
+
+/// 当前草稿对应的原生选聊提示消息映射表。
 ///
 /// 选聊键盘只能挂在 bot 新发的消息上；消息 ID 不适合写入现有草稿 schema，
 /// 因此只在进程内短暂保存。用户选中聊天后会立即取出并删除，避免流程卡片堆积。
 static MENU_TARGET_PICKER_MESSAGES: LazyLock<std::sync::Mutex<HashMap<DraftKey, i64>>> =
     LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
-/// 当前目标管理动作对应的原生选聊提示消息。
+
+/// 当前目标管理动作对应的原生选聊提示消息映射表。
 ///
 /// 与转存目标 picker 分开保存，避免一个流程的旧共享聊天结果误删另一种流程的卡片。
 static MENU_ADMIN_PICKER_MESSAGES: LazyLock<std::sync::Mutex<HashMap<DraftKey, i64>>> =
@@ -47,7 +51,14 @@ static MENU_ADMIN_PICKER_MESSAGES: LazyLock<std::sync::Mutex<HashMap<DraftKey, i
 pub(super) use memory::clear_last_targets;
 pub(super) use memory::{acquire_draft_key_guard, last_target, remember_last_target};
 
-/// 记录本次原生选聊提示；返回同一草稿上一次未清理的消息 ID。
+/// 记录本次原生选聊提示消息 ID；返回同一草稿上一次未清理的消息 ID。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
+/// - `message_id`: 新创建的选聊消息 ID
+///
+/// # 返回
+/// 若之前存在旧的选聊消息 ID 则返回 `Some(old_message_id)`，否则返回 `None`
 pub(super) fn remember_target_picker_message(key: DraftKey, message_id: i64) -> Option<i64> {
     let mut guard = MENU_TARGET_PICKER_MESSAGES
         .lock()
@@ -56,6 +67,12 @@ pub(super) fn remember_target_picker_message(key: DraftKey, message_id: i64) -> 
 }
 
 /// 取出并清除原生选聊提示消息 ID。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
+///
+/// # 返回
+/// 若存在则返回 `Some(message_id)` 并从映射表中移除，否则返回 `None`
 pub(super) fn take_target_picker_message(key: DraftKey) -> Option<i64> {
     MENU_TARGET_PICKER_MESSAGES
         .lock()
@@ -64,6 +81,13 @@ pub(super) fn take_target_picker_message(key: DraftKey) -> Option<i64> {
 }
 
 /// 记录目标管理 picker 消息，并返回同一草稿上一次未清理的消息 ID。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
+/// - `message_id`: 新创建的管理选聊提示消息 ID
+///
+/// # 返回
+/// 上一次残留的消息 ID（若有）
 pub(super) fn remember_admin_picker_message(key: DraftKey, message_id: i64) -> Option<i64> {
     let mut guard = MENU_ADMIN_PICKER_MESSAGES
         .lock()
@@ -72,6 +96,12 @@ pub(super) fn remember_admin_picker_message(key: DraftKey, message_id: i64) -> O
 }
 
 /// 取出并清除目标管理 picker 消息 ID。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
+///
+/// # 返回
+/// 对应的消息 ID（若有）
 pub(super) fn take_admin_picker_message(key: DraftKey) -> Option<i64> {
     MENU_ADMIN_PICKER_MESSAGES
         .lock()
@@ -79,12 +109,16 @@ pub(super) fn take_admin_picker_message(key: DraftKey) -> Option<i64> {
         .remove(&key)
 }
 
-/// 菜单输入流程。
+/// 菜单输入流程类型枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot::transfer::command::menu) enum MenuInputKind {
+    /// 完整转存向导：输入源链接 -> 选择/输入目标 -> 确认执行
     Transfer,
+    /// 快速转存向导：输入源链接 -> 自动使用默认目标执行
     TransferDefault,
+    /// 完整查询向导：输入源链接 -> 选择/输入目标 -> 确认执行
     Lookup,
+    /// 快速查询向导：输入源链接 -> 自动使用默认目标执行
     LookupDefault,
 }
 
@@ -94,7 +128,7 @@ impl MenuInputKind {
         matches!(self, Self::TransferDefault | Self::LookupDefault)
     }
 
-    /// 当前流程复用的命令名。
+    /// 当前流程复用的底层命令名。
     ///
     /// bot 私聊场景优先展示长命令；短命令仍由上层路由兼容。
     pub(super) fn command_name(self) -> &'static str {
@@ -122,7 +156,7 @@ impl MenuInputKind {
         }
     }
 
-    /// 源链接输入标题。
+    /// 源链接输入卡片标题。
     pub(in crate::tgbot::transfer::command::menu) fn source_title(self) -> &'static str {
         match self {
             Self::Transfer => "转存源链接",
@@ -132,7 +166,7 @@ impl MenuInputKind {
         }
     }
 
-    /// 源链接输入说明。
+    /// 源链接输入卡片详细说明文本。
     pub(in crate::tgbot::transfer::command::menu) fn source_detail(self) -> &'static str {
         match self {
             Self::Transfer => "请回复要转存的 Telegram 消息或相册链接。",
@@ -142,7 +176,7 @@ impl MenuInputKind {
         }
     }
 
-    /// 来源输入在当前向导中的步骤位置。
+    /// 来源输入在当前向导中的步骤位置标签（例如 "1/1" 或 "1/3"）。
     pub(in crate::tgbot::transfer::command::menu) fn source_step_label(self) -> &'static str {
         if self.uses_default_target() {
             "1/1"
@@ -161,12 +195,15 @@ impl MenuInputKind {
         }
     }
 
-    /// 数据库持久化编码。
+    /// 数据库持久化编码字符串。
     fn code(self) -> &'static str {
         self.log_name()
     }
 
-    /// 从数据库编码恢复输入类型。
+    /// 从数据库编码字符串解析恢复输入类型。
+    ///
+    /// # 参数
+    /// - `code`: 存储在数据库中的类型字符串
     pub(in crate::tgbot::transfer::command::menu) fn parse(code: &str) -> Option<Self> {
         match code {
             "transfer" => Some(Self::Transfer),
@@ -178,20 +215,24 @@ impl MenuInputKind {
     }
 }
 
-/// 菜单里的任务控制动作。
+/// 菜单里的任务控制动作枚举。
 ///
 /// 任务控制只需要用户补一个 `job_id`，因此独立于转存/查询的链接输入流程，
 /// 最终仍会组装成 `/job <action> <job_id>` 并复用已有命令入口。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot::transfer::command::menu) enum MenuJobAction {
+    /// 查看任务详情状态
     Status,
+    /// 暂停正在执行的任务
     Pause,
+    /// 恢复已暂停的任务
     Resume,
+    /// 停止并清理任务
     Stop,
 }
 
 impl MenuJobAction {
-    /// 映射到 `/job` 的公开长动作参数。
+    /// 映射到 `/job` 的公开长动作参数字符串。
     pub(super) fn command_action(self) -> &'static str {
         match self {
             Self::Status => "status",
@@ -201,7 +242,7 @@ impl MenuJobAction {
         }
     }
 
-    /// 输入提示标题。
+    /// 输入提示卡片标题。
     pub(super) fn input_title(self) -> &'static str {
         match self {
             Self::Status => "任务详情",
@@ -211,7 +252,7 @@ impl MenuJobAction {
         }
     }
 
-    /// 输入提示说明。
+    /// 输入提示卡片详细引导说明。
     pub(super) fn input_detail(self) -> &'static str {
         match self {
             Self::Status => "请回复要查看的 job_id，例如 42。",
@@ -237,6 +278,9 @@ impl MenuJobAction {
     }
 
     /// 从数据库编码恢复任务动作。
+    ///
+    /// # 参数
+    /// - `code`: 存储在数据库中的动作编码
     pub(in crate::tgbot::transfer::command) fn parse(code: &str) -> Option<Self> {
         match code {
             "status" => Some(Self::Status),
@@ -248,21 +292,31 @@ impl MenuJobAction {
     }
 }
 
-/// 菜单里的管理配置输入动作。
+/// 菜单里的管理配置输入动作枚举。
 ///
 /// 大多数动作都是“单步输入”；`TargetsAliasName`
 /// 是 targets 新增项的第一步，收到 A 后会继续进入第二步输入目标 B。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::tgbot::transfer::command) enum AdminInputAction {
+    /// 新增别名第一步：录入别名名称
     TargetsAliasName,
+    /// 搜索别名：录入关键字
     TargetsAliasSearch,
+    /// 设置默认目标：录入 chat_id、别名或通过选择器选择
     TargetsSetDefault,
+    /// 设置别名映射：录入目标 chat_id 或通过选择器选择
     TargetsSetAlias,
+    /// 配置项：设置最大并发任务数
     ConfigSetJobConcurrency,
+    /// 配置项：设置完成文件自动删除延迟（分钟）
     ConfigSetFileDeleteDelayMinutes,
+    /// 配置项：设置文件垃圾回收执行间隔（秒）
     ConfigSetFileGcIntervalSeconds,
+    /// 配置项：设置进度面板刷新编辑间隔（秒）
     ConfigSetProgressEditIntervalSeconds,
+    /// 配置项：设置下载管理分页大小
     ConfigSetDownloadsDefaultPageSize,
+    /// 配置项：设置菜单输入超时时间（秒）
     ConfigSetMenuInputTimeoutSeconds,
 }
 
@@ -272,7 +326,7 @@ impl AdminInputAction {
         matches!(self, Self::TargetsSetDefault | Self::TargetsSetAlias)
     }
 
-    /// 原生选聊按钮所属的稳定动作段，避免默认目标和 alias 的旧消息互相串线。
+    /// 原生选聊按钮所属的稳定动作基准偏移量，避免默认目标和 alias 的旧消息互相串线。
     fn chat_picker_button_base(self) -> Option<i32> {
         match self {
             Self::TargetsSetDefault => Some(10_000_000),
@@ -281,7 +335,7 @@ impl AdminInputAction {
         }
     }
 
-    /// 当前所有管理输入动作。
+    /// 当前所有管理输入动作常量切片。
     ///
     /// 这个清单主要用于覆盖测试：新增动作时必须同步确认编码、文案和命令规格。
     #[cfg(test)]
@@ -299,12 +353,17 @@ impl AdminInputAction {
     ];
 }
 
+/// 管理端聊天选择器 token 取模槽位数量
 const ADMIN_CHAT_REQUEST_TOKEN_SLOTS: u64 = 900_000;
 
-/// 根据动作和 picker token 生成一对 Telegram 原生选聊按钮 ID。
+/// 根据动作和 picker token 生成一对 Telegram 原生选聊按钮 ID `(group_button_id, channel_button_id)`。
 ///
 /// token 来自启动本次输入的 callback/message ID，并持久化在草稿的 `context_i64`；
 /// 不新增 schema，同时能拒绝旧 picker 延迟到达时对新草稿的误消费。
+///
+/// # 参数
+/// - `action`: 管理输入动作
+/// - `picker_token`: 可选的 token
 pub(super) fn admin_chat_request_button_ids(
     action: AdminInputAction,
     picker_token: Option<i64>,
@@ -317,6 +376,9 @@ pub(super) fn admin_chat_request_button_ids(
 }
 
 /// 判断共享聊天消息是否来自目标管理 picker，而不是转存目标 picker。
+///
+/// # 参数
+/// - `button_id`: 触发的按钮 ID
 pub(super) fn is_admin_chat_request_button(button_id: i32) -> bool {
     [10_000_000_i32, 20_000_000_i32]
         .into_iter()
@@ -337,19 +399,27 @@ fn targets_input_spec(
     crate::tgbot::transfer::command::targets::targets_input_spec_for_admin_action(action)
 }
 
-/// 带上下文的管理输入提示元数据。
+/// 带上下文的管理输入提示元数据结构。
 ///
 /// targets 的新增 alias 会先收集 A，再收集目标 B；修改现有项会保存 alias，
 /// 原生 picker 还会把本次 token 放入草稿。统一在这里渲染提示，避免“继续输入”和
 /// “错误重试”使用另一套文案。
 #[derive(Debug, Clone)]
 pub(super) struct AdminInputPromptMeta {
+    /// 提示卡片标题
     pub(super) title: String,
+    /// 提示卡片详细说明
     pub(super) detail: String,
+    /// ForceReply 输入框占位提示文本
     pub(super) placeholder: String,
 }
 
-/// 根据管理动作和上下文生成 ForceReply 提示。
+/// 根据管理动作和上下文生成 ForceReply 提示元数据。
+///
+/// # 参数
+/// - `action`: 管理输入动作
+/// - `context_text`: 可选的上下文文本（例如暂存的 alias）
+/// - `_context_i64`: 可选的上下文数值（例如 picker token）
 pub(super) fn admin_input_prompt_meta(
     action: AdminInputAction,
     context_text: Option<&str>,
@@ -505,10 +575,15 @@ impl AdminInputAction {
         }
     }
 
+    /// 数据库编码。
     fn code(self) -> &'static str {
         self.log_name()
     }
 
+    /// 从编码解析恢复管理输入动作。
+    ///
+    /// # 参数
+    /// - `code`: 动作持久化字符串
     pub(in crate::tgbot::transfer::command) fn parse(code: &str) -> Option<Self> {
         match code {
             "targets_new_alias_name" => Some(Self::TargetsAliasName),
@@ -526,52 +601,77 @@ impl AdminInputAction {
     }
 }
 
-/// 菜单输入阶段。
+/// 菜单输入阶段状态枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum MenuInputStep {
+    /// 第一步：等待输入源链接
     SourceLink {
+        /// 输入流程类型
         kind: MenuInputKind,
     },
+    /// 第二步：展示内联目标选择按钮菜单
     TargetChoice {
+        /// 输入流程类型
         kind: MenuInputKind,
+        /// 已经校验录入的源链接
         source_link: String,
     },
+    /// 第二步分支 A：等待用户文本回复目标 chat_id 或别名
     TargetChat {
+        /// 输入流程类型
         kind: MenuInputKind,
+        /// 已经校验录入的源链接
         source_link: String,
     },
+    /// 第二步分支 B：等待用户点击 Telegram 原生底部聊天选择器
     ChatPicker {
+        /// 输入流程类型
         kind: MenuInputKind,
+        /// 已经校验录入的源链接
         source_link: String,
     },
+    /// 第三步：等待最终确认执行
     Confirm {
+        /// 输入流程类型
         kind: MenuInputKind,
+        /// 已经校验录入的源链接
         source_link: String,
+        /// 最终确定的目标聊天 ID
         target_chat_id: i64,
     },
+    /// 任务管理操作：等待用户输入单步任务 ID (`job_id`)
     JobId {
+        /// 任务控制动作类型
         action: MenuJobAction,
     },
+    /// 管理员配置操作：等待录入配置数值或别名信息
     AdminInput {
+        /// 管理输入动作类型
         action: AdminInputAction,
+        /// 可选的上下文文本（例如新增别名时已录入的别名名）
         context_text: Option<String>,
+        /// 可选的上下文数值（例如聊天选择器的关联 token）
         context_i64: Option<i64>,
     },
 }
 
-/// 菜单输入草稿。
+/// 菜单输入草稿运行时结构体。
 #[derive(Debug, Clone)]
 pub(super) struct MenuInputDraft {
+    /// 当前所处的菜单输入阶段
     pub(super) step: MenuInputStep,
 }
 
 impl MenuInputDraft {
-    /// 构造等待源链接的草稿。
+    /// 构造等待源链接的初始草稿。
+    ///
+    /// # 参数
+    /// - `kind`: 流程类型
     pub(super) fn source_link(kind: MenuInputKind) -> Self {
         Self::new(MenuInputStep::SourceLink { kind })
     }
 
-    /// 当前草稿的简短标题，供首页继续输入按钮展示。
+    /// 当前草稿的简短标题，供首页“继续输入”快捷按钮展示。
     pub(super) fn continue_title(&self) -> &'static str {
         match &self.step {
             MenuInputStep::SourceLink { kind } => kind.source_title(),
@@ -585,21 +685,38 @@ impl MenuInputDraft {
     }
 
     /// 构造等待目标选择的草稿。
+    ///
+    /// # 参数
+    /// - `kind`: 流程类型
+    /// - `source_link`: 已经录入的源链接
     pub(super) fn target_choice(kind: MenuInputKind, source_link: String) -> Self {
         Self::new(MenuInputStep::TargetChoice { kind, source_link })
     }
 
-    /// 构造等待手动输入目标的草稿。
+    /// 构造等待手动文本输入目标的草稿。
+    ///
+    /// # 参数
+    /// - `kind`: 流程类型
+    /// - `source_link`: 已经录入的源链接
     pub(super) fn target_chat(kind: MenuInputKind, source_link: String) -> Self {
         Self::new(MenuInputStep::TargetChat { kind, source_link })
     }
 
     /// 构造等待 Telegram 原生共享聊天结果的草稿。
+    ///
+    /// # 参数
+    /// - `kind`: 流程类型
+    /// - `source_link`: 已经录入的源链接
     pub(super) fn chat_picker(kind: MenuInputKind, source_link: String) -> Self {
         Self::new(MenuInputStep::ChatPicker { kind, source_link })
     }
 
     /// 构造等待确认执行的草稿。
+    ///
+    /// # 参数
+    /// - `kind`: 流程类型
+    /// - `source_link`: 源链接
+    /// - `target_chat_id`: 目标聊天 ID
     pub(super) fn confirm(kind: MenuInputKind, source_link: String, target_chat_id: i64) -> Self {
         Self::new(MenuInputStep::Confirm {
             kind,
@@ -609,11 +726,19 @@ impl MenuInputDraft {
     }
 
     /// 构造等待任务编号的草稿。
+    ///
+    /// # 参数
+    /// - `action`: 任务控制动作
     pub(super) fn job_id(action: MenuJobAction) -> Self {
         Self::new(MenuInputStep::JobId { action })
     }
 
     /// 构造等待管理配置输入的草稿。
+    ///
+    /// # 参数
+    /// - `action`: 管理输入动作
+    /// - `context_text`: 可选上下文文本
+    /// - `context_i64`: 可选上下文数值
     pub(super) fn admin_input(
         action: AdminInputAction,
         context_text: Option<String>,
@@ -626,12 +751,15 @@ impl MenuInputDraft {
         })
     }
 
-    /// 每次写回草稿都刷新过期时间。
+    /// 内部构造方法，每次写回草稿都封装在内部。
     fn new(step: MenuInputStep) -> Self {
         Self { step }
     }
 
-    /// 转成数据库 ActiveModel。
+    /// 将运行时草稿转成数据库持久化的 `ActiveModel`，并刷新其过期时间 `expires_at`。
+    ///
+    /// # 参数
+    /// - `key`: 草稿隔离键 `(chat_id, sender_user_id)`
     fn into_active_model(self, key: DraftKey) -> db::menu_input_draft::ActiveModel {
         let now = now_utc8();
         let expires_at = now + chrono::Duration::seconds(input_ttl_seconds() as i64);
@@ -650,7 +778,10 @@ impl MenuInputDraft {
         }
     }
 
-    /// 从数据库行恢复草稿。
+    /// 从数据库持久化模型实例恢复内存中的草稿对象。
+    ///
+    /// # 参数
+    /// - `model`: 数据库读取出的 `Model`
     fn from_model(model: &db::menu_input_draft::Model) -> Option<Self> {
         let step = match model.step.as_str() {
             "source_link" => MenuInputStep::SourceLink {
@@ -687,17 +818,25 @@ impl MenuInputDraft {
     }
 }
 
-/// 持久化草稿时拆出的列值。
+/// 持久化草稿时拆出的数据库字段列集合。
 struct DraftFields {
+    /// 步骤标识字符串（如 "source_link", "confirm" 等）
     step: &'static str,
+    /// 输入流程类型编码字符串
     input_kind: Option<&'static str>,
+    /// 任务或管理动作编码字符串
     job_action: Option<&'static str>,
+    /// 源链接文本或管理上下文字符串
     source_link: Option<String>,
+    /// 目标聊天 ID 或数值上下文
     target_chat_id: Option<i64>,
 }
 
 impl DraftFields {
-    /// 从运行时状态拆成数据库列。
+    /// 从运行时阶段枚举拆分为平铺的数据库列值。
+    ///
+    /// # 参数
+    /// - `step`: 运行时阶段
     fn from_step(step: MenuInputStep) -> Self {
         match step {
             MenuInputStep::SourceLink { kind } => Self {
@@ -762,94 +901,135 @@ impl DraftFields {
     }
 }
 
-/// 取草稿的结果。
+/// 尝试获取草稿的结果枚举。
 #[derive(Debug, Clone)]
 pub(super) enum DraftTakeResult {
+    /// 当前不存在草稿
     None,
+    /// 存在有效的未过期草稿
     Active(MenuInputDraft),
+    /// 草稿已过期并已被清理
     Expired,
 }
 
-/// 目标选择上下文。
+/// 目标选择上下文结构体。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TargetContext {
+    /// 流程类型
     pub(super) kind: MenuInputKind,
+    /// 关联的源链接
     pub(super) source_link: String,
 }
 
-/// 目标选择按钮要推进到的下一步。
+/// 目标选择按钮触发的状态推进枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TargetDraftAdvance {
+    /// 返回到源链接输入阶段
     SourceLink,
+    /// 推进/返回到目标选择列表阶段
     TargetChoice,
+    /// 推进到等待手动文本输入目标阶段
     TargetChat,
+    /// 推进到等待原生聊天选择器阶段
     ChatPicker,
-    Confirm { target_chat_id: i64 },
+    /// 推进到确认阶段，并记录选定的目标聊天 ID
+    Confirm {
+        /// 目标聊天 ID
+        target_chat_id: i64,
+    },
 }
 
-/// 目标选择推进结果。
+/// 目标选择上下文推进结果枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TargetContextAdvanceResult {
+    /// 草稿不存在
     None,
+    /// 推进成功，返回目标上下文
     Active(TargetContext),
+    /// 草稿已过期
     Expired,
+    /// 当前草稿处于错误阶段，无法执行该推进
     WrongStep,
 }
 
 /// 原生聊天选择器命中的目标管理输入上下文。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct AdminInputContext {
+    /// 管理输入动作
     pub(super) action: AdminInputAction,
+    /// 暂存的上下文文本（例如别名）
     pub(super) context_text: Option<String>,
+    /// 暂存的上下文数值（例如 token）
     pub(super) context_i64: Option<i64>,
 }
 
-/// 原生聊天选择器消费目标管理草稿的结果。
+/// 原生聊天选择器消费目标管理草稿的结果枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum AdminInputContextTakeResult {
+    /// 草稿不存在
     None,
+    /// 成功消费，返回管理输入上下文
     Active(AdminInputContext),
+    /// 草稿已过期
     Expired,
+    /// 阶段不匹配或按钮 ID 不符合预期
     WrongStep,
 }
 
-/// 目标状态推进结果及 UI 清理要求。
+/// 目标状态推进结果及 UI 关联清理要求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TargetContextAdvanceOutcome {
+    /// 目标上下文推进结果
     pub(super) result: TargetContextAdvanceResult,
+    /// 是否需要移除 Telegram 原生 Reply Keyboard
     pub(super) remove_reply_keyboard: bool,
 }
 
-/// 确认执行上下文。
+/// 确认执行上下文结构体。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ConfirmContext {
+    /// 流程类型
     pub(super) kind: MenuInputKind,
+    /// 源链接
     pub(super) source_link: String,
+    /// 目标聊天 ID
     pub(super) target_chat_id: i64,
 }
 
-/// 确认按钮消费结果。
+/// 确认按钮消费结果枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ConfirmContextTakeResult {
+    /// 不存在确认草稿
     None,
+    /// 成功消费，返回确认上下文
     Active(ConfirmContext),
+    /// 草稿已超时过期
     Expired,
+    /// 并非处于 Confirm 阶段
     WrongStep,
 }
 
-/// 取消草稿后的 UI 清理信息。
+/// 取消草稿后的 UI 清理信息结构体。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::tgbot::transfer::command::menu) struct MenuInputCancelResult {
+    /// 是否确实移除了草稿
     pub(in crate::tgbot::transfer::command::menu) removed: bool,
+    /// 是否需要通知 UI 移除 Telegram 原生 Reply Keyboard
     pub(in crate::tgbot::transfer::command::menu) remove_reply_keyboard: bool,
 }
 
-/// 开始一个菜单输入流程。
+/// 开始一个全新的菜单输入流程。
+///
+/// # 参数
+/// - `chat_id`: 所在聊天会话 ID
+/// - `user_id`: 发起用户 ID
+/// - `kind`: 菜单输入流程类型
 pub(in crate::tgbot::transfer::command::menu) async fn start_menu_input(
     chat_id: i64,
     user_id: i64,
     kind: MenuInputKind,
 ) -> anyhow::Result<()> {
+    // 写入等待源链接的草稿
     put_draft((chat_id, user_id), MenuInputDraft::source_link(kind)).await?;
     tracing::debug!(
         chat_id,
@@ -861,6 +1041,13 @@ pub(in crate::tgbot::transfer::command::menu) async fn start_menu_input(
 }
 
 /// 取消一个菜单输入流程。
+///
+/// # 参数
+/// - `chat_id`: 聊天会话 ID
+/// - `user_id`: 用户 ID
+///
+/// # 返回
+/// 若成功删除了已有草稿返回 `true`，否则返回 `false`
 pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input(
     chat_id: i64,
     user_id: i64,
@@ -871,15 +1058,23 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input(
 }
 
 /// 原子取消菜单输入，并返回是否需要清理原生 reply keyboard。
+///
+/// # 参数
+/// - `chat_id`: 聊天会话 ID
+/// - `user_id`: 用户 ID
 pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input_with_result(
     chat_id: i64,
     user_id: i64,
 ) -> anyhow::Result<MenuInputCancelResult> {
+    // 获取进程内草稿互斥锁
     let _guard = acquire_draft_key_guard((chat_id, user_id)).await;
+    // 清理过期草稿
     purge_expired().await?;
+    // 查询数据库中当前记录
     let Some(removed) = find_draft_model(chat_id, user_id).await? else {
         return Ok(MenuInputCancelResult::default());
     };
+    // 判断草稿是否挂载了原生选聊键盘
     let remove_reply_keyboard = MenuInputDraft::from_model(&removed).is_some_and(|draft| {
         matches!(&draft.step, MenuInputStep::ChatPicker { .. })
             || matches!(
@@ -891,6 +1086,7 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input_with_re
                 } if admin_chat_request_button_ids(*action, *context_i64).is_some()
             )
     });
+    // 乐观并发删除
     if !delete_draft_if_current(&removed).await? {
         tracing::debug!(chat_id, user_id, "menu input draft cancel lost write race");
         return Ok(MenuInputCancelResult::default());
@@ -903,17 +1099,24 @@ pub(in crate::tgbot::transfer::command::menu) async fn cancel_menu_input_with_re
 }
 
 /// 取出当前草稿；若草稿过期，则清理后返回过期状态。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
 pub(super) async fn take_current_draft(key: DraftKey) -> anyhow::Result<DraftTakeResult> {
+    // 获取草稿互斥锁
     let _guard = acquire_draft_key_guard(key).await;
     purge_expired().await?;
+    // 查询草稿模型
     let Some(model) = find_draft_model(key.0, key.1).await? else {
         return Ok(DraftTakeResult::None);
     };
+    // 校验是否已过期
     if model.expires_at <= now_utc8() {
         delete_draft(key.0, key.1).await?;
         purge_expired().await?;
         return Ok(DraftTakeResult::Expired);
     }
+    // 反序列化草稿
     let Some(draft) = MenuInputDraft::from_model(&model) else {
         tracing::warn!(
             chat_id = key.0,
@@ -922,6 +1125,7 @@ pub(super) async fn take_current_draft(key: DraftKey) -> anyhow::Result<DraftTak
         );
         return Ok(DraftTakeResult::None);
     };
+    // 消费并删除当前草稿行（CAS 防并发）
     if !delete_draft_if_current(&model).await? {
         tracing::debug!(
             chat_id = key.0,
@@ -938,6 +1142,10 @@ pub(super) async fn take_current_draft(key: DraftKey) -> anyhow::Result<DraftTak
 /// callback 连点时，如果调用方自己 `take_current_draft` 后再 `put_draft`，中间会有短暂空窗；
 /// 另一个 callback 可能误判为“没有待输入”。这里把读取和写回收敛到状态层，保证同进程内
 /// 同一个 chat + user 的目标选择推进串行完成。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
+/// - `advance`: 目标草稿推进类型
 #[cfg(test)]
 pub(super) async fn advance_target_context(
     key: DraftKey,
@@ -949,18 +1157,25 @@ pub(super) async fn advance_target_context(
 }
 
 /// 在原子推进目标状态的同时，报告是否离开了原生聊天选择阶段。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
+/// - `advance`: 目标推进动作
 pub(super) async fn advance_target_context_with_cleanup(
     key: DraftKey,
     advance: TargetDraftAdvance,
 ) -> anyhow::Result<TargetContextAdvanceOutcome> {
+    // 获取草稿互斥保护
     let _guard = acquire_draft_key_guard(key).await;
     purge_expired().await?;
+    // 读取草稿
     let Some(model) = find_draft_model(key.0, key.1).await? else {
         return Ok(TargetContextAdvanceOutcome {
             result: TargetContextAdvanceResult::None,
             remove_reply_keyboard: false,
         });
     };
+    // 过期检查
     if model.expires_at <= now_utc8() {
         delete_draft(key.0, key.1).await?;
         purge_expired().await?;
@@ -982,8 +1197,10 @@ pub(super) async fn advance_target_context_with_cleanup(
             remove_reply_keyboard: false,
         });
     };
+    // 是否离开 ChatPicker 阶段，离开时标记需要清理原生底部键盘
     let remove_reply_keyboard = matches!(&draft.step, MenuInputStep::ChatPicker { .. })
         && !matches!(advance, TargetDraftAdvance::ChatPicker);
+    // 从当前草稿提取基础上下文 (kind, source_link)
     let Some((kind, source_link)) = target_context_from_step(&draft.step) else {
         return Ok(TargetContextAdvanceOutcome {
             result: TargetContextAdvanceResult::WrongStep,
@@ -991,6 +1208,7 @@ pub(super) async fn advance_target_context_with_cleanup(
         });
     };
 
+    // 构造下一个阶段的草稿对象
     let next = match advance {
         TargetDraftAdvance::SourceLink => MenuInputDraft::source_link(kind),
         TargetDraftAdvance::TargetChoice => {
@@ -1002,6 +1220,7 @@ pub(super) async fn advance_target_context_with_cleanup(
             MenuInputDraft::confirm(kind, source_link.clone(), target_chat_id)
         }
     };
+    // 乐观并发更新草稿记录
     if !update_draft_if_current(&model, next).await? {
         tracing::debug!(
             chat_id = key.0,
@@ -1020,15 +1239,28 @@ pub(super) async fn advance_target_context_with_cleanup(
 }
 
 /// 仅把等待原生选聊的草稿推进到确认页。
+///
+/// 当用户通过 Telegram 原生选择器选定了群组或频道后，系统通过此函数
+/// 将阶段从 `ChatPicker` 推进到 `Confirm` 阶段，并记录解析后的目标聊天 ID。
+///
+/// # 参数
+/// - `key`: 草稿会话隔离键 `(chat_id, user_id)`
+/// - `target_chat_id`: 用户选中的目标聊天 ID
+///
+/// # 返回
+/// 成功推进时返回 `TargetContextAdvanceResult::Active`，若状态已过期或阶段不对则返回对应错误状态
 pub(super) async fn advance_shared_target_context(
     key: DraftKey,
     target_chat_id: i64,
 ) -> anyhow::Result<TargetContextAdvanceResult> {
+    // 获取草稿互斥保护
     let _guard = acquire_draft_key_guard(key).await;
     purge_expired().await?;
+    // 读取草稿行
     let Some(model) = find_draft_model(key.0, key.1).await? else {
         return Ok(TargetContextAdvanceResult::None);
     };
+    // 校验过期时间
     if model.expires_at <= now_utc8() {
         delete_draft(key.0, key.1).await?;
         purge_expired().await?;
@@ -1039,9 +1271,11 @@ pub(super) async fn advance_shared_target_context(
         delete_draft(key.0, key.1).await?;
         return Ok(TargetContextAdvanceResult::None);
     };
+    // 必须当前处于 ChatPicker 步骤
     let MenuInputStep::ChatPicker { kind, source_link } = draft.step else {
         return Ok(TargetContextAdvanceResult::WrongStep);
     };
+    // 推进并更新到 Confirm 步骤
     if !update_draft_if_current(
         &model,
         MenuInputDraft::confirm(kind, source_link.clone(), target_chat_id),
@@ -1061,15 +1295,24 @@ pub(super) async fn advance_shared_target_context(
 ///
 /// 只允许默认目标和目标别名动作；其他管理输入保持原状，避免共享聊天消息
 /// 意外打断数值配置等 ForceReply 流程。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
+/// - `button_id`: Telegram 返回的原生选择按钮 ID
+///
+/// # 返回
+/// 成功消费时返回 `AdminInputContextTakeResult::Active`，并将草稿从数据库中删除
 pub(super) async fn take_shared_admin_input_context(
     key: DraftKey,
     button_id: i32,
 ) -> anyhow::Result<AdminInputContextTakeResult> {
+    // 获取互斥锁保护
     let _guard = acquire_draft_key_guard(key).await;
     purge_expired().await?;
     let Some(model) = find_draft_model(key.0, key.1).await? else {
         return Ok(AdminInputContextTakeResult::None);
     };
+    // 校验是否超时
     if model.expires_at <= now_utc8() {
         delete_draft(key.0, key.1).await?;
         purge_expired().await?;
@@ -1085,6 +1328,7 @@ pub(super) async fn take_shared_admin_input_context(
         delete_draft(key.0, key.1).await?;
         return Ok(AdminInputContextTakeResult::None);
     };
+    // 提取管理动作及上下文
     let MenuInputStep::AdminInput {
         action,
         context_text,
@@ -1093,17 +1337,21 @@ pub(super) async fn take_shared_admin_input_context(
     else {
         return Ok(AdminInputContextTakeResult::WrongStep);
     };
+    // 校验该动作是否允许使用原生聊天选择器
     if !action.uses_chat_picker() {
         return Ok(AdminInputContextTakeResult::WrongStep);
     }
+    // 获取对应的按钮 ID 范围
     let Some((group_button_id, channel_button_id)) =
         admin_chat_request_button_ids(action, context_i64)
     else {
         return Ok(AdminInputContextTakeResult::WrongStep);
     };
+    // 校验按钮 ID 是否匹配当前动作
     if button_id != group_button_id && button_id != channel_button_id {
         return Ok(AdminInputContextTakeResult::WrongStep);
     }
+    // 乐观并发消费并删除草稿
     if !delete_draft_if_current(&model).await? {
         tracing::debug!(
             chat_id = key.0,
@@ -1125,6 +1373,12 @@ pub(super) async fn take_shared_admin_input_context(
 ///
 /// 只有处于 Confirm 阶段才删除草稿并返回可执行上下文；其它阶段保持原草稿不变，
 /// 避免用户点错旧按钮后丢失当前输入流程。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
+///
+/// # 返回
+/// 成功获取并消费返回 `ConfirmContextTakeResult::Active`
 pub(super) async fn take_confirm_context(
     key: DraftKey,
 ) -> anyhow::Result<ConfirmContextTakeResult> {
@@ -1157,6 +1411,7 @@ pub(super) async fn take_confirm_context(
         return Ok(ConfirmContextTakeResult::WrongStep);
     };
 
+    // 删除当前生效的确认草稿
     if !delete_draft_if_current(&model).await? {
         tracing::debug!(
             chat_id = key.0,
@@ -1175,6 +1430,9 @@ pub(super) async fn take_confirm_context(
 /// 读取当前草稿但不消费。
 ///
 /// 首页“继续输入”只需要判断是否存在草稿；真正消费仍发生在用户回复文本或确认按钮时。
+///
+/// # 参数
+/// - `key`: 草稿隔离键 `(chat_id, user_id)`
 pub(super) async fn peek_current_draft(key: DraftKey) -> anyhow::Result<DraftTakeResult> {
     purge_expired().await?;
     let Some(model) = find_draft_model(key.0, key.1).await? else {
@@ -1197,13 +1455,22 @@ pub(super) async fn peek_current_draft(key: DraftKey) -> anyhow::Result<DraftTak
     Ok(DraftTakeResult::Active(draft))
 }
 
-/// 写回草稿。
+/// 写回草稿（加锁保证并发安全）。
+///
+/// # 参数
+/// - `key`: 草稿隔离键
+/// - `draft`: 待写入的草稿对象
 pub(super) async fn put_draft(key: DraftKey, draft: MenuInputDraft) -> anyhow::Result<()> {
     let _guard = acquire_draft_key_guard(key).await;
     put_draft_unlocked(key, draft).await
 }
 
 /// 写入目标选择草稿。
+///
+/// # 参数
+/// - `key`: 草稿隔离键
+/// - `kind`: 流程类型
+/// - `source_link`: 已经录入的源链接
 pub(super) async fn put_target_choice_draft(
     key: DraftKey,
     kind: MenuInputKind,
@@ -1212,7 +1479,13 @@ pub(super) async fn put_target_choice_draft(
     put_draft(key, MenuInputDraft::target_choice(kind, source_link)).await
 }
 
-/// 写入确认草稿。
+/// 写入确认执行草稿。
+///
+/// # 参数
+/// - `key`: 草稿隔离键
+/// - `kind`: 流程类型
+/// - `source_link`: 源链接
+/// - `target_chat_id`: 目标聊天 ID
 pub(super) async fn put_confirm_draft(
     key: DraftKey,
     kind: MenuInputKind,
@@ -1226,7 +1499,10 @@ pub(super) async fn put_confirm_draft(
     .await
 }
 
-/// 从输入阶段提取目标选择上下文。
+/// 从输入阶段提取目标选择上下文 `(MenuInputKind, String)`。
+///
+/// # 参数
+/// - `step`: 菜单输入阶段
 pub(super) fn target_context_from_step(step: &MenuInputStep) -> Option<(MenuInputKind, String)> {
     match step {
         MenuInputStep::TargetChoice { kind, source_link }
@@ -1241,7 +1517,7 @@ pub(super) fn target_context_from_step(step: &MenuInputStep) -> Option<(MenuInpu
     }
 }
 
-/// 统一生成 UTC+8 时间戳。
+/// 统一生成当前 UTC+8 时间戳。
 fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
     let Some(offset) = chrono::FixedOffset::east_opt(8 * 3600) else {
         tracing::error!("failed to build menu input UTC+8 fixed offset, fallback to UTC");
@@ -1250,7 +1526,7 @@ fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
     chrono::Utc::now().with_timezone(&offset)
 }
 
-/// 菜单输入草稿超时时间（秒）。
+/// 获取菜单输入草稿超时时间（秒）。
 fn input_ttl_seconds() -> u64 {
     // 草稿 TTL 是状态模块自己的基础规则；这里集中读取一次运行态配置，
     // 比把 `AppContext` 继续透传到所有状态读写 API 更能保持状态层接口简洁。
@@ -1266,28 +1542,34 @@ mod tests {
 
     /// 测试前准备业务库 schema，并串行化 DB 测试。
     async fn prepare_schema() -> anyhow::Result<tokio::sync::MutexGuard<'static, ()>> {
+        // 获取测试数据库独占锁
         let guard = crate::db::TEST_DB_LOCK.lock().await;
         let db = crate::db::get_db().await?;
+        // 保证最新表结构存在
         crate::db::ensure_test_schema_current(db).await?;
         Ok(guard)
     }
 
-    // 草稿应按 chat + user 隔离，避免不同会话互相覆盖输入。
+    /// 测试用例：草稿应按 chat + user 隔离，避免不同会话互相覆盖输入
     #[tokio::test]
     async fn test_start_and_cancel_menu_input() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
+        // 启动 (900_001, 900_002) 的转存输入流程
         start_menu_input(900_001, 900_002, MenuInputKind::Transfer).await?;
 
+        // 第一次取消应成功移除草稿，返回 true
         assert!(cancel_menu_input(900_001, 900_002).await?);
+        // 第二次取消因草稿已被移除，返回 false
         assert!(!cancel_menu_input(900_001, 900_002).await?);
         Ok(())
     }
 
-    // 取消原生聊天选择阶段时，状态层必须通知 UI 移除 reply keyboard。
+    /// 测试用例：取消原生聊天选择阶段时，状态层必须通知 UI 移除 reply keyboard
     #[tokio::test]
     async fn test_cancel_menu_input_reports_chat_picker_keyboard() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
         let key = (900_049, 900_050);
+        // 写入聊天选择器草稿
         put_draft(
             key,
             MenuInputDraft::chat_picker(MenuInputKind::Transfer, "https://t.me/c/1/12".to_owned()),
@@ -1296,6 +1578,7 @@ mod tests {
 
         let result = cancel_menu_input_with_result(key.0, key.1).await?;
 
+        // 验证成功删除且标记需要移除底部回复键盘
         assert!(result.removed);
         assert!(result.remove_reply_keyboard);
 
@@ -1313,7 +1596,7 @@ mod tests {
         Ok(())
     }
 
-    // 草稿持久化后应能恢复为运行时状态；取出后即删除，避免同一条回复被重复消费。
+    /// 测试用例：草稿持久化后应能恢复为运行时状态；取出后即删除，避免同一条回复被重复消费
     #[tokio::test]
     async fn test_take_current_draft_reads_persisted_row_once() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1324,6 +1607,7 @@ mod tests {
         )
         .await?;
 
+        // 首次提取应返回对应步骤草稿
         let draft = take_current_draft(key).await?;
         assert!(matches!(
             draft,
@@ -1331,6 +1615,7 @@ mod tests {
                 step: MenuInputStep::TargetChoice { .. }
             })
         ));
+        // 第二次提取应返回 None（已被删除）
         assert!(matches!(
             take_current_draft(key).await?,
             DraftTakeResult::None
@@ -1338,13 +1623,14 @@ mod tests {
         Ok(())
     }
 
-    // 首页“继续输入”只读取草稿摘要，不应消费草稿；真正消费必须等用户回复或确认按钮。
+    /// 测试用例：首页“继续输入”只读取草稿摘要，不应消费草稿；真正消费必须等用户回复或确认按钮
     #[tokio::test]
     async fn test_peek_current_draft_does_not_consume_row() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
         let key = (900_005, 900_006);
         put_draft(key, MenuInputDraft::job_id(MenuJobAction::Pause)).await?;
 
+        // 预检读取不应消耗草稿
         let peeked = peek_current_draft(key).await?;
         assert!(matches!(
             peeked,
@@ -1355,6 +1641,7 @@ mod tests {
             })
         ));
 
+        // 后续正常提取依然能够拿到草稿
         let taken = take_current_draft(key).await?;
         assert!(matches!(
             taken,
@@ -1364,6 +1651,7 @@ mod tests {
                 }
             })
         ));
+        // 最终数据库中被清理
         assert!(matches!(
             take_current_draft(key).await?,
             DraftTakeResult::None
@@ -1371,12 +1659,13 @@ mod tests {
         Ok(())
     }
 
-    // 并发按钮点击会多次写回同一个 chat + user 草稿；写入必须是 upsert，不能暴露主键冲突。
+    /// 测试用例：并发按钮点击会多次写回同一个 chat + user 草稿；写入必须是 upsert，不能暴露主键冲突
     #[tokio::test]
     async fn test_put_draft_concurrent_writes_keep_single_active_row() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
         let key = (900_021, 900_022);
 
+        // 并发执行两个不同步骤草稿的写入操作
         let first = tokio::spawn(async move {
             put_draft(key, MenuInputDraft::job_id(MenuJobAction::Pause)).await
         });
@@ -1394,6 +1683,7 @@ mod tests {
         first.await??;
         second.await??;
 
+        // 确保最终数据库中只有单条激活草稿记录，且能正常被消费一次
         let active = find_draft_model(key.0, key.1).await?;
         assert!(active.is_some());
         assert!(matches!(
@@ -1407,13 +1697,14 @@ mod tests {
         Ok(())
     }
 
-    // 并发消费同一份草稿时，只允许一个调用拿到 Active，另一个必须看到 None。
+    /// 测试用例：并发消费同一份草稿时，只允许一个调用拿到 Active，另一个必须看到 None
     #[tokio::test]
     async fn test_take_current_draft_concurrent_reads_consume_once() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
         let key = (900_023, 900_024);
         put_draft(key, MenuInputDraft::job_id(MenuJobAction::Stop)).await?;
 
+        // 两个协程并发尝试消费同一份草稿
         let first = tokio::spawn(async move { take_current_draft(key).await });
         let second = tokio::spawn(async move { take_current_draft(key).await });
 
@@ -1424,6 +1715,7 @@ mod tests {
             .filter(|result| matches!(result, DraftTakeResult::Active(_)))
             .count();
 
+        // 必须恰好只有 1 个成功获取到 Active 结果
         assert_eq!(active_count, 1);
         assert!(matches!(
             take_current_draft(key).await?,
@@ -1432,7 +1724,7 @@ mod tests {
         Ok(())
     }
 
-    // 目标选择按钮的推进必须在状态层原子完成，避免按钮连点时短暂出现“没有草稿”。
+    /// 测试用例：目标选择按钮的推进必须在状态层原子完成，避免按钮连点时短暂出现“没有草稿”
     #[tokio::test]
     async fn test_advance_target_context_concurrent_writes_keep_valid_confirm() -> anyhow::Result<()>
     {
@@ -1444,6 +1736,7 @@ mod tests {
         )
         .await?;
 
+        // 并发执行目标选择推进
         let first = tokio::spawn(async move {
             advance_target_context(
                 key,
@@ -1472,6 +1765,7 @@ mod tests {
             TargetContextAdvanceResult::Active(_)
         ));
 
+        // 最终状态必须为合法的 Confirm 状态
         let confirm = take_confirm_context(key).await?;
         assert!(matches!(
             confirm,
@@ -1483,7 +1777,7 @@ mod tests {
         Ok(())
     }
 
-    // “执行”按钮连点时只有一个调用能消费确认草稿，另一个必须看到 None。
+    /// 测试用例：“执行”按钮连点时只有一个调用能消费确认草稿，另一个必须看到 None
     #[tokio::test]
     async fn test_take_confirm_context_concurrent_reads_consume_once() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1498,6 +1792,7 @@ mod tests {
         )
         .await?;
 
+        // 模拟用户快速双击“执行”按钮
         let first = tokio::spawn(async move { take_confirm_context(key).await });
         let second = tokio::spawn(async move { take_confirm_context(key).await });
 
@@ -1508,6 +1803,7 @@ mod tests {
             .filter(|result| matches!(result, ConfirmContextTakeResult::Active(_)))
             .count();
 
+        // 仅有一个调用成功取出执行上下文
         assert_eq!(active_count, 1);
         assert!(matches!(
             take_confirm_context(key).await?,
@@ -1516,7 +1812,7 @@ mod tests {
         Ok(())
     }
 
-    // 条件删除必须拒绝旧快照，避免多进程下旧 worker 删除已经被新输入覆盖的草稿。
+    /// 测试用例：条件删除必须拒绝旧快照，避免多进程下旧 worker 删除已经被新输入覆盖的草稿
     #[tokio::test]
     async fn test_delete_draft_if_current_rejects_stale_snapshot() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1524,8 +1820,10 @@ mod tests {
         put_draft(key, MenuInputDraft::job_id(MenuJobAction::Pause)).await?;
         let stale = find_draft_model(key.0, key.1).await?.expect("draft exists");
 
+        // 覆盖写入新的草稿
         put_draft(key, MenuInputDraft::job_id(MenuJobAction::Resume)).await?;
 
+        // 使用陈旧快照进行条件删除必须失败
         assert!(!delete_draft_if_current(&stale).await?);
         let current = take_current_draft(key).await?;
         assert!(matches!(
@@ -1539,7 +1837,7 @@ mod tests {
         Ok(())
     }
 
-    // 条件更新必须拒绝旧快照，避免旧按钮覆盖较新的输入阶段。
+    /// 测试用例：条件更新必须拒绝旧快照，避免旧按钮覆盖较新的输入阶段
     #[tokio::test]
     async fn test_update_draft_if_current_rejects_stale_snapshot() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1551,12 +1849,14 @@ mod tests {
         .await?;
         let stale = find_draft_model(key.0, key.1).await?.expect("draft exists");
 
+        // 推进到新步骤
         put_draft(
             key,
             MenuInputDraft::target_chat(MenuInputKind::Transfer, "https://t.me/c/1/2".to_owned()),
         )
         .await?;
 
+        // 尝试用旧快照更新必须返回 false
         assert!(
             !update_draft_if_current(
                 &stale,
@@ -1578,12 +1878,13 @@ mod tests {
         Ok(())
     }
 
-    // 多步草稿应能按“源链接 -> 目标选择 -> 确认 -> 消费确认”完整推进，避免状态机只在局部测试里成立。
+    /// 测试用例：多步草稿应能按“源链接 -> 目标选择 -> 确认 -> 消费确认”完整推进，避免状态机只在局部测试里成立
     #[tokio::test]
     async fn test_multi_step_draft_flow_roundtrip() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
         let key = (900_041, 900_042);
 
+        // 1. 写入源链接草稿
         put_draft(key, MenuInputDraft::source_link(MenuInputKind::Transfer)).await?;
         assert!(matches!(
             peek_current_draft(key).await?,
@@ -1594,6 +1895,7 @@ mod tests {
             })
         ));
 
+        // 2. 推进到目标选择
         put_target_choice_draft(
             key,
             MenuInputKind::Transfer,
@@ -1614,6 +1916,7 @@ mod tests {
             })
         ));
 
+        // 3. 消费确认草稿
         assert!(matches!(
             take_confirm_context(key).await?,
             ConfirmContextTakeResult::Active(ConfirmContext {
@@ -1622,6 +1925,7 @@ mod tests {
                 ..
             })
         ));
+        // 4. 确认后草稿已彻底移除
         assert!(matches!(
             peek_current_draft(key).await?,
             DraftTakeResult::None
@@ -1629,7 +1933,7 @@ mod tests {
         Ok(())
     }
 
-    // 手动输入目标后返回选择页时，必须保留输入类型和来源链接。
+    /// 测试用例：手动输入目标后返回选择页时，必须保留输入类型和来源链接
     #[tokio::test]
     async fn test_target_chat_can_return_to_target_choice() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1641,6 +1945,7 @@ mod tests {
         )
         .await?;
 
+        // 执行回退操作并验证提取出的源链接不变
         assert_eq!(
             advance_target_context(key, TargetDraftAdvance::TargetChoice).await?,
             TargetContextAdvanceResult::Active(TargetContext {
@@ -1660,6 +1965,7 @@ mod tests {
         Ok(())
     }
 
+    /// 测试用例：原生共享聊天结果应将 ChatPicker 阶段推进到 Confirm 阶段
     #[tokio::test]
     async fn test_shared_chat_advances_picker_to_confirm() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1667,6 +1973,7 @@ mod tests {
         let source_link = "https://t.me/c/1/11";
         put_target_choice_draft(key, MenuInputKind::Transfer, source_link.to_owned()).await?;
 
+        // 推进到 ChatPicker 步骤
         assert!(matches!(
             advance_target_context(key, TargetDraftAdvance::ChatPicker).await?,
             TargetContextAdvanceResult::Active(_)
@@ -1678,6 +1985,7 @@ mod tests {
             })
         ));
 
+        // 模拟收到原生选择聊天消息
         assert_eq!(
             advance_shared_target_context(key, -100).await?,
             TargetContextAdvanceResult::Active(TargetContext {
@@ -1685,6 +1993,7 @@ mod tests {
                 source_link: source_link.to_owned(),
             })
         );
+        // 校验已成功转为 Confirm 步骤
         assert!(matches!(
             peek_current_draft(key).await?,
             DraftTakeResult::Active(MenuInputDraft {
@@ -1697,6 +2006,7 @@ mod tests {
         Ok(())
     }
 
+    /// 测试用例：原生共享聊天正确消费目标管理草稿并附带别名上下文
     #[tokio::test]
     async fn test_shared_chat_consumes_target_admin_input_with_alias_context() -> anyhow::Result<()>
     {
@@ -1716,6 +2026,7 @@ mod tests {
             admin_chat_request_button_ids(AdminInputAction::TargetsSetAlias, Some(picker_token))
                 .expect("targets alias should support chat picker");
 
+        // 错误按钮 ID 应当被拒绝，状态不发生改变
         assert_eq!(
             take_shared_admin_input_context(key, group_button_id + 100).await?,
             AdminInputContextTakeResult::WrongStep
@@ -1725,6 +2036,7 @@ mod tests {
             DraftTakeResult::Active(_)
         ));
 
+        // 正确按钮 ID 成功消费并取出上下文
         assert_eq!(
             take_shared_admin_input_context(key, group_button_id).await?,
             AdminInputContextTakeResult::Active(AdminInputContext {
@@ -1740,6 +2052,7 @@ mod tests {
         Ok(())
     }
 
+    /// 测试用例：非目标管理动作（例如并发数设置）不应被原生选聊消息消费
     #[tokio::test]
     async fn test_shared_chat_does_not_consume_non_target_admin_input() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1750,6 +2063,7 @@ mod tests {
         )
         .await?;
 
+        // 尝试消费数值配置草稿应返回 WrongStep
         assert_eq!(
             take_shared_admin_input_context(key, 10_000_000).await?,
             AdminInputContextTakeResult::WrongStep
@@ -1766,7 +2080,7 @@ mod tests {
         Ok(())
     }
 
-    // 从原生聊天选择器返回目标页时，状态推进必须要求 UI 移除旧 reply keyboard。
+    /// 测试用例：从原生聊天选择器返回目标页时，状态推进必须要求 UI 移除旧 reply keyboard
     #[tokio::test]
     async fn test_target_advance_reports_leaving_chat_picker() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1777,6 +2091,7 @@ mod tests {
         )
         .await?;
 
+        // 回退到 TargetChoice 步骤
         let outcome =
             advance_target_context_with_cleanup(key, TargetDraftAdvance::TargetChoice).await?;
 
@@ -1784,11 +2099,12 @@ mod tests {
             outcome.result,
             TargetContextAdvanceResult::Active(_)
         ));
+        // 校验要求移除原生回复键盘
         assert!(outcome.remove_reply_keyboard);
         Ok(())
     }
 
-    // 确认页返回来源输入时必须保留流程类型，并清除旧来源和目标上下文。
+    /// 测试用例：确认页返回来源输入时必须保留流程类型，并清除旧来源和目标上下文
     #[tokio::test]
     async fn test_confirm_can_return_to_source_input() -> anyhow::Result<()> {
         let _guard = prepare_schema().await?;
@@ -1801,6 +2117,7 @@ mod tests {
         )
         .await?;
 
+        // 回退到 SourceLink 步骤
         assert!(matches!(
             advance_target_context(key, TargetDraftAdvance::SourceLink).await?,
             TargetContextAdvanceResult::Active(TargetContext {
@@ -1819,7 +2136,7 @@ mod tests {
         Ok(())
     }
 
-    // 不同输入流程应使用对应的长命令，最终复用已有命令入口。
+    /// 测试用例：不同输入流程应使用对应的长命令，最终复用已有命令入口
     #[test]
     fn test_menu_input_kind_command_name() {
         assert_eq!(MenuInputKind::Transfer.command_name(), "/transfer");
@@ -1828,7 +2145,7 @@ mod tests {
         assert_eq!(MenuInputKind::LookupDefault.command_name(), "/lookup");
     }
 
-    // 快速流程只输入一次来源；指定目标流程仍保留来源、目标、确认三步。
+    /// 测试用例：快速流程只输入一次来源；指定目标流程仍保留来源、目标、确认三步
     #[test]
     fn test_menu_input_kind_source_step_label() {
         assert_eq!(MenuInputKind::Transfer.source_step_label(), "1/3");
@@ -1837,7 +2154,7 @@ mod tests {
         assert_eq!(MenuInputKind::LookupDefault.source_step_label(), "1/1");
     }
 
-    // 菜单任务动作应稳定映射到 `/job` 的公开长参数，避免交互入口和命令入口语义分叉。
+    /// 测试用例：菜单任务动作应稳定映射到 `/job` 的公开长参数，避免交互入口和命令入口语义分叉
     #[test]
     fn test_menu_job_action_command_action() {
         assert_eq!(MenuJobAction::Status.command_action(), "status");
@@ -1846,6 +2163,7 @@ mod tests {
         assert_eq!(MenuJobAction::Stop.command_action(), "stop");
     }
 
+    /// 测试用例：管理输入动作提示元数据格式验证
     #[test]
     fn test_admin_input_action_prompt_meta() {
         assert!(
@@ -1859,6 +2177,7 @@ mod tests {
         );
     }
 
+    /// 测试用例：管理输入修改别名时包含上下文 alias 提示
     #[test]
     fn test_admin_input_prompt_meta_uses_targets_context() {
         let alias =
@@ -1868,6 +2187,7 @@ mod tests {
         assert_eq!(alias.title, "修改目标别名");
     }
 
+    /// 测试用例：所有管理输入动作均能正常序列化反序列化，且标题、说明、占位符均非空
     #[test]
     fn test_admin_input_action_all_roundtrip_and_prompt_meta() {
         for action in AdminInputAction::ALL {
@@ -1895,7 +2215,7 @@ mod tests {
         }
     }
 
-    // 上次目标只是交互捷径，按 chat + user 隔离，避免不同会话互相覆盖。
+    /// 测试用例：上次目标只是交互捷径，按 chat + user 隔离，避免不同会话互相覆盖
     #[test]
     fn test_last_target_is_isolated_by_chat_and_user() {
         remember_last_target(10, 20, -100);

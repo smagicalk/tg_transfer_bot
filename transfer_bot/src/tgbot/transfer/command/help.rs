@@ -38,29 +38,33 @@ pub(super) fn build_help_menu_topic_rows() -> Vec<Vec<tdlib_rs::types::InlineKey
     build_help_topic_navigation_rows()
 }
 
-/// `/help` 命令入口。
-/// 默认返回命令目录；带命令名时返回该命令的详细帮助。
+/// `/help` 命令入口函数。
+///
+/// 默认无参数时返回命令总目录；带命令名时返回该特定命令的详细帮助卡片。
 pub async fn help_command(
     text: Vec<&str>,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 根据命令参数（第 2 项）构建帮助正文和键盘按钮
     let (help_text, rows) = build_help_page(text.get(1).copied())?;
     let mut panel = send::ReplyPanel::card(help_text);
     for row in rows {
         panel = panel.row(row);
     }
+    // 发送卡片到目标会话
     panel.send(actor.request_chat_id, client_id).await
 }
 
-/// `/help` inline keyboard 回调入口。
+/// `/help` inline keyboard 回调统一入口。
 ///
-/// help 页只做“原地切换文案”，不会修改任务状态，所以适合使用 callback。
+/// help 页只做“原地切换文案”或“弹出独立卡片”，不会修改任务状态，适合通过 callback 驱动。
 pub async fn help_callback_query(
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     _actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 提取回调数据
     let payload = match update.payload {
         tdlib_rs::enums::CallbackQueryPayload::Data(data) => data.data,
         _ => {
@@ -69,6 +73,7 @@ pub async fn help_callback_query(
         }
     };
 
+    // 解析出目标 topic 以及是否发送新卡片
     let (topic, send_new_message) =
         if let Some(topic) = keyboard::parse_help_message_callback_data(&payload) {
             (topic, true)
@@ -79,6 +84,7 @@ pub async fn help_callback_query(
             return Ok(());
         };
 
+    // 应答客户端浮窗提示
     send::answer_callback_query(
         update.id,
         Some(if send_new_message {
@@ -89,19 +95,23 @@ pub async fn help_callback_query(
         client_id,
     )
     .await?;
+    // 构建对应的帮助页面
     let (text, rows) = match build_help_page(topic) {
         Ok(page) => page,
         Err(err) => {
+            // 解析失败发送错误提示卡片
             send_help_callback_error(update.chat_id, client_id, &err).await?;
             return Err(err);
         }
     };
+    // 若要求发送新独立卡片（例如从进度卡片上点击“查看命令”）
     if send_new_message {
         return send::ReplyPanel::card(text)
             .rows(rows)
             .send(update.chat_id, client_id)
             .await;
     }
+    // 否则在原卡片上就地更新编辑
     let (text, keyboard) = send::ReplyPanel::card(text).rows(rows).into_card_parts()?;
     send::edit_interaction_card_or_error(
         text,
@@ -115,7 +125,7 @@ pub async fn help_callback_query(
     .await
 }
 
-/// 帮助按钮失败提示。
+/// 帮助按钮失败提示卡片发送。
 ///
 /// callback 已经先 ACK，失败时不能再 answer 同一个 callback，因此发送独立错误卡片。
 async fn send_help_callback_error(
@@ -137,11 +147,13 @@ async fn send_help_callback_error(
 fn build_help_page(
     command_name: Option<&str>,
 ) -> anyhow::Result<(String, Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>)> {
+    // 归一化命令主题名称
     let command_name = match command_name {
         Some(command_name) => Some(topic::normalize_help_topic(command_name)?),
         None => None,
     };
 
+    // 根据主题是否为空分别渲染目录页或详情页
     match command_name {
         None => Ok((build_help_index_text(), build_help_index_buttons())),
         Some(command_name) => Ok((

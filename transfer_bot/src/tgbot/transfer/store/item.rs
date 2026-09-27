@@ -21,10 +21,17 @@ use super::{
     ITEM_STATUS_PENDING, is_text_file_key, now_utc8,
 };
 
-/// 按当前 bundle 对齐 transfer_item：
-/// - 已存在条目复用
-/// - 新出现条目补创建
-/// - 新建媒体条目会增加 file_cache 引用计数
+/// 按当前抓取到的 bundle 对齐创建或复用 transfer_item 子项：
+/// - 已存在的条目直接复用已有数据库 Model；
+/// - 新出现的条目执行插入并在事务中为对应媒体增加 file_cache 引用；
+/// - 纯文本条目不增加物理文件引用，默认标记 `file_ref_released = true`。
+///
+/// # 参数
+/// - `job_id`: 主任务 ID。
+/// - `bundle`: 从源聊天中爬取解析得到的消息组合包。
+///
+/// # 返回值
+/// - 排序并对齐后的 `transfer_item` 列表。
 pub(in crate::tgbot::transfer) async fn ensure_items_for_bundle(
     job_id: i64,
     bundle: &TransferBundle,
@@ -63,13 +70,19 @@ pub(in crate::tgbot::transfer) async fn ensure_items_for_bundle(
     Ok(result)
 }
 
-/// 按恢复时重新抓取到的 bundle 对齐 transfer_item 和 file_cache 引用。
+/// 按恢复执行时重新抓取到的 bundle 对齐 transfer_item 和 file_cache 引用。
 ///
-/// 规则：
-/// - 新消息：新增子项并增加新 file_key 引用；
-/// - 同一消息但 file_key 变化：释放旧引用、引用新文件，并把子项重置为 pending；
-/// - 旧消息在新 bundle 中消失：标记 obsolete 并提前释放旧引用；
-/// - 已提前释放的子项会设置 file_ref_released，最终完成/取消时不会重复扣引用。
+/// 对齐与一致性保证规则：
+/// 1. 新消息：新增子项并为其新 file_key 增加引用计数；
+/// 2. 同一消息但 file_key 或角色变化：释放旧文件引用、为新文件增加引用，并将该子项状态重置为 pending；
+/// 3. 旧消息在新 bundle 中消失（可能在源频道被撤回/删除）：标记为 `obsolete`（已废弃），提前释放其文件引用；
+/// 4. 已提前释放引用的子项在数据库中记录 `file_ref_released = true`，后续任务完成或取消时不再重复扣减引用；
+/// 5. 更新任务的主表快照（如条目总数 `total_items`、相册 ID 等）。
+///
+/// # 参数
+/// - `job_id`: 主任务 ID。
+/// - `bundle`: 重新抓取的源消息包。
+/// - `delay_minutes`: 旧引用释放时的删除缓冲时间（分钟）。
 pub(in crate::tgbot::transfer) async fn reconcile_items_for_bundle(
     job_id: i64,
     bundle: &TransferBundle,
@@ -109,6 +122,16 @@ pub(in crate::tgbot::transfer) async fn reconcile_items_for_bundle(
 /// 这里把 `transfer_item` 插入和 `file_cache.active_refs + 1` 放进同一个事务：
 /// - 防止“子项已插入但引用增加失败”导致后续取消/完成时错误扣引用；
 /// - 防止“引用已增加但子项插入失败”导致文件永远不进删除队列。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接池。
+/// - `job_id`: 主任务 ID。
+/// - `msg`: 来源 TDLib 消息。
+/// - `file_key`: 文件唯一标识。
+/// - `file_owner_client_role`: 文件归属的客户端角色。
+///
+/// # 返回值
+/// - 成功插入的 `transfer_item` Model 实体。
 async fn insert_item_with_optional_file_ref(
     db_conn: &sea_orm::DatabaseConnection,
     job_id: i64,
@@ -157,6 +180,13 @@ async fn insert_item_with_optional_file_ref(
 }
 
 /// 在已有事务内创建子项，并按媒体/文本决定是否增加 file_cache 引用。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `job_id`: 任务 ID。
+/// - `msg`: TDLib 消息。
+/// - `file_key`: 文件键。
+/// - `file_owner_client_role`: 客户端角色。
 async fn insert_item_with_optional_file_ref_on_conn<C>(
     conn: &C,
     job_id: i64,
@@ -195,6 +225,13 @@ where
 /// 对齐已经存在的子项。
 ///
 /// file_key 不变时保留原状态；file_key 变化或旧引用已经释放时，重新引用当前文件并重置为 pending。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `old`: 原数据库子项记录。
+/// - `new_file_key`: 重新抓取确定的新文件键。
+/// - `new_file_owner_client_role`: 重新抓取确定的客户端角色。
+/// - `delay_minutes`: 旧引用释放时的延迟删除分钟数。
 async fn reconcile_existing_item_on_conn<C>(
     conn: &C,
     old: db::transfer_item::Model,
@@ -264,6 +301,11 @@ where
 }
 
 /// 将新 bundle 中已经不存在的旧子项标记为 obsolete，并释放其持有的文件引用。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `old`: 待标记废弃的旧子项模型。
+/// - `delay_minutes`: 文件引用释放后的延迟清理时间（分钟）。
 async fn mark_item_obsolete_on_conn<C>(
     conn: &C,
     old: db::transfer_item::Model,
@@ -306,6 +348,11 @@ where
 }
 
 /// 更新主任务的源消息快照和当前条目数，保证恢复后的展示与本次 spider 结果一致。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `job_id`: 主任务 ID。
+/// - `bundle`: 最新的抓取消息包。
 async fn update_job_source_snapshot_on_conn<C>(
     conn: &C,
     job_id: i64,
@@ -343,6 +390,12 @@ where
 }
 
 /// 释放单个 file_key 的一次引用。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务句柄。
+/// - `owner_client_role`: 客户端角色。
+/// - `file_key`: 文件键。
+/// - `delay_minutes`: 延迟删除分钟数。
 async fn release_one_file_ref_on_conn<C>(
     conn: &C,
     owner_client_role: String,
@@ -358,11 +411,26 @@ where
 }
 
 /// 获取消息当前对应的 file_key；纯文本消息使用稳定文本占位键。
+///
+/// # 参数
+/// - `msg`: TDLib 消息引用。
+///
+/// # 返回值
+/// - 提取的文件唯一键或形如 `text:{chat_id}:{msg_id}` 的文本占位键。
 fn file_key_for_message(msg: &tdlib_rs::types::Message) -> String {
     file::extract_file_key(msg).unwrap_or_else(|| format!("text:{}:{}", msg.chat_id, msg.id))
 }
 
 /// 按任务内源消息定位子项。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `job_id`: 主任务 ID。
+/// - `source_chat_id`: 源会话 ID。
+/// - `source_message_id`: 源消息 ID。
+///
+/// # 返回值
+/// - 查找到的对应子项（若存在）。
 async fn find_item_by_job_source<C>(
     conn: &C,
     job_id: i64,
@@ -382,6 +450,12 @@ where
 }
 
 /// 查询任务所有子项。
+///
+/// # 参数
+/// - `job_id`: 主任务 ID。
+///
+/// # 返回值
+/// - 按子项主键升序排列的 `transfer_item` 列表。
 pub(in crate::tgbot::transfer) async fn list_items_by_job(
     job_id: i64,
 ) -> anyhow::Result<Vec<db::transfer_item::Model>> {
@@ -390,6 +464,13 @@ pub(in crate::tgbot::transfer) async fn list_items_by_job(
 }
 
 /// 在指定连接/事务内查询任务子项。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `job_id`: 主任务 ID。
+///
+/// # 返回值
+/// - 子项列表。
 pub(super) async fn list_items_by_job_on_conn<C>(
     conn: &C,
     job_id: i64,
@@ -406,6 +487,11 @@ where
 }
 
 /// 更新 transfer_item 状态与错误信息。
+///
+/// # 参数
+/// - `item_id`: 子项主键 ID。
+/// - `status`: 新状态（如 "preparing"、"uploading"、"success" 等）。
+/// - `error_message`: 可选的错误信息描述。
 pub(in crate::tgbot::transfer) async fn set_item_status(
     item_id: i64,
     status: &str,
@@ -419,6 +505,12 @@ pub(in crate::tgbot::transfer) async fn set_item_status(
 ///
 /// 事务化 finish/cancel 会复用该函数，保证“子项状态 + 主任务终态 + 文件引用释放”
 /// 要么一起提交，要么一起回滚。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `item_id`: 子项主键 ID。
+/// - `status`: 新状态。
+/// - `error_message`: 可选的错误描述。
 pub(super) async fn set_item_status_on_conn<C>(
     conn: &C,
     item_id: i64,

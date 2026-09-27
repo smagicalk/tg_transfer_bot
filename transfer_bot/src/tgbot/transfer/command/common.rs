@@ -5,8 +5,10 @@
 
 use crate::tgbot::transfer::card;
 
+/// 命令展示风格枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandStyle {
+    /// 完整长命令风格（例如 `/transfer`、`/job pause` 等，便于用户直接复制使用）
     Long,
 }
 
@@ -31,12 +33,16 @@ pub(crate) fn resolve_target_chat_id_on(
     text: &[&str],
     request_chat_id: i64,
 ) -> anyhow::Result<i64> {
+    // 读取最新的 targets 运行态配置
     let targets_config = crate::tgbot::transfer::targets_runtime_config_on(app);
     let target_chat_id = if text.len() >= 3 {
+        // 参数提供了第 3 个位置（即目标会话/别名），优先解析参数
         parse_target_arg(text[2], &targets_config)?
     } else if targets_config.default_chat_id != 0 {
+        // 未提供参数但配置了默认目标 chat_id
         targets_config.default_chat_id
     } else {
+        // 未提供参数且无默认目标，兜底回退到发起请求的当前 chat_id
         request_chat_id
     };
 
@@ -47,9 +53,11 @@ pub(crate) fn resolve_target_chat_id_on(
 ///
 /// 目标可以是数字 chat_id，也可以是 `targets.aliases` 中配置的短名称。
 fn parse_target_arg(arg: &str, config: &crate::config::TargetsConfig) -> anyhow::Result<i64> {
+    // 优先尝试直接解析为 64 位整数 chat_id
     if let Ok(chat_id) = arg.parse::<i64>() {
         return Ok(chat_id);
     }
+    // 否则尝试从别名映射表中查找短名称对应的主键 chat_id
     config
         .aliases
         .get(arg)
@@ -57,7 +65,7 @@ fn parse_target_arg(arg: &str, config: &crate::config::TargetsConfig) -> anyhow:
         .ok_or_else(|| anyhow::anyhow!("unknown target chat alias: {arg}"))
 }
 
-/// 构造 `/transfer` 命令。
+/// 构造 `/transfer` 命令字符串。
 pub(crate) fn transfer_command(
     source_link: &str,
     target_chat_id: i64,
@@ -71,7 +79,7 @@ pub(crate) fn transfer_command(
     )
 }
 
-/// 构造 `/lookup` 命令。
+/// 构造 `/lookup` 命令字符串。
 pub(crate) fn lookup_command(
     source_link: &str,
     target_chat_id: i64,
@@ -85,7 +93,7 @@ pub(crate) fn lookup_command(
     )
 }
 
-/// 构造 `/downloads` 命令。
+/// 构造 `/downloads` 命令字符串。
 pub(crate) fn downloads_command(
     filter: Option<&str>,
     limit: Option<u64>,
@@ -105,7 +113,7 @@ pub(crate) fn downloads_command(
     parts.join(" ")
 }
 
-/// 构造 `/job ...` 命令。
+/// 构造 `/job ...` 命令字符串。
 pub(crate) fn job_command(action: &str, job_id: i64, style: CommandStyle) -> String {
     format!(
         "{} {} {}",
@@ -115,17 +123,17 @@ pub(crate) fn job_command(action: &str, job_id: i64, style: CommandStyle) -> Str
     )
 }
 
-/// 构造 `/config show` 命令。
+/// 构造 `/config show` 命令字符串。
 pub(crate) fn config_show_command(style: CommandStyle) -> String {
     format!("{} show", command_name("config", style))
 }
 
-/// 构造 `/targets show` 命令。
+/// 构造 `/targets show` 命令字符串。
 pub(crate) fn targets_show_command(style: CommandStyle) -> String {
     format!("{} show", command_name("targets", style))
 }
 
-/// 构造 `/config set ...` 命令。
+/// 构造 `/config set ...` 命令字符串。
 pub(crate) fn config_set_command(key: &str, value: impl ToString, style: CommandStyle) -> String {
     format!(
         "{} set {} {}",
@@ -135,7 +143,7 @@ pub(crate) fn config_set_command(key: &str, value: impl ToString, style: Command
     )
 }
 
-/// 构造 `/help <topic>` 命令。
+/// 构造 `/help <topic>` 命令字符串。
 pub(crate) fn help_command(topic: Option<&str>, style: CommandStyle) -> String {
     match topic {
         Some(topic) => format!("{} {topic}", command_name("help", style)),
@@ -143,12 +151,12 @@ pub(crate) fn help_command(topic: Option<&str>, style: CommandStyle) -> String {
     }
 }
 
-/// 构造 `/health` 命令。
+/// 构造 `/health` 命令字符串。
 pub(crate) fn health_command(style: CommandStyle) -> String {
     command_name("health", style)
 }
 
-/// 构造 `/cache` 命令。
+/// 构造 `/cache` 命令字符串。
 pub(crate) fn cache_command(
     view: Option<&str>,
     limit: Option<u64>,
@@ -168,12 +176,12 @@ pub(crate) fn cache_command(
     parts.join(" ")
 }
 
-/// 构造 `/menu` 命令。
+/// 构造 `/menu` 命令字符串。
 pub(crate) fn menu_command(style: CommandStyle) -> String {
     command_name("menu", style)
 }
 
-/// 以人类可读形式展示字节数。
+/// 以人类可读形式展示字节数（自适应 B / KB / MB / GB / TB 单位）。
 ///
 /// `/downloads` 和 `/job status` 都展示 TDLib 实时下载进度，统一放在命令公共层，
 /// 避免同一个文件大小被不同命令渲染成不同样式。
@@ -201,7 +209,7 @@ pub(crate) fn command_root(kind: &str, style: CommandStyle) -> String {
     command_name(kind, style)
 }
 
-/// 构造交互页统一页头。
+/// 构造交互页统一页头（包含标题、ready状态以及分割线）。
 pub(crate) fn build_ready_page_header(title: &str) -> Vec<String> {
     vec![
         title.to_owned(),
@@ -266,7 +274,9 @@ pub(crate) struct RuntimeAdminHelpDescriptor {
 /// 管理页帮助中的单条命令说明。
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeAdminUsageItem {
+    /// 命令格式说明（例如 `/config show`）
     pub command: String,
+    /// 该命令的具体功用详述
     pub detail: String,
 }
 
@@ -493,7 +503,7 @@ pub(crate) async fn edit_runtime_admin_interaction_card_or_error(
     .await
 }
 
-/// 返回命令名称。
+/// 返回命令对应的完整名称。
 fn command_name(kind: &str, style: CommandStyle) -> String {
     let _ = style;
     match kind {
@@ -531,16 +541,18 @@ mod tests {
     use crate::app_context::app_context;
     use std::collections::HashMap;
 
+    /// 获取全局测试应用上下文
     fn test_app_context() -> std::sync::Arc<crate::app_context::AppContext> {
         app_context()
     }
 
+    /// 设置测试目标频道运行态配置
     fn install_target_runtime(targets: crate::config::TargetsConfig) {
         let app = test_app_context();
         app.targets_runtime.update_runtime_config(targets);
     }
 
-    // 用户可见输出统一使用完整命令。
+    /// 测试用户可见输出统一使用完整命令字符串。
     #[test]
     fn test_command_builders_use_long_commands() {
         assert_eq!(
@@ -574,13 +586,13 @@ mod tests {
         assert_eq!(menu_command(CommandStyle::Long), "/menu");
     }
 
-    // 帮助页拼命令根时未知 kind 不应触发 panic，返回原始名称便于上层给出可读错误。
+    /// 测试帮助页拼命令根时未知 kind 不应触发 panic，返回原始名称便于上层给出可读错误。
     #[test]
     fn test_command_root_unknown_kind_is_safe() {
         assert_eq!(command_root("unknown", CommandStyle::Long), "unknown");
     }
 
-    // 文件大小格式要在不同命令之间保持一致，避免排查下载进度时出现两套展示。
+    /// 测试文件大小格式要在不同命令之间保持一致，自适应换算单位。
     #[test]
     fn test_format_bytes() {
         assert_eq!(format_bytes(100), "100 B");
@@ -588,7 +600,7 @@ mod tests {
         assert_eq!(format_bytes(1536), "1.5 KB");
     }
 
-    // 目标解析应支持配置别名，避免每次都手动输入长 chat_id。
+    /// 测试目标解析应支持配置别名，避免每次都手动输入长 chat_id。
     #[test]
     fn test_resolve_target_chat_id_supports_alias() {
         install_target_runtime(crate::config::TargetsConfig {
@@ -602,7 +614,7 @@ mod tests {
         assert_eq!(target, -100);
     }
 
-    // 未显式指定目标时使用默认目标。
+    /// 测试未显式指定目标且配置了默认目标时自动使用默认目标。
     #[test]
     fn test_resolve_target_chat_id_uses_default_target() {
         install_target_runtime(crate::config::TargetsConfig {
@@ -616,7 +628,7 @@ mod tests {
         );
     }
 
-    // 显式数字目标不依赖默认配置。
+    /// 测试显式数字目标不依赖默认配置，直接解析生效。
     #[test]
     fn test_resolve_target_chat_id_accepts_explicit_target() {
         install_target_runtime(crate::config::TargetsConfig::default());

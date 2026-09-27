@@ -10,15 +10,22 @@ use super::super::menu::build_menu_home_callback_data;
 use super::args::{JobCallbackAction, build_job_callback_data};
 use super::status_meta::job_status_meta;
 
-/// 构造单任务详情按钮。
+/// 构造单个任务详情卡片底部的 inline keyboard 按钮矩阵。
+///
+/// 包含打开目标消息链接、控制动作按钮（暂停/恢复/停止）、刷新详情、查看命令、返回列表以及返回主菜单。
+///
+/// # 参数
+/// - `snapshot`: 任务进度快照引用
 pub(super) fn build_job_status_buttons(
     snapshot: &JobProgressSnapshot,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let job_id = snapshot.job.id;
     let status = snapshot.job.status.as_str();
+    // 获取当前状态对应的元配置（如是否展示暂停/恢复/停止）
     let meta = job_status_meta(status);
     let mut rows = Vec::new();
 
+    // 1. 若存在有效可跳转的转存结果链接，在最顶部生成一个突出按钮
     if let Some(link) = snapshot
         .job
         .result_message_link
@@ -32,6 +39,7 @@ pub(super) fn build_job_status_buttons(
         )]);
     }
 
+    // 2. 根据状态元数据动态组装任务控制动作行（暂停、恢复、停止）
     if meta.show_pause || meta.show_resume || meta.show_stop {
         let mut action_row = Vec::new();
         if meta.show_pause {
@@ -58,6 +66,7 @@ pub(super) fn build_job_status_buttons(
         rows.push(action_row);
     }
 
+    // 3. 详情刷新与帮助命令入口
     rows.push(vec![
         send::build_callback_button(
             "刷新详情",
@@ -66,6 +75,8 @@ pub(super) fn build_job_status_buttons(
         ),
         build_view_commands_button(Some("job")),
     ]);
+
+    // 4. 底部返回行：返回对应状态的列表、返回全局菜单
     rows.push(vec![
         send::build_callback_button(
             "返回列表",
@@ -87,7 +98,7 @@ mod tests {
     use crate::tgbot::transfer::store;
     use base64::{Engine as _, engine::general_purpose};
 
-    // 运行中任务详情的停止按钮一次点击即可请求停止。
+    /// 运行中任务详情的停止按钮一次点击即可请求停止。
     #[test]
     fn test_build_job_status_buttons_for_running() {
         let buttons = build_job_status_buttons(&snapshot_with_status(store::JOB_STATUS_RUNNING));
@@ -110,7 +121,7 @@ mod tests {
         ));
     }
 
-    // paused 任务详情应提供恢复 callback 按钮。
+    /// paused 任务详情应提供恢复 callback 按钮。
     #[test]
     fn test_build_job_status_buttons_for_paused() {
         let buttons = build_job_status_buttons(&snapshot_with_status(store::JOB_STATUS_PAUSED));
@@ -120,7 +131,7 @@ mod tests {
         assert_eq!(decoded_callback_data(&buttons[0][1]), "j:sc:42");
     }
 
-    // 任务详情里的返回列表按钮应直接回到对应的 downloads 筛选入口。
+    /// 任务详情里的返回列表按钮应直接回到对应的 downloads 筛选入口。
     #[test]
     fn test_build_job_status_buttons_has_return_list_button() {
         let buttons = build_job_status_buttons(&snapshot_with_status(store::JOB_STATUS_RUNNING));
@@ -133,7 +144,7 @@ mod tests {
         assert_eq!(buttons.len(), 3);
     }
 
-    // 任务状态应映射到最接近的 downloads 筛选。
+    /// 任务状态应映射到最接近的 downloads 筛选。
     #[test]
     fn test_job_status_list_filter() {
         assert_eq!(
@@ -154,6 +165,7 @@ mod tests {
         );
     }
 
+    /// 验证当任务存在可跳转结果消息链接时，正确生成首行 URL 按钮。
     #[test]
     fn test_build_job_status_buttons_has_result_link() {
         let mut snapshot = snapshot_with_status(store::JOB_STATUS_SUCCESS);
@@ -168,6 +180,7 @@ mod tests {
         ));
     }
 
+    /// 测试辅助工具：解码按钮 callback base64 载荷。
     fn decoded_callback_data(button: &tdlib_rs::types::InlineKeyboardButton) -> String {
         let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type else {
             panic!("button must be callback");
@@ -175,6 +188,7 @@ mod tests {
         String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap()
     }
 
+    /// 测试辅助工具：构造指定状态的快照。
     fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
         let now = store::now_utc8();
         store::JobProgressSnapshot {

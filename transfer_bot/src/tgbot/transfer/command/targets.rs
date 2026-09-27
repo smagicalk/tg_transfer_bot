@@ -17,26 +17,46 @@ use super::common::{
     updated_action_title,
 };
 use super::menu::build_menu_targets_callback_data;
-/// 目标页标题。
+
+/// 目标页主卡片标题。
 const TARGETS_PAGE_TITLE: &str = "目标配置";
-/// 目标页简要说明。
+
+/// 目标页简要说明文本。
 const TARGETS_PAGE_DETAIL: &str =
     "默认目标未显式设置时会回落到当前请求私聊；别名先在分页列表点编号，再进入详情操作。";
-/// 别名分页大小。
+
+/// 别名列表单页容量大小（每页展示 5 条别名）。
 const TARGETS_LIST_PAGE_SIZE: usize = 5;
-/// 别名搜索关键字最大长度。
+
+/// 别名搜索关键字最大字符长度。
 ///
-/// 搜索关键字会被放进 callback payload 里用于分页；限制长度可以避免按钮数据过长。
+/// 搜索关键字会被放入 callback payload 里用于分页；限制长度可以避免按钮数据过长超出 Telegram 64 字节限制。
 const TARGETS_ALIAS_SEARCH_QUERY_MAX_CHARS: usize = 32;
 
 /// 别名动作返回的列表上下文。
+///
+/// 记录当前别名操作是由全部列表进入还是搜索结果列表进入，以便操作完成后返回原视图。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AliasListContext {
-    All { page: u64 },
-    Search { query: String, page: u64 },
+    /// 全量别名列表，记录所在页码
+    All {
+        /// 当前列表页码（1-based）
+        page: u64,
+    },
+    /// 关键词搜索结果列表，记录搜索词与页码
+    Search {
+        /// 过滤搜索关键字
+        query: String,
+        /// 当前搜索结果页码（1-based）
+        page: u64,
+    },
 }
 
 impl AliasListContext {
+    /// 获取当前上下文中的页码。
+    ///
+    /// # 返回值
+    /// - `u64`: 当前页码标量
     fn page(&self) -> u64 {
         match self {
             Self::All { page } | Self::Search { page, .. } => *page,
@@ -44,37 +64,60 @@ impl AliasListContext {
     }
 }
 
-/// `/targets` callback 前缀。
+/// `/targets` 回调按钮数据前缀。
 const TARGETS_CALLBACK_PREFIX: &str = "tcfg:";
 
-/// `/targets` callback 动作。
+/// `/targets` 相关的内联按钮回调动作枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TargetsCallbackAction {
+    /// 刷新目标主卡片
     Refresh,
+    /// 执行全量重置为启动默认值
     Reset,
+    /// 打开全量重置确认确认卡片
     ConfirmReset,
+    /// 清除显式默认目标（回落为私聊）
     ClearDefault,
+    /// 查看当前默认目标详情
     ViewDefault,
+    /// 启动输入式设置默认目标流程
     InputSetDefault,
+    /// 启动输入式设置别名流程
     InputSetAlias,
+    /// 启动输入式搜索别名流程
     InputSearchAlias,
+    /// 查看别名分页列表
     ViewAliases(AliasListContext),
+    /// 查看指定别名的详细卡片
     ViewAlias {
+        /// 别名名称
         alias: String,
+        /// 来源列表上下文
         context: AliasListContext,
     },
+    /// 编辑指定别名的目标 chat_id
     EditAlias(String),
+    /// 删除指定别名
     DeleteAlias {
+        /// 待删除的别名名称
         alias: String,
+        /// 来源列表上下文
         context: AliasListContext,
     },
+    /// 将指定别名提升为默认目标
     UseAliasAsDefault {
+        /// 目标别名名称
         alias: String,
+        /// 来源列表上下文
         context: AliasListContext,
     },
 }
 
 impl TargetsCallbackAction {
+    /// 获取该回调动作触发时的 Telegram 吐司提示文案。
+    ///
+    /// # 返回值
+    /// - `&'static str`: 提示文本
     fn started_tip(&self) -> &'static str {
         match self {
             Self::Refresh => "正在刷新目标配置",
@@ -95,23 +138,32 @@ impl TargetsCallbackAction {
     }
 }
 
-/// `/targets` 单步输入动作规格。
+/// `/targets` 单步输入动作规格描述结构体。
 ///
 /// callback 按钮、help 示例、ForceReply 文案和输入解析都从这里读取，避免新增目标动作时漏改多处。
 #[derive(Debug, Clone)]
 pub(in crate::tgbot::transfer::command) struct TargetsInputSpec {
+    /// 管理员输入会话动作类别
     pub action: super::menu::AdminInputAction,
+    /// 对应的回调动作枚举
     callback_action: TargetsCallbackAction,
+    /// 提示卡片标题
     pub input_title: &'static str,
+    /// 提示卡片详细说明
     pub input_detail: &'static str,
+    /// ForceReply 输入框占位符
     pub input_placeholder: &'static str,
+    /// 子命令名称（如 `set-default`）
     pub subcommand: &'static str,
+    /// 预期参数分词数量
     pub expected_parts: usize,
+    /// 命令行示例
     pub example_command: &'static str,
+    /// 交互卡片中的下一步引导说明
     pub interaction_detail: &'static str,
 }
 
-/// `/targets` 当前支持的全部输入式动作。
+/// `/targets` 当前支持的全部输入式动作规格列表。
 pub(in crate::tgbot::transfer::command) const TARGETS_INPUT_SPECS: &[TargetsInputSpec] = &[
     TargetsInputSpec {
         action: super::menu::AdminInputAction::TargetsSetDefault,
@@ -138,6 +190,12 @@ pub(in crate::tgbot::transfer::command) const TARGETS_INPUT_SPECS: &[TargetsInpu
 ];
 
 /// 根据菜单输入动作反查 `/targets` 输入规格。
+///
+/// # 参数
+/// - `action`: 管理员输入动作枚举
+///
+/// # 返回值
+/// - `Option<&'static TargetsInputSpec>`: 匹配的规格引用
 pub(in crate::tgbot::transfer::command) fn targets_input_spec_for_admin_action(
     action: super::menu::AdminInputAction,
 ) -> Option<&'static TargetsInputSpec> {
@@ -147,6 +205,12 @@ pub(in crate::tgbot::transfer::command) fn targets_input_spec_for_admin_action(
 }
 
 /// 根据 callback 动作反查 `/targets` 输入规格。
+///
+/// # 参数
+/// - `action`: 目标配置回调动作引用
+///
+/// # 返回值
+/// - `Option<&'static TargetsInputSpec>`: 匹配的规格引用
 fn targets_input_spec_for_callback_action(
     action: &TargetsCallbackAction,
 ) -> Option<&'static TargetsInputSpec> {
@@ -156,12 +220,29 @@ fn targets_input_spec_for_callback_action(
 }
 
 /// 在指定上下文上执行 `/targets` 文本命令。
+///
+/// 支持子命令：
+/// - `/targets` / `/targets show`: 展示当前默认目标与别名列表
+/// - `/targets reset`: 重置目标配置为启动默认值
+/// - `/targets set-default <target_chat_id>`: 设置全局默认转存目标
+/// - `/targets set-alias <alias> <target_chat_id>`: 设置目标别名
+/// - `/targets del-alias <alias>`: 删除目标别名
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `text`: 分词后的命令行参数
+/// - `request_chat_id`: 触发命令的会话 ID
+/// - `client_id`: TDLib 客户端实例 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 执行成功返回 `Ok(())`
 pub async fn targets_command_on(
     app: &crate::app_context::AppContext,
     text: Vec<&str>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 匹配第 1 个子命令参数
     let reply = match text.get(1).copied() {
         None | Some("show") => format_targets_text_on(app, TARGETS_PAGE_TITLE),
         Some("reset") => reset_targets_config_to_default_on(app).await?,
@@ -199,6 +280,7 @@ pub async fn targets_command_on(
         Some(other) => anyhow::bail!("unknown targets subcommand: {other}"),
     };
 
+    // 组装并发送回复卡片面板
     send::ReplyPanel::card(reply)
         .rows(build_targets_buttons())
         .send(request_chat_id, client_id)
@@ -206,6 +288,11 @@ pub async fn targets_command_on(
 }
 
 /// `targets` 管理页的最小帮助 descriptor。
+///
+/// 供 `/help targets` 模块读取，提供命令目的、概要、语法以及用法示例。
+///
+/// # 返回值
+/// - `RuntimeAdminHelpDescriptor`: 运行时管理帮助结构体
 pub(in crate::tgbot::transfer::command) fn targets_help_descriptor() -> RuntimeAdminHelpDescriptor {
     RuntimeAdminHelpDescriptor {
         purpose: "管理转存默认目标和目标别名。",
@@ -232,6 +319,9 @@ pub(in crate::tgbot::transfer::command) fn targets_help_descriptor() -> RuntimeA
 /// 构造目标页共用的“输入入口”摘要区块。
 ///
 /// target 页面和 help 详情页都直接消费这份摘要，减少别名入口描述漂移。
+///
+/// # 返回值
+/// - `Vec<String>`: 输入入口区块文本行
 pub(in crate::tgbot::transfer::command) fn targets_input_entry_lines() -> Vec<String> {
     build_runtime_admin_section_block(
         "输入入口",
@@ -242,6 +332,9 @@ pub(in crate::tgbot::transfer::command) fn targets_input_entry_lines() -> Vec<St
 }
 
 /// `targets` 页在菜单和帮助详情里共用的开场说明。
+///
+/// # 返回值
+/// - `Vec<String>`: 说明文本行
 pub(in crate::tgbot::transfer::command) fn targets_intro_lines() -> Vec<String> {
     vec![
         "默认目标未显式设置时，会直接回落到当前请求私聊。".to_owned(),
@@ -251,6 +344,9 @@ pub(in crate::tgbot::transfer::command) fn targets_intro_lines() -> Vec<String> 
 }
 
 /// `/targets` 帮助页和卡片共用的交互说明。
+///
+/// # 返回值
+/// - `Vec<String>`: 交互条目列表
 fn targets_interaction_items() -> Vec<String> {
     let mut items = vec![
         "刷新可直接执行；重置全部需要二次确认；恢复私聊默认只清除显式默认目标。".to_owned(),
@@ -266,6 +362,9 @@ fn targets_interaction_items() -> Vec<String> {
 }
 
 /// `/targets` 帮助页和卡片共用的示例命令。
+///
+/// # 返回值
+/// - `Vec<String>`: 示例命令列表
 fn targets_example_commands() -> Vec<String> {
     let mut commands = vec![
         targets_show_command(CommandStyle::Long),
@@ -280,16 +379,31 @@ fn targets_example_commands() -> Vec<String> {
 }
 
 /// 判断 callback payload 是否属于 `/targets`。
+///
+/// # 参数
+/// - `data`: 解码后的回调数据字符串
+///
+/// # 返回值
+/// - `bool`: 若包含 `tcfg:` 前缀返回 true
 pub(super) fn is_targets_callback_data(data: &str) -> bool {
     data.starts_with(TARGETS_CALLBACK_PREFIX)
 }
 
 /// 构造“默认目标详情”按钮数据，供帮助页等外层导航入口复用。
+///
+/// # 返回值
+/// - `String`: 编码后的回调数据字符串
 pub(in crate::tgbot::transfer::command) fn build_targets_default_detail_button_data() -> String {
     build_targets_callback_data(TargetsCallbackAction::ViewDefault)
 }
 
 /// 构造“别名列表分页”按钮数据，供帮助页等外层导航入口复用。
+///
+/// # 参数
+/// - `page`: 目标页码
+///
+/// # 返回值
+/// - `String`: 编码后的回调数据字符串
 pub(in crate::tgbot::transfer::command) fn build_targets_aliases_page_button_data(
     page: u64,
 ) -> String {
@@ -301,19 +415,25 @@ pub(in crate::tgbot::transfer::command) fn build_targets_aliases_page_button_dat
 /// 构造 `/help targets` 的入口按钮行。
 ///
 /// 目标配置页入口比较稳定，直接由 targets 模块自己输出，避免 help 层重复维护。
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 pub(in crate::tgbot::transfer::command) fn build_targets_help_entry_rows()
 -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![vec![
+        // 入口 1：打开目标配置主卡片
         send::build_callback_button(
             "打开目标页",
             &build_menu_targets_callback_data(),
             tdlib_rs::enums::ButtonStyle::Primary,
         ),
+        // 入口 2：直接查看默认目标详情
         send::build_callback_button(
             "默认目标",
             &build_targets_default_detail_button_data(),
             tdlib_rs::enums::ButtonStyle::Default,
         ),
+        // 入口 3：直接进入别名列表第 1 页
         send::build_callback_button(
             "别名列表",
             &build_targets_aliases_page_button_data(1),
@@ -322,12 +442,21 @@ pub(in crate::tgbot::transfer::command) fn build_targets_help_entry_rows()
     ]]
 }
 
-/// 在指定上下文上处理 `/targets` callback。
+/// 在指定上下文上处理 `/targets` 相关的内联按钮回调。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `update`: 回调事件对象
+/// - `client_id`: TDLib 客户端实例 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 处理成功返回 `Ok(())`
 pub async fn targets_callback_query_on(
     app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 提取回调数据负载
     let payload = match update.payload {
         tdlib_rs::enums::CallbackQueryPayload::Data(data) => data.data,
         _ => {
@@ -336,21 +465,27 @@ pub async fn targets_callback_query_on(
         }
     };
 
+    // 解析按钮动作枚举
     let Some(action) = parse_targets_callback_data(&payload) else {
         send::answer_callback_query(update.id, Some("目标配置按钮参数无效"), client_id).await?;
         return Ok(());
     };
+    // 立即响应弹窗提示
     send::answer_callback_query(update.id, Some(action.started_tip()), client_id).await?;
 
     let action_result = match action.clone() {
+        // 刷新目标主页
         TargetsCallbackAction::Refresh => {
             return render_targets_home_on(app, update.chat_id, update.message_id, client_id).await;
         }
+        // 重置为启动配置
         TargetsCallbackAction::Reset => reset_targets_config_to_default_on(app).await.map(|_| ()),
+        // 打开全量重置二次确认页
         TargetsCallbackAction::ConfirmReset => {
             return render_targets_reset_confirm_on(update.chat_id, update.message_id, client_id)
                 .await;
         }
+        // 清空显式默认目标（还原为 0，即私聊）
         TargetsCallbackAction::ClearDefault => {
             update_targets_with_on(app, &cleared_action_title("私聊默认目标"), |config| {
                 config.default_chat_id = 0;
@@ -358,6 +493,7 @@ pub async fn targets_callback_query_on(
             .await
             .map(|_| ())
         }
+        // 查看默认目标详情
         TargetsCallbackAction::ViewDefault => {
             let config = crate::tgbot::transfer::targets_runtime_config_on(app);
             let (text, keyboard) =
@@ -375,6 +511,7 @@ pub async fn targets_callback_query_on(
             .await?;
             return Ok(());
         }
+        // 开启 ForceReply 设置默认目标
         TargetsCallbackAction::InputSetDefault => {
             let Some(spec) = targets_input_spec_for_callback_action(&action) else {
                 anyhow::bail!("missing targets input spec for callback action: {action:?}");
@@ -389,6 +526,7 @@ pub async fn targets_callback_query_on(
             )
             .await;
         }
+        // 开启 ForceReply 设置别名
         TargetsCallbackAction::InputSetAlias => {
             return super::menu::start_admin_input_callback(
                 update.id,
@@ -400,6 +538,7 @@ pub async fn targets_callback_query_on(
             )
             .await;
         }
+        // 开启 ForceReply 别名搜索
         TargetsCallbackAction::InputSearchAlias => {
             return super::menu::start_admin_input_callback(
                 update.id,
@@ -411,6 +550,7 @@ pub async fn targets_callback_query_on(
             )
             .await;
         }
+        // 查看别名分页列表
         TargetsCallbackAction::ViewAliases(context) => {
             return render_aliases_context_on(
                 app,
@@ -421,6 +561,7 @@ pub async fn targets_callback_query_on(
             )
             .await;
         }
+        // 查看单条别名详情
         TargetsCallbackAction::ViewAlias { alias, context } => {
             let config = crate::tgbot::transfer::targets_runtime_config_on(app);
             let Some(target_chat_id) = config.aliases.get(&alias).copied() else {
@@ -441,6 +582,7 @@ pub async fn targets_callback_query_on(
             .await?;
             return Ok(());
         }
+        // 编辑已有别名对应的 target_chat_id
         TargetsCallbackAction::EditAlias(alias) => {
             return super::menu::start_admin_input_callback_with_context(
                 update.id,
@@ -459,6 +601,7 @@ pub async fn targets_callback_query_on(
             )
             .await;
         }
+        // 删除指定别名
         TargetsCallbackAction::DeleteAlias { alias, context } => {
             update_targets_with_on(app, &deleted_action_title("目标别名"), |config| {
                 config.aliases.remove(&alias);
@@ -474,6 +617,7 @@ pub async fn targets_callback_query_on(
             )
             .await;
         }
+        // 将指定别名升级为默认目标
         TargetsCallbackAction::UseAliasAsDefault { alias, context } => {
             let config = crate::tgbot::transfer::targets_runtime_config_on(app);
             let Some(target_chat_id) = config.aliases.get(&alias).copied() else {
@@ -504,12 +648,26 @@ pub async fn targets_callback_query_on(
 /// 构造当前 targets 配置文本。
 ///
 /// 菜单页在已经持有 `AppContext` 时优先用这个版本，避免重复抓全局。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `title`: 页面标题（忽略，复用统一卡片格式）
+///
+/// # 返回值
+/// - `String`: 格式化后的目标主页卡片文本
 pub(super) fn format_targets_text_on(app: &crate::app_context::AppContext, title: &str) -> String {
     let _ = title;
     format_targets_home_text(&crate::tgbot::transfer::targets_runtime_config_on(app))
 }
 
-/// 现有目标别名详情卡片。
+/// 现有目标别名详情卡片生成。
+///
+/// # 参数
+/// - `alias`: 别名名称
+/// - `target_chat_id`: 目标频道或群组会话 ID
+///
+/// # 返回值
+/// - `String`: 格式化后的详情卡片正文
 fn format_alias_detail_text(alias: &str, target_chat_id: i64) -> String {
     build_runtime_admin_detail_text(
         "目标别名",
@@ -523,8 +681,15 @@ fn format_alias_detail_text(alias: &str, target_chat_id: i64) -> String {
 }
 
 /// 渲染目标配置主页，保持概览简短，把具体管理下沉到分页子页。
+///
+/// # 参数
+/// - `config`: 当前目标配置引用
+///
+/// # 返回值
+/// - `String`: 主页卡片正文文本
 fn format_targets_home_text(config: &TargetsConfig) -> String {
     let mut lines = build_runtime_admin_page_intro(TARGETS_PAGE_TITLE, TARGETS_PAGE_DETAIL);
+    // 展示默认目标会话 ID
     lines.extend(build_runtime_admin_section_block(
         "默认目标",
         vec![if config.default_chat_id == 0 {
@@ -533,10 +698,12 @@ fn format_targets_home_text(config: &TargetsConfig) -> String {
             card::field("default_chat_id", config.default_chat_id)
         }],
     ));
+    // 展示已有别名总数
     lines.extend(build_runtime_admin_section_block(
         "概览",
         vec![format!("目标别名：{}", card::code(config.aliases.len()))],
     ));
+    // 操作指引说明
     lines.extend(build_runtime_admin_section_block(
         "操作建议",
         vec!["点“默认目标”查看当前默认值；别名列表先点编号进入详情，再执行修改或删除。".to_owned()],
@@ -545,16 +712,39 @@ fn format_targets_home_text(config: &TargetsConfig) -> String {
 }
 
 /// 渲染目标别名分页页。
+///
+/// # 参数
+/// - `config`: 当前目标配置引用
+/// - `page`: 目标页码
+///
+/// # 返回值
+/// - `String`: 渲染好的分页卡片文本
 fn format_aliases_page_text(config: &TargetsConfig, page: u64) -> String {
     format_aliases_list_page_text(config, page, None)
 }
 
 /// 渲染目标别名搜索结果页。
+///
+/// # 参数
+/// - `config`: 当前目标配置引用
+/// - `query`: 搜索匹配关键字
+/// - `page`: 目标页码
+///
+/// # 返回值
+/// - `String`: 渲染好的搜索结果卡片文本
 fn format_aliases_search_page_text(config: &TargetsConfig, query: &str, page: u64) -> String {
     format_aliases_list_page_text(config, page, Some(query))
 }
 
 /// 渲染目标别名分页文本，可选按别名关键字过滤。
+///
+/// # 参数
+/// - `config`: 目标配置引用
+/// - `page`: 请求的页码
+/// - `query`: 可选的搜索关键词
+///
+/// # 返回值
+/// - `String`: 渲染好的文本列表
 fn format_aliases_list_page_text(config: &TargetsConfig, page: u64, query: Option<&str>) -> String {
     let aliases = filtered_aliases(config, query);
     let detail = match query {
@@ -589,6 +779,16 @@ fn format_aliases_list_page_text(config: &TargetsConfig, page: u64, query: Optio
 }
 
 /// 渲染通用分页列表文本。
+///
+/// # 参数
+/// - `title`: 卡片主标题
+/// - `detail`: 引导说明文本
+/// - `items`: 格式化好的条目字符串列表
+/// - `page`: 请求页码
+/// - `empty_note`: 列表为空时的提示文案
+///
+/// # 返回值
+/// - `String`: 组合好的分页文本
 fn format_targets_list_page_text(
     title: &str,
     detail: &str,
@@ -601,6 +801,7 @@ fn format_targets_list_page_text(
     let (start, page_items) = slice_targets_page_items(&items, current_page);
 
     let mut lines = build_runtime_admin_page_intro(title, detail);
+    // 输出分页信息行
     lines.push(format!(
         "页码：{} / {}  每页：{}  总数：{}",
         card::code(current_page),
@@ -613,6 +814,7 @@ fn format_targets_list_page_text(
     if page_items.is_empty() {
         lines.push(build_page_empty_note(empty_note));
     } else {
+        // 输出带编号的条目
         for (offset, item) in page_items.iter().enumerate() {
             lines.push(format!("{}. {item}", start + offset + 1));
         }
@@ -621,6 +823,12 @@ fn format_targets_list_page_text(
 }
 
 /// 默认目标详情页正文。
+///
+/// # 参数
+/// - `config`: 当前目标配置引用
+///
+/// # 返回值
+/// - `String`: 默认目标详情卡片文本
 fn format_default_target_detail_text(config: &TargetsConfig) -> String {
     build_runtime_admin_detail_text(
         "默认目标",
@@ -639,8 +847,12 @@ fn format_default_target_detail_text(config: &TargetsConfig) -> String {
 }
 
 /// 默认目标详情页按钮。
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 fn build_default_detail_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
+        // 第一行：选择聊天原生选择器入口、恢复私聊默认
         vec![
             send::build_callback_button(
                 "选择聊天",
@@ -653,6 +865,7 @@ fn build_default_detail_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButt
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
+        // 第二行：直接跳转别名列表
         vec![send::build_callback_button(
             "别名列表",
             &build_targets_callback_data(TargetsCallbackAction::ViewAliases(
@@ -660,6 +873,7 @@ fn build_default_detail_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButt
             )),
             tdlib_rs::enums::ButtonStyle::Default,
         )],
+        // 第三行：返回目标主页
         build_runtime_admin_back_menu_row(send::build_callback_button(
             "返回目标",
             &build_targets_callback_data(TargetsCallbackAction::Refresh),
@@ -669,6 +883,13 @@ fn build_default_detail_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButt
 }
 
 /// 别名详情页按钮。
+///
+/// # 参数
+/// - `alias`: 目标别名标识
+/// - `context`: 来源列表上下文
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 fn build_alias_detail_buttons(
     alias: &str,
     context: &AliasListContext,
@@ -683,6 +904,7 @@ fn build_alias_detail_buttons(
     };
     let back_action = TargetsCallbackAction::ViewAliases(context.clone());
     vec![
+        // 第一行：改目标 / 设默认 / 删别名
         vec![
             send::build_callback_button(
                 "改目标",
@@ -700,6 +922,7 @@ fn build_alias_detail_buttons(
                 tdlib_rs::enums::ButtonStyle::Danger,
             ),
         ],
+        // 第二行：根据来源动态返回“返回别名列表”或“返回搜索结果”
         build_runtime_admin_back_menu_row(send::build_callback_button(
             match context {
                 AliasListContext::Search { .. } => "返回搜索结果",
@@ -712,6 +935,14 @@ fn build_alias_detail_buttons(
 }
 
 /// 在指定上下文上按闭包更新 targets 配置并立即刷新运行时状态。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `title`: 操作标题
+/// - `updater`: 配置修改闭包
+///
+/// # 返回值
+/// - `anyhow::Result<String>`: 更新后的目标配置卡片正文
 async fn update_targets_with_on(
     app: &crate::app_context::AppContext,
     title: &str,
@@ -730,6 +961,12 @@ async fn update_targets_with_on(
 }
 
 /// 在指定上下文上把 targets 重置为启动默认值。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+///
+/// # 返回值
+/// - `anyhow::Result<String>`: 重置后的卡片正文
 async fn reset_targets_config_to_default_on(
     app: &crate::app_context::AppContext,
 ) -> anyhow::Result<String> {
@@ -744,6 +981,13 @@ async fn reset_targets_config_to_default_on(
 }
 
 /// 在指定上下文上写库并刷新内存运行时。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `config`: 待保存的目标配置引用
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 保存成功返回 `Ok(())`
 async fn persist_targets_config_on(
     app: &crate::app_context::AppContext,
     config: &TargetsConfig,
@@ -754,11 +998,20 @@ async fn persist_targets_config_on(
 }
 
 /// 规范化配置，避免空白 alias 留在运行时状态里。
+///
+/// # 参数
+/// - `config`: 可变配置引用
 fn normalize_targets_config(config: &mut TargetsConfig) {
     config.aliases.retain(|alias, _| !alias.trim().is_empty());
 }
 
 /// 以稳定顺序返回目标别名，便于文本渲染和按钮布局。
+///
+/// # 参数
+/// - `config`: 目标配置引用
+///
+/// # 返回值
+/// - `Vec<(String, i64)>`: 按 alias 字典序升序排序的元组列表
 fn sorted_aliases(config: &TargetsConfig) -> Vec<(String, i64)> {
     let mut aliases = config
         .aliases
@@ -770,6 +1023,13 @@ fn sorted_aliases(config: &TargetsConfig) -> Vec<(String, i64)> {
 }
 
 /// 按别名关键字过滤并保持稳定顺序。
+///
+/// # 参数
+/// - `config`: 目标配置引用
+/// - `query`: 可选过滤关键字
+///
+/// # 返回值
+/// - `Vec<(String, i64)>`: 过滤排序后的别名列表
 fn filtered_aliases(config: &TargetsConfig, query: Option<&str>) -> Vec<(String, i64)> {
     let aliases = sorted_aliases(config);
     let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) else {
@@ -783,6 +1043,14 @@ fn filtered_aliases(config: &TargetsConfig, query: Option<&str>) -> Vec<(String,
 }
 
 /// 规范化别名搜索关键字。
+///
+/// 去除首尾空白，截断至最大允许字符长度。
+///
+/// # 参数
+/// - `input`: 用户输入字符串
+///
+/// # 返回值
+/// - `Option<String>`: 非空时返回清洗后的关键词
 fn normalize_alias_search_query(input: &str) -> Option<String> {
     let query = input.trim();
     if query.is_empty() {
@@ -797,6 +1065,13 @@ fn normalize_alias_search_query(input: &str) -> Option<String> {
 }
 
 /// 格式化 targets 配置卡片。
+///
+/// # 参数
+/// - `title`: 卡片主标题
+/// - `config`: 目标配置引用
+///
+/// # 返回值
+/// - `String`: 格式化后的完整卡片文本
 fn format_targets_config_text(title: &str, config: &TargetsConfig) -> String {
     let mut lines = build_runtime_admin_page_intro(title, TARGETS_PAGE_DETAIL);
     lines.extend([
@@ -825,16 +1100,26 @@ fn format_targets_config_text(title: &str, config: &TargetsConfig) -> String {
 }
 
 /// `/targets` 页按钮。
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 pub(super) fn build_targets_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     let app_context = crate::app_context::app_context();
     build_targets_buttons_on(app_context.as_ref())
 }
 
 /// `/targets` 页按钮的上下文版本。
+///
+/// # 参数
+/// - `_app`: 全局应用上下文引用
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 pub(super) fn build_targets_buttons_on(
     _app: &crate::app_context::AppContext,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
+        // 第一行：默认目标详情 / 别名列表第 1 页
         vec![
             send::build_callback_button(
                 "默认目标",
@@ -849,6 +1134,7 @@ pub(super) fn build_targets_buttons_on(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
+        // 第二行：刷新 / 重置全部 / 恢复私聊默认
         vec![
             send::build_callback_button(
                 "刷新",
@@ -866,21 +1152,42 @@ pub(super) fn build_targets_buttons_on(
                 tdlib_rs::enums::ButtonStyle::Default,
             ),
         ],
+        // 第三行：帮助菜单入口行
         build_runtime_admin_help_menu_row("targets"),
     ]
 }
 
 /// 计算列表总页数，空列表也按 1 页渲染，保证分页按钮协议稳定。
+///
+/// # 参数
+/// - `total_items`: 总条目数
+///
+/// # 返回值
+/// - `u64`: 总页数（最小为 1）
 fn total_targets_list_pages(total_items: usize) -> u64 {
     ((total_items.max(1) - 1) / TARGETS_LIST_PAGE_SIZE + 1) as u64
 }
 
 /// 把外部 page 规范到有效区间。
+///
+/// # 参数
+/// - `page`: 外部传入页码
+/// - `total_pages`: 总页数
+///
+/// # 返回值
+/// - `u64`: 限制在 `[1, total_pages]` 内的合法页码
 fn normalize_targets_list_page(page: u64, total_pages: u64) -> u64 {
     page.max(1).min(total_pages.max(1))
 }
 
 /// 取当前页元素切片及其全局起始下标。
+///
+/// # 参数
+/// - `items`: 完整条目切片
+/// - `page`: 目标页码
+///
+/// # 返回值
+/// - `(usize, &[T])`: 全局起始下标（0-based）与本页条目切片
 fn slice_targets_page_items<T>(items: &[T], page: u64) -> (usize, &[T]) {
     let total_pages = total_targets_list_pages(items.len());
     let current_page = normalize_targets_list_page(page, total_pages);
@@ -890,6 +1197,13 @@ fn slice_targets_page_items<T>(items: &[T], page: u64) -> (usize, &[T]) {
 }
 
 /// 构造目标别名分页页按钮。
+///
+/// # 参数
+/// - `config`: 目标配置引用
+/// - `page`: 目标页码
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 fn build_aliases_page_buttons(
     config: &TargetsConfig,
     page: u64,
@@ -898,6 +1212,14 @@ fn build_aliases_page_buttons(
 }
 
 /// 构造目标别名搜索结果页按钮。
+///
+/// # 参数
+/// - `config`: 目标配置引用
+/// - `query`: 搜索关键字
+/// - `page`: 目标页码
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 fn build_aliases_search_page_buttons(
     config: &TargetsConfig,
     query: &str,
@@ -907,6 +1229,14 @@ fn build_aliases_search_page_buttons(
 }
 
 /// 构造目标别名分页页按钮，可选按关键字过滤。
+///
+/// # 参数
+/// - `config`: 目标配置引用
+/// - `page`: 目标页码
+/// - `query`: 可选过滤关键字
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 fn build_aliases_page_buttons_with_query(
     config: &TargetsConfig,
     page: u64,
@@ -947,6 +1277,7 @@ fn build_aliases_page_buttons_with_query(
         ],
     }];
 
+    // 若当前页有数据，生成数字序号按钮行（点击直接进入详情）
     if !page_items.is_empty() {
         rows.push(
             page_items
@@ -982,6 +1313,7 @@ fn build_aliases_page_buttons_with_query(
         None => AliasListContext::All { page: current_page },
     };
 
+    // 操作控制行：刷新 / 返回目标 / 菜单
     rows.push(build_refresh_return_menu_row(
         send::build_callback_button(
             "刷新",
@@ -999,11 +1331,19 @@ fn build_aliases_page_buttons_with_query(
             tdlib_rs::enums::ButtonStyle::Default,
         ),
     ));
+    // 分页翻页控制行：首页 / 上页 / 页码 / 下页 / 末页
     rows.push(build_targets_pagination_row(current_list_page, total_pages));
     rows
 }
 
-/// 构造别名列表分页按钮。
+/// 构造别名列表分页按钮行。
+///
+/// # 参数
+/// - `context`: 列表上下文
+/// - `total_pages`: 总页数
+///
+/// # 返回值
+/// - `Vec<InlineKeyboardButton>`: 单行 5 个分页按钮
 fn build_targets_pagination_row(
     context: AliasListContext,
     total_pages: u64,
@@ -1026,7 +1366,15 @@ fn build_targets_pagination_row(
     ]
 }
 
-/// 构造分页导航按钮。
+/// 构造分页导航跳转按钮。
+///
+/// # 参数
+/// - `text`: 按钮文字标签
+/// - `context`: 列表上下文
+/// - `target_page`: 目标跳转页码
+///
+/// # 返回值
+/// - `InlineKeyboardButton`: 构造好的导航按钮
 fn build_targets_list_nav_button(
     text: &str,
     context: &AliasListContext,
@@ -1040,6 +1388,13 @@ fn build_targets_list_nav_button(
 }
 
 /// 构造列表页回调数据。
+///
+/// # 参数
+/// - `context`: 列表上下文
+/// - `target_page`: 目标页码
+///
+/// # 返回值
+/// - `String`: 编码后的回调数据字符串
 fn build_targets_list_page_callback_data(context: &AliasListContext, target_page: u64) -> String {
     let target = match context {
         AliasListContext::All { .. } => AliasListContext::All { page: target_page },
@@ -1052,6 +1407,11 @@ fn build_targets_list_page_callback_data(context: &AliasListContext, target_page
 }
 
 /// 原地打开目标配置全量重置确认页。
+///
+/// # 参数
+/// - `chat_id`: 会话 ID
+/// - `message_id`: 原消息 ID
+/// - `client_id`: TDLib 客户端实例 ID
 async fn render_targets_reset_confirm_on(
     chat_id: i64,
     message_id: i64,
@@ -1080,13 +1440,18 @@ async fn render_targets_reset_confirm_on(
 }
 
 /// 目标配置重置确认页按钮。
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 fn build_targets_reset_confirm_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
+        // 第一行：高亮红色确认按钮
         vec![send::build_callback_button(
             "确认重置全部",
             &build_targets_callback_data(TargetsCallbackAction::Reset),
             tdlib_rs::enums::ButtonStyle::Danger,
         )],
+        // 第二行：取消返回行
         build_runtime_admin_back_menu_row(send::build_callback_button(
             "取消",
             &build_targets_callback_data(TargetsCallbackAction::Refresh),
@@ -1095,7 +1460,13 @@ fn build_targets_reset_confirm_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeybo
     ]
 }
 
-/// 渲染主页。
+/// 原地渲染目标配置主页卡片。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `chat_id`: 会话 ID
+/// - `message_id`: 目标消息 ID
+/// - `client_id`: TDLib 客户端实例 ID
 async fn render_targets_home_on(
     app: &crate::app_context::AppContext,
     chat_id: i64,
@@ -1117,6 +1488,13 @@ async fn render_targets_home_on(
 }
 
 /// 按列表上下文渲染目标别名分页页。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `context`: 列表上下文（All 或 Search）
+/// - `chat_id`: 会话 ID
+/// - `message_id`: 原消息 ID
+/// - `client_id`: TDLib 客户端实例 ID
 async fn render_aliases_context_on(
     app: &crate::app_context::AppContext,
     context: &AliasListContext,
@@ -1151,6 +1529,13 @@ async fn render_aliases_context_on(
 /// 在指定 chat 中发送别名搜索结果页。
 ///
 /// ForceReply 文本输入无法稳定编辑原列表消息，所以搜索结果使用新卡片展示。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `query`: 搜索关键词
+/// - `page`: 搜索结果页码
+/// - `chat_id`: 目标会话 ID
+/// - `client_id`: TDLib 客户端实例 ID
 pub(in crate::tgbot::transfer::command) async fn send_alias_search_result_page_on(
     app: &crate::app_context::AppContext,
     query: &str,
@@ -1167,17 +1552,36 @@ pub(in crate::tgbot::transfer::command) async fn send_alias_search_result_page_o
         .await
 }
 
-/// 编码 alias 到 callback payload。
+/// 编码 alias 到 URL 安全的 base64 字符串，用于嵌入 callback payload。
+///
+/// # 参数
+/// - `alias`: 别名字符串
+///
+/// # 返回值
+/// - `String`: base64 编码后的字符串
 fn encode_alias_payload(alias: &str) -> String {
     URL_SAFE_NO_PAD.encode(alias)
 }
 
 /// 从 callback payload 解码 alias。
+///
+/// # 参数
+/// - `payload`: URL 安全的 base64 字符串
+///
+/// # 返回值
+/// - `Option<String>`: 解码出的别名字符串
 fn decode_alias_payload(payload: &str) -> Option<String> {
     let decoded = URL_SAFE_NO_PAD.decode(payload).ok()?;
     String::from_utf8(decoded).ok()
 }
 
+/// 解析 targets 回调数据字符串为 `TargetsCallbackAction` 枚举。
+///
+/// # 参数
+/// - `data`: 原始回调数据字符串
+///
+/// # 返回值
+/// - `Option<TargetsCallbackAction>`: 解析成功返回对应动作，格式非法返回 None
 fn parse_targets_callback_data(data: &str) -> Option<TargetsCallbackAction> {
     let payload = data.strip_prefix(TARGETS_CALLBACK_PREFIX)?;
     match payload {
@@ -1278,6 +1682,13 @@ fn parse_targets_callback_data(data: &str) -> Option<TargetsCallbackAction> {
     }
 }
 
+/// 将 `TargetsCallbackAction` 枚举序列化为回调数据字符串。
+///
+/// # 参数
+/// - `action`: 目标配置回调动作
+///
+/// # 返回值
+/// - `String`: 编码后的回调数据字符串
 fn build_targets_callback_data(action: TargetsCallbackAction) -> String {
     let suffix = match action {
         TargetsCallbackAction::Refresh => "r",
@@ -1361,6 +1772,15 @@ fn build_targets_callback_data(action: TargetsCallbackAction) -> String {
     format!("{TARGETS_CALLBACK_PREFIX}{suffix}")
 }
 
+/// 发送目标配置错误提示卡片。
+///
+/// # 参数
+/// - `request_chat_id`: 会话 ID
+/// - `client_id`: TDLib 客户端实例 ID
+/// - `err`: 错误引用
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 发送成功返回 `Ok(())`
 async fn send_targets_callback_error(
     request_chat_id: i64,
     client_id: i32,
@@ -1369,6 +1789,15 @@ async fn send_targets_callback_error(
     send_runtime_admin_callback_error(request_chat_id, client_id, "目标配置", err).await
 }
 
+/// 解析 64 位有符号整型参数。
+///
+/// # 参数
+/// - `text`: 分词后的切片
+/// - `index`: 参数索引
+/// - `usage`: 错误时的用法提示
+///
+/// # 返回值
+/// - `anyhow::Result<i64>`: 解析出的 i64
 fn parse_i64_arg(text: &[&str], index: usize, usage: &str) -> anyhow::Result<i64> {
     text.get(index)
         .ok_or_else(|| anyhow::anyhow!("{usage}"))?
@@ -1376,6 +1805,15 @@ fn parse_i64_arg(text: &[&str], index: usize, usage: &str) -> anyhow::Result<i64
         .map_err(Into::into)
 }
 
+/// 解析别名参数并去除首尾空白。
+///
+/// # 参数
+/// - `text`: 分词后的切片
+/// - `index`: 参数索引
+/// - `usage`: 错误时的用法提示
+///
+/// # 返回值
+/// - `anyhow::Result<String>`: 非空的别名字符串
 fn parse_alias_arg(text: &[&str], index: usize, usage: &str) -> anyhow::Result<String> {
     let alias = text
         .get(index)
@@ -1392,6 +1830,7 @@ mod tests {
     use super::*;
     use base64::engine::general_purpose;
 
+    // 验证所有目标回调动作的编码与反向解析双向一致性
     #[test]
     fn test_targets_callback_roundtrip() {
         let refresh = build_targets_callback_data(TargetsCallbackAction::Refresh);
@@ -1491,6 +1930,7 @@ mod tests {
         assert_eq!(parse_targets_callback_data("tcfg:bad"), None);
     }
 
+    // 验证历史旧版本 payload（不带上下文）能平滑兼容解析，默认回退到全部列表第一页
     #[test]
     fn test_targets_view_alias_callback_keeps_legacy_payload_compatible() {
         let legacy_view_alias = format!("tcfg:va:{}", encode_alias_payload("archive"));
@@ -1504,6 +1944,7 @@ mod tests {
         );
     }
 
+    // 验证目标配置文本卡片正确包含默认目标与别名区块
     #[test]
     fn test_format_targets_config_text_contains_sections() {
         let text = format_targets_config_text(
@@ -1520,6 +1961,7 @@ mod tests {
         assert!(!text.contains("/targets"));
     }
 
+    // 验证目标主页按钮只保留入口与管理，不再直接暴露冗余设置动作
     #[test]
     fn test_build_targets_buttons_use_callback_actions() {
         let app = crate::app_context::app_context();
@@ -1553,6 +1995,7 @@ mod tests {
         assert!(!labels.contains(&"设别名"));
     }
 
+    // 验证重置全部需要二次确认页
     #[test]
     fn test_targets_reset_confirm_buttons() {
         let rows = build_targets_reset_confirm_buttons();
@@ -1568,6 +2011,7 @@ mod tests {
         assert_eq!(decoded, "tcfg:x");
     }
 
+    // 验证别名分页列表生成纯数字编号按钮供进入详情
     #[test]
     fn test_build_aliases_page_buttons_select_detail_by_number() {
         let rows = build_aliases_page_buttons(
@@ -1600,6 +2044,7 @@ mod tests {
         assert_eq!(rows[0][1].text, "搜索别名");
     }
 
+    // 验证搜索结果页在保持数字序号按钮的同时，提供“重新搜索”和“返回别名列表”
     #[test]
     fn test_build_aliases_search_page_buttons_keep_numbered_actions() {
         let rows = build_aliases_search_page_buttons(
@@ -1629,6 +2074,7 @@ mod tests {
         assert!(!labels.contains(&"新增别名"));
     }
 
+    // 验证别名详情页的返回按钮能精确记忆来源视图
     #[test]
     fn test_targets_detail_buttons_return_to_source_list() {
         let alias_rows = build_alias_detail_buttons("archive", &AliasListContext::All { page: 2 });
@@ -1654,6 +2100,7 @@ mod tests {
         );
     }
 
+    // 验证过滤别名关键字不区分大小写
     #[test]
     fn test_filtered_aliases_is_case_insensitive() {
         let config = TargetsConfig {
@@ -1669,6 +2116,7 @@ mod tests {
         assert_eq!(filtered, vec![("Archive".to_owned(), 10001)]);
     }
 
+    // 验证搜索结果页展示搜索关键词
     #[test]
     fn test_format_aliases_search_page_text_shows_query() {
         let text = format_aliases_search_page_text(
@@ -1685,6 +2133,7 @@ mod tests {
         assert!(text.contains("archive"));
     }
 
+    // 验证配置规范化剔除空白 alias
     #[test]
     fn test_normalize_targets_config_removes_empty_alias() {
         let mut config = TargetsConfig {

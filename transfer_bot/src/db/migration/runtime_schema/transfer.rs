@@ -1,8 +1,11 @@
+//! 转存核心表（`transfer_job`、`transfer_item`、`transfer_result_message`）DDL 定义与索引创建。
+
 use sea_orm::ConnectionTrait;
 use sea_orm::sea_query::{ColumnDef, ForeignKeyAction, ForeignKeyCreateStatement, Index, Table};
 
 use super::exec_schema_statement;
 
+/// 创建转存主任务表、子条目表、结果定位消息表及全部关联外键与查询索引。
 pub(super) async fn create<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -317,6 +320,7 @@ where
     Ok(())
 }
 
+/// 按外键依赖逆序删除转存结果消息表、子项条目表与主任务表（若存在）。
 pub(super) async fn drop<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,

@@ -39,6 +39,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
         String::new(),
     ]);
 
+    // 拼接管理类功能区块
     lines.extend(build_management_help_index_blocks());
 
     lines.extend([
@@ -64,6 +65,7 @@ pub(in crate::tgbot::transfer::command::help) fn build_help_index_text() -> Stri
         help_command_text(Some("lookup"), CommandStyle::Long),
     ]);
 
+    // 拼接示例命令区块
     lines.extend(build_help_example_commands());
 
     lines.join("\n")
@@ -79,10 +81,13 @@ fn build_help_example_commands() -> Vec<String> {
         .collect()
 }
 
-/// 运行态管理命令在 help 目录页中的简要描述。
+/// 运行态管理命令在 help 目录页中的简要描述结构体。
 struct RuntimeAdminIndexTopic {
+    /// 管理功能显示标题
     title: &'static str,
+    /// 命令行语法总览
     synopsis: String,
+    /// 一句话功能摘要
     summary: &'static str,
 }
 
@@ -106,6 +111,7 @@ fn build_management_help_index_blocks() -> Vec<String> {
         String::new(),
     ];
 
+    // 循环追加各项运行态管理概览说明
     for topic in runtime_admin_index_topics() {
         lines.extend([
             topic.title.to_owned(),
@@ -119,7 +125,7 @@ fn build_management_help_index_blocks() -> Vec<String> {
     lines
 }
 
-/// 四个运行态管理命令在 help 目录页里的统一概览数据。
+/// 运行态管理命令在 help 目录页里的统一概览数据定义。
 fn runtime_admin_index_topics() -> Vec<RuntimeAdminIndexTopic> {
     let config = config_help_descriptor();
     let targets = targets_help_descriptor();
@@ -146,6 +152,7 @@ fn runtime_admin_index_topics() -> Vec<RuntimeAdminIndexTopic> {
 mod tests {
     use super::*;
 
+    /// 测试 help 目录页正文包含统一页头与各个命令分区
     #[test]
     fn test_build_help_index_text_uses_ready_header_and_command_sections() {
         let text = build_help_index_text();

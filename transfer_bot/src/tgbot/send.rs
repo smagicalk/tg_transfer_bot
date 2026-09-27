@@ -1,8 +1,10 @@
-// 发送消息工具入口：
-// - `buttons`：构造 inline keyboard / copy / url 按钮
-// - `message`：发送、编辑消息和应答 callback
-// - `panel`：命令层常用的统一回复面板
-// - `error`：统一交互错误卡片
+//! Telegram 消息发送与交互式界面渲染门面模块。
+//!
+//! # 核心职责
+//! - **按钮与键盘构建（`buttons`）**：构建内联回调按钮（Callback Button）、一键复制按钮（Copy Button）、超链接按钮（URL Button）以及原生选择器。
+//! - **消息发送与编辑（`message`）**：封装纯文本、卡片风格、Markdown 等格式的消息发送、编辑与异步回执等待。
+//! - **响应式面板（`panel`）**：提供类似 UI 组件的 `ReplyPanel`，统一组装正文、按钮矩阵与渲染样式。
+//! - **错误统一展示（`error`）**：统一封装带重试或恢复建议的交互式错误卡片。
 
 mod buttons;
 mod error;
@@ -31,3 +33,4 @@ pub use message::{
     wait_for_sent_message_with_timeout,
 };
 pub use panel::{ReplyPanel, ReplyPanelStyle};
+

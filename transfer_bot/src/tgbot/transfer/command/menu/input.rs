@@ -50,12 +50,18 @@ pub(super) use state::{
 
 use self::target::{TargetPromptContext, send_confirm_prompt, send_target_choice_prompt};
 
-/// Telegram 原生目标群组/频道选择按钮 ID。
+/// Telegram 原生目标群组选择按钮 ID。
 pub(super) const TARGET_GROUP_CHAT_REQUEST_BUTTON_ID: i32 = 7001;
+/// Telegram 原生目标频道选择按钮 ID。
 pub(super) const TARGET_CHANNEL_CHAT_REQUEST_BUTTON_ID: i32 = 7002;
 /// 原生聊天 reply keyboard 的手动输入兜底按钮文案。
 pub(super) const TARGET_CHAT_MANUAL_INPUT_TEXT: &str = "手动输入目标";
 
+/// 判断按钮 ID 是否属于转存目标的原生选聊请求按钮。
+///
+/// # 参数
+/// - `button_id`: 按钮 ID
+/// - `bool`: 若匹配群组或频道按钮 ID 返回 true
 fn is_target_chat_request_button(button_id: i32) -> bool {
     matches!(
         button_id,
@@ -67,19 +73,39 @@ fn is_target_chat_request_button(button_id: i32) -> bool {
 ///
 /// 这个按钮不是 inline callback，而是普通文本；因此必须在消费草稿后、
 /// 进入通用 ForceReply 解析前单独分流。
+///
+/// # 参数
+/// - `input`: 输入文本内容
+///
+/// # 返回值
+/// - `bool`: 若完全匹配手动输入按钮固定文本返回 true
 fn is_target_chat_manual_input(input: &str) -> bool {
     input == TARGET_CHAT_MANUAL_INPUT_TEXT
 }
 
+/// 原生选聊消息输入的决策结果枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SharedChatInputDecision {
+    /// 忽略不相关的按钮事件
     Ignore,
+    /// 推进至目标确认步骤
     Confirm(TargetContext),
+    /// 草稿已过期
     Expired,
+    /// 未找到匹配草稿
     Missing,
+    /// 处于错误或已过时的步骤
     Stale,
 }
 
+/// 评估原生选聊返回后的处理决策。
+///
+/// # 参数
+/// - `button_id`: 按钮 ID
+/// - `result`: 状态层目标上下文推进结果
+///
+/// # 返回值
+/// - `SharedChatInputDecision`: 最终决策
 fn shared_chat_input_decision(
     button_id: i32,
     result: TargetContextAdvanceResult,
@@ -99,6 +125,12 @@ fn shared_chat_input_decision(
 ///
 /// 先移除 chat 级键盘，再删除承载键盘的 bot 消息；任一步失败都只记录日志，
 /// 避免一次界面清理失败阻断已经完成的目标选择。
+///
+/// # 参数
+/// - `request_chat_id`: 会话 ID
+/// - `sender_user_id`: 用户 ID
+/// - `message_id`: 消息 ID
+/// - `client_id`: TDLib 客户端 ID
 async fn delete_native_picker_prompt(
     request_chat_id: i64,
     sender_user_id: i64,
@@ -130,6 +162,14 @@ async fn delete_native_picker_prompt(
 ///
 /// 命令切换、取消和超时都会调用它；两个 tracker 分开消费，避免旧流程的
 /// reply keyboard 在新流程中继续产生共享聊天消息。
+///
+/// # 参数
+/// - `request_chat_id`: 会话 ID
+/// - `sender_user_id`: 用户 ID
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `bool`: 若清理了至少一个残留 picker 消息返回 true
 pub(super) async fn clear_native_picker_messages(
     request_chat_id: i64,
     sender_user_id: i64,
@@ -147,6 +187,17 @@ pub(super) async fn clear_native_picker_messages(
     found
 }
 
+/// 发送转存目标原生选择器提示卡片及附带键盘。
+///
+/// # 参数
+/// - `request_chat_id`: 会话 ID
+/// - `sender_user_id`: 用户 ID
+/// - `source_link`: 转存源链接文本
+/// - `stale_message_id`: 可选的旧卡片消息 ID（将被删除）
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 发送成功返回 Ok(())
 pub(super) async fn send_target_chat_picker_prompt(
     request_chat_id: i64,
     sender_user_id: i64,
@@ -196,6 +247,12 @@ pub(super) async fn send_target_chat_picker_prompt(
 }
 
 /// 原生选聊返回的目标显示名；标题优先，username 作为降级。
+///
+/// # 参数
+/// - `chat`: Telegram 原生分享的聊天对象引用
+///
+/// # 返回值
+/// - `Option<String>`: 解析得到的展示名称
 fn shared_chat_display_name(chat: &tdlib_rs::types::SharedChat) -> Option<String> {
     let title = chat.title.trim();
     if !title.is_empty() {
@@ -205,6 +262,18 @@ fn shared_chat_display_name(chat: &tdlib_rs::types::SharedChat) -> Option<String
     (!username.is_empty()).then(|| format!("@{username}"))
 }
 
+/// 处理 Telegram 原生目标聊天选择器返回的共享聊天消息。
+///
+/// 支持转存目标选择以及管理配置中设置别名/默认目标的选择结果。
+///
+/// # 参数
+/// - `shared`: Telegram 原生分享的聊天结构体
+/// - `request_chat_id`: 会话 ID
+/// - `sender_user_id`: 用户 ID
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<bool>`: 若匹配并消费该事件返回 Ok(true)
 pub(in crate::tgbot::transfer::command::menu) async fn handle_shared_chat_input_on(
     shared: &tdlib_rs::types::MessageChatShared,
     request_chat_id: i64,
@@ -395,12 +464,21 @@ pub(super) struct MenuDraftSummary {
 /// 入口层只根据这个结果决定发送哪类提示，避免“无草稿 / 过期 / 活跃草稿”分支散落在多个地方。
 #[derive(Debug, Clone)]
 enum ContinueInputDecision {
+    /// 当前无草稿
     None,
+    /// 草稿已过期
     Expired,
+    /// 存在有效的活跃草稿
     Active(MenuInputDraft),
 }
 
 /// 把状态层的草稿读取结果映射为继续输入流程决策。
+///
+/// # 参数
+/// - `result`: 草稿取出结果
+///
+/// # 返回值
+/// - `ContinueInputDecision`: 继续输入决策
 fn continue_input_decision(result: DraftTakeResult) -> ContinueInputDecision {
     match result {
         DraftTakeResult::None => ContinueInputDecision::None,
@@ -410,6 +488,12 @@ fn continue_input_decision(result: DraftTakeResult) -> ContinueInputDecision {
 }
 
 /// 构造“继续输入时已过期”的恢复文案。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+///
+/// # 返回值
+/// - `String`: 恢复提示卡片文本
 fn build_continue_input_expired_text_on(app: &crate::app_context::AppContext) -> String {
     build_menu_recovery_text("输入已过期", "expired", &expired_input_detail_on(app))
 }
@@ -417,6 +501,13 @@ fn build_continue_input_expired_text_on(app: &crate::app_context::AppContext) ->
 /// 构造输入失败后的重试说明。
 ///
 /// 失败原因和下一步格式分开展示，避免用户只看到“失败”但不知道应该继续回复什么。
+///
+/// # 参数
+/// - `reason`: 失败原因文本
+/// - `next_detail`: 下一步指引说明
+///
+/// # 返回值
+/// - `String`: 拼接后的重试说明文本
 fn build_input_retry_detail(reason: &str, next_detail: &str) -> String {
     format!("{reason}\n\n{next_detail}")
 }
@@ -424,6 +515,12 @@ fn build_input_retry_detail(reason: &str, next_detail: &str) -> String {
 /// 解析单个别名输入。
 ///
 /// 这里明确不接受空白分隔的多词别名，保持和 `/targets set-alias <alias> <target>` 的命令格式一致。
+///
+/// # 参数
+/// - `input`: 输入字符串
+///
+/// # 返回值
+/// - `Option<String>`: 解析后的有效单词别名
 fn parse_single_alias_input(input: &str) -> Option<String> {
     let mut parts = input.split_whitespace();
     let alias = parts.next()?.trim();
@@ -437,6 +534,13 @@ fn parse_single_alias_input(input: &str) -> Option<String> {
 ///
 /// 共享聊天消息和 ForceReply 文本输入必须共用同一套参数解析，避免两条路径
 /// 对 alias 上下文或数字格式产生不同语义。
+///
+/// # 参数
+/// - `context`: 管理输入上下文引用
+/// - `target_chat_id`: 选中的目标 chat_id
+///
+/// # 返回值
+/// - `Option<Vec<String>>`: 构造好的命令参数集合
 fn shared_admin_chat_command(
     context: &state::AdminInputContext,
     target_chat_id: i64,
@@ -451,6 +555,14 @@ fn shared_admin_chat_command(
 }
 
 /// 管理输入当前阶段标签。
+///
+/// # 参数
+/// - `action`: 管理输入动作
+/// - `context_text`: 附带的文本上下文（如别名）
+/// - `_context_i64`: 附带的数字上下文
+///
+/// # 返回值
+/// - `&'static str`: 当前步骤说明标签（如 "1/2"）
 fn admin_input_step_label(
     action: AdminInputAction,
     context_text: Option<&str>,
@@ -467,6 +579,20 @@ fn admin_input_step_label(
 ///
 /// 参数同时覆盖“当前动作/上下文”“当前步骤文案”和“发送坐标”三组信息；
 /// 保持这些值显式传递，便于 ForceReply 与原生选聊两种 markup 共用同一入口。
+///
+/// # 参数
+/// - `action`: 管理输入动作
+/// - `picker_token`: 原生选择器关联 token
+/// - `step_label`: 步骤标签（如 "1/2"）
+/// - `title`: 卡片标题
+/// - `detail`: 详细说明
+/// - `placeholder`: 输入占位符
+/// - `request_chat_id`: 会话 ID
+/// - `sender_user_id`: 用户 ID
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 发送成功返回 Ok(())
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn send_admin_input_prompt(
     action: AdminInputAction,
@@ -523,6 +649,18 @@ fn build_continue_input_expired_text() -> String {
 }
 
 /// 从已知源消息直接启动目标选择流程。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `config`: Bot 配置引用
+/// - `chat_id`: 会话 ID
+/// - `sender_user_id`: 用户 ID
+/// - `kind`: 菜单输入类型
+/// - `source_link`: 转存源定位
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 成功启动返回 Ok(())
 pub(super) async fn start_transfer_target_choice_with_source_on(
     app: &crate::app_context::AppContext,
     config: std::sync::Arc<BotConfig>,
@@ -548,6 +686,17 @@ pub(super) async fn start_transfer_target_choice_with_source_on(
 }
 
 /// 从纯链接文本直接启动目标选择流程。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `config`: Bot 配置引用
+/// - `chat_id`: 会话 ID
+/// - `sender_user_id`: 用户 ID
+/// - `source_link`: 来源链接
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 成功启动返回 Ok(())
 pub(super) async fn start_transfer_target_choice_from_link_on(
     app: &crate::app_context::AppContext,
     config: std::sync::Arc<BotConfig>,
@@ -569,6 +718,13 @@ pub(super) async fn start_transfer_target_choice_from_link_on(
 }
 
 /// 读取当前输入草稿摘要，不消费草稿。
+///
+/// # 参数
+/// - `chat_id`: 会话 ID
+/// - `user_id`: 用户 ID
+///
+/// # 返回值
+/// - `anyhow::Result<Option<MenuDraftSummary>>`: 成功读取时返回草稿摘要
 pub(super) async fn current_draft_summary(
     chat_id: i64,
     user_id: i64,
@@ -582,6 +738,16 @@ pub(super) async fn current_draft_summary(
 }
 
 /// 在指定上下文上重新发送当前草稿所在阶段的提示。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `chat_id`: 会话 ID
+/// - `user_id`: 用户 ID
+/// - `config`: Bot 配置引用
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<bool>`: 若成功继续返回 Ok(true)
 pub(super) async fn continue_current_input_on(
     app: &crate::app_context::AppContext,
     chat_id: i64,
@@ -663,9 +829,24 @@ pub(super) async fn continue_current_input_on(
     Ok(true)
 }
 
-/// 处理菜单输入。
+/// 处理用户通过普通消息或 ForceReply 提交的菜单交互输入。
 ///
-/// 返回 true 表示本条消息已被输入流程消费；返回 false 表示没有匹配草稿。
+/// 当用户处于菜单的某一等待输入步骤（例如输入来源链接、任务 ID、目标会话或管理参数）并发送文本时，
+/// 路由分发器会调用本函数尝试匹配并消费该输入。
+///
+/// # 参数说明
+/// - `app`: 全局应用程序上下文引用，用于访问配置、数据库连接池及服务组件
+/// - `text`: 用户输入的文本内容字符串
+/// - `config`: 当前生效的机器人配置快照弧指针
+/// - `key`: 会话唯一标识键元组 `(request_chat_id, sender_user_id)`
+/// - `request_message_id`: 用户本次发送输入内容的消息 ID
+/// - `actor`: 请求操作者上下文（包含角色权限校验信息）
+/// - `client_id`: TDLib 客户端实例标识符
+///
+/// # 返回值
+/// - `Ok(true)`: 表示本条输入已成功被菜单输入会话草稿消费，无需其他处理器进一步处理
+/// - `Ok(false)`: 表示当前会话不存在有效草稿，未消费本条输入，可交由其他文本处理分支处理
+/// - `Err(...)`: 处理过程中发生不可恢复的底层错误
 pub(super) async fn handle_menu_input_on(
     app: &crate::app_context::AppContext,
     text: &str,
@@ -675,22 +856,31 @@ pub(super) async fn handle_menu_input_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<bool> {
+    // 解构出聊天会话 ID 与发送者用户 ID
     let (request_chat_id, sender_user_id) = key;
+    // 去除用户输入首尾的空白字符
     let input = text.trim();
+    // 若输入内容纯为空白，则直接忽略并不视为菜单输入消费
     if input.is_empty() {
         return Ok(false);
     }
 
+    // 从存储层取出当前用户的输入草稿状态并原子性移除
     let draft = match take_current_draft(key).await? {
+        // 存在活跃且未过期的输入草稿
         DraftTakeResult::Active(draft) => draft,
+        // 草稿已超时过期
         DraftTakeResult::Expired => {
+            // 清理可能遗留的原生选聊交互消息
             clear_native_picker_messages(request_chat_id, sender_user_id, client_id).await;
+            // 记录草稿过期的调试追踪日志
             tracing::debug!(
                 request_chat_id,
                 sender_user_id,
                 request_message_id,
                 "menu input draft expired"
             );
+            // 向用户发送输入会话已超时的卡片提示，并附带返回主菜单按钮
             send::ReplyPanel::card(build_continue_input_expired_text_on(app))
                 .row(vec![send::build_callback_button(
                     "返回菜单",
@@ -699,9 +889,12 @@ pub(super) async fn handle_menu_input_on(
                 )])
                 .send(request_chat_id, client_id)
                 .await?;
+            // 消费掉本次输入事件
             return Ok(true);
         }
+        // 当前用户没有任何关联的菜单输入草稿
         DraftTakeResult::None => {
+            // 记录未匹配到草稿的跟踪日志并放行给后续分发器
             tracing::trace!(
                 request_chat_id,
                 sender_user_id,
@@ -712,7 +905,9 @@ pub(super) async fn handle_menu_input_on(
         }
     };
 
+    // 检查用户输入的文本是否表示主动取消（如“取消”、“/cancel”等）
     if is_cancel_text(input) {
+        // 判断当前步骤是否使用了原生选聊键盘或原生会话请求按钮
         let had_picker = matches!(&draft.step, MenuInputStep::ChatPicker { .. })
             || matches!(
                 &draft.step,
@@ -722,14 +917,17 @@ pub(super) async fn handle_menu_input_on(
                     ..
                 } if admin_chat_request_button_ids(*action, *context_i64).is_some()
             );
+        // 清除任何可能激活的原生选聊按钮或等待提示
         let picker_message_cleared =
             clear_native_picker_messages(request_chat_id, sender_user_id, client_id).await;
+        // 记录用户通过文本取消输入的调试日志
         tracing::debug!(
             request_chat_id,
             sender_user_id,
             request_message_id,
             "menu input cancelled by text"
         );
+        // 发送操作已取消提示消息
         send_cancelled_notice(
             request_chat_id,
             client_id,
@@ -739,11 +937,14 @@ pub(super) async fn handle_menu_input_on(
         return Ok(true);
     }
 
+    // 检查用户是否点击或输入了“手动输入”文本指令
     if is_target_chat_manual_input(input) {
         match &draft.step {
+            // 普通转发/下载流程中的原生选聊阶段转为手动文本输入
             MenuInputStep::ChatPicker { kind, source_link } => {
                 let kind = *kind;
                 let source_link = source_link.clone();
+                // 若存在旧的原生选聊提示消息，先予以删除清理
                 if let Some(picker_message_id) = take_target_picker_message(key) {
                     delete_native_picker_prompt(
                         request_chat_id,
@@ -763,6 +964,7 @@ pub(super) async fn handle_menu_input_on(
                     input_kind = kind.log_name(),
                     "menu target chat picker switched to manual input"
                 );
+                // 发送附带 ForceReply 的手动目标输入提示卡片
                 send::send_card_message_with_force_reply_returning(
                     build_target_input_prompt_text(
                         &source_link,
@@ -776,6 +978,7 @@ pub(super) async fn handle_menu_input_on(
                 .await?;
                 return Ok(true);
             }
+            // 管理员配置流程中原生选聊转为手动文本输入
             MenuInputStep::AdminInput {
                 action,
                 context_text,
@@ -798,6 +1001,7 @@ pub(super) async fn handle_menu_input_on(
                     admin_action = action.log_name(),
                     "menu admin chat picker switched to manual input"
                 );
+                // 重新发送 ForceReply 手动输入提示
                 send_admin_input_prompt(
                     action,
                     None,
@@ -816,6 +1020,7 @@ pub(super) async fn handle_menu_input_on(
         }
     }
 
+    // 首先委托给通用的多步骤流程输入处理器（涵盖来源链接、目标会话选择、确认等流转）
     if let Some(consumed) = handle_flow_input(
         app,
         draft.clone(),
@@ -834,7 +1039,9 @@ pub(super) async fn handle_menu_input_on(
         return Ok(consumed);
     }
 
+    // 根据输入草稿所处的特定状态步骤进行分发处理
     match draft.step {
+        // 等待输入任务 ID 步骤（如针对特定任务执行暂停、恢复、取消、重试等操作）
         MenuInputStep::JobId { action } => {
             tracing::debug!(
                 request_chat_id,
@@ -843,7 +1050,9 @@ pub(super) async fn handle_menu_input_on(
                 job_action = action.log_name(),
                 "menu input job id received"
             );
+            // 尝试将用户输入的文本解析为合法有效的正整数任务 ID
             let Some(job_id) = parse_job_id_input(input) else {
+                // 解析失败：将草稿重新写回存储，保持等待用户输入任务 ID 状态
                 put_draft(key, MenuInputDraft::job_id(action)).await?;
                 tracing::debug!(
                     request_chat_id,
@@ -852,6 +1061,7 @@ pub(super) async fn handle_menu_input_on(
                     job_action = action.log_name(),
                     "menu input job id rejected"
                 );
+                // 发送 ForceReply 卡片提示用户格式不正确并引导重新输入
                 send::send_card_message_with_force_reply_returning(
                     build_step_prompt_text(
                         "1/1",
@@ -866,6 +1076,7 @@ pub(super) async fn handle_menu_input_on(
                 return Ok(true);
             };
 
+            // 记录正在分发执行任务命令的日志
             tracing::info!(
                 request_chat_id,
                 sender_user_id,
@@ -874,8 +1085,10 @@ pub(super) async fn handle_menu_input_on(
                 job_action = action.log_name(),
                 "menu input dispatching job command"
             );
+            // 调用底层的既有任务操作分发处理逻辑
             if let Err(err) = run_existing_job_command(app, action, job_id, actor, client_id).await
             {
+                // 命令执行失败（如任务不存在或状态不支持该操作）：保留草稿允许用户重试
                 put_draft(key, MenuInputDraft::job_id(action)).await?;
                 tracing::warn!(
                     request_chat_id,
@@ -886,8 +1099,10 @@ pub(super) async fn handle_menu_input_on(
                     error = %err,
                     "menu input job command failed, waiting for retry"
                 );
+                // 拼接失败原因与操作输入格式说明
                 let detail =
                     build_input_retry_detail(&format!("执行失败：{err}。"), action.input_detail());
+                // 发送重试提示卡片
                 send::send_card_message_with_force_reply_returning(
                     build_step_prompt_text("1/1", "任务操作未生效", &detail),
                     request_chat_id,
@@ -898,6 +1113,7 @@ pub(super) async fn handle_menu_input_on(
             }
             Ok(true)
         }
+        // 管理员参数配置输入步骤
         MenuInputStep::AdminInput {
             action,
             context_text,
@@ -910,9 +1126,13 @@ pub(super) async fn handle_menu_input_on(
                 admin_action = action.log_name(),
                 "menu input admin action received"
             );
+            // 针对具有多步流转特性的管理员动作进行前置处理
             match action {
+                // 别名绑定的第一步：输入目标别名名称
                 AdminInputAction::TargetsAliasName => {
+                    // 解析单个别名标识符
                     let Some(alias) = parse_single_alias_input(input) else {
+                        // 校验失败，保留草稿并重新发送第一步输入提示
                         put_draft(
                             key,
                             MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
@@ -931,6 +1151,7 @@ pub(super) async fn handle_menu_input_on(
                         return Ok(true);
                     };
 
+                    // 第一步别名校验通过，推进到第二步：设置目标会话 ID
                     let next_action = AdminInputAction::TargetsSetAlias;
                     // 用当前 alias 回复消息 ID 标记这次 picker，旧 alias 的共享结果不能复用。
                     let picker_token = Some(request_message_id);
@@ -947,6 +1168,7 @@ pub(super) async fn handle_menu_input_on(
                         selected_alias = %alias,
                         "menu input target alias first step accepted"
                     );
+                    // 发送第二步输入提示（支持原生选聊或手动输入）
                     send_admin_input_prompt(
                         next_action,
                         picker_token,
@@ -961,8 +1183,10 @@ pub(super) async fn handle_menu_input_on(
                     .await?;
                     return Ok(true);
                 }
+                // 搜索别名动作
                 AdminInputAction::TargetsAliasSearch => {
                     let Some(query) = parse_single_alias_input(input) else {
+                        // 搜索词不合法，提示重新输入
                         put_draft(
                             key,
                             MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
@@ -989,6 +1213,7 @@ pub(super) async fn handle_menu_input_on(
                         query = %query,
                         "menu input target alias search accepted"
                     );
+                    // 直接渲染并展示目标别名搜索结果的第一页
                     super::super::targets::send_alias_search_result_page_on(
                         app,
                         &query,
@@ -1002,6 +1227,7 @@ pub(super) async fn handle_menu_input_on(
                 _ => {}
             }
 
+            // 将用户输入解析为对应的管理员子命令参数列表
             let Some(command_owned) = parse_admin_input_payload(
                 action,
                 input,
@@ -1009,6 +1235,7 @@ pub(super) async fn handle_menu_input_on(
                 context_text.as_deref(),
                 context_i64,
             ) else {
+                // 解析失败：恢复草稿状态并引导重新输入
                 put_draft(
                     key,
                     MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
@@ -1038,6 +1265,7 @@ pub(super) async fn handle_menu_input_on(
                 return Ok(true);
             };
 
+            // 记录正在分发管理员配置指令日志
             tracing::info!(
                 request_chat_id,
                 sender_user_id,
@@ -1045,6 +1273,7 @@ pub(super) async fn handle_menu_input_on(
                 admin_action = action.log_name(),
                 "menu input dispatching admin config command"
             );
+            // 根据命令大类分别转发给 targets 或 config 模块的分发函数执行
             let result = match admin_command_kind(action) {
                 Some(AdminCommandKind::Targets) => {
                     run_existing_targets_command(app, command_owned, request_chat_id, client_id)
@@ -1060,6 +1289,7 @@ pub(super) async fn handle_menu_input_on(
                 )),
             };
             if let Err(err) = result {
+                // 命令执行报错：保留草稿并展示错误信息供用户重试
                 put_draft(
                     key,
                     MenuInputDraft::admin_input(action, context_text.clone(), context_i64),
@@ -1090,6 +1320,8 @@ pub(super) async fn handle_menu_input_on(
             }
             Ok(true)
         }
+        // 属于通用多步骤流转的草稿，正常情况下应在前方的 handle_flow_input 中被消费。
+        // 若意外落入此兜底分支，记录警告并引导用户返回主菜单，同时保留草稿防止数据丢失。
         MenuInputStep::SourceLink { .. }
         | MenuInputStep::TargetChoice { .. }
         | MenuInputStep::TargetChat { .. }
@@ -1102,7 +1334,9 @@ pub(super) async fn handle_menu_input_on(
                 step = ?draft.step,
                 "menu text input fell through to flow step unexpectedly"
             );
+            // 重新写回草稿
             put_draft(key, draft).await?;
+            // 发送过期/重置卡片，并附带返回主菜单按钮
             send::ReplyPanel::card(build_continue_input_expired_text_on(app))
                 .row(vec![send::build_callback_button(
                     "返回菜单",
@@ -1120,7 +1354,8 @@ pub(super) async fn handle_menu_input_on(
 mod tests {
     use super::*;
 
-    // 原生选聊确认页优先显示聊天标题，标题缺失时使用 username。
+    /// 测试原生选聊确认展示名称策略：
+    /// 原生选聊确认页优先显示聊天群组/频道标题（title），标题缺失或为空时降级使用用户名（@username）。
     #[test]
     fn test_shared_chat_display_name_prefers_title_then_username() {
         let mut chat = tdlib_rs::types::SharedChat {
@@ -1130,7 +1365,9 @@ mod tests {
             photo: None,
         };
 
+        // 优先展示自定义标题
         assert_eq!(shared_chat_display_name(&chat).as_deref(), Some("归档群"));
+        // 标题清空后应降级展示带有 @ 前缀的 username
         chat.title.clear();
         assert_eq!(
             shared_chat_display_name(&chat).as_deref(),
@@ -1138,17 +1375,21 @@ mod tests {
         );
     }
 
-    // “继续输入”按钮应先把状态层结果规整为纯决策，避免入口散落多个 match。
+    /// 测试继续输入决策映射：
+    /// “继续输入”按钮应先把底层状态层的获取结果规整为纯决策枚举，避免入口散落多个 match 分支。
     #[test]
     fn test_continue_input_decision_maps_draft_results() {
+        // 无草稿 -> None
         assert!(matches!(
             continue_input_decision(DraftTakeResult::None),
             ContinueInputDecision::None
         ));
+        // 超时草稿 -> Expired
         assert!(matches!(
             continue_input_decision(DraftTakeResult::Expired),
             ContinueInputDecision::Expired
         ));
+        // 活跃草稿 -> Active 并保留具体步骤数据
         assert!(matches!(
             continue_input_decision(DraftTakeResult::Active(MenuInputDraft::job_id(
                 MenuJobAction::Pause
@@ -1161,7 +1402,8 @@ mod tests {
         ));
     }
 
-    // 继续输入的过期提示应是恢复态，而不是等待态。
+    /// 测试继续输入的过期提示文本格式：
+    /// 继续输入的过期提示应是明确的恢复态（如包含 ‹expired› 状态），而不是普通等待输入态。
     #[test]
     fn test_build_continue_input_expired_text_uses_recovery_status() {
         let text = build_continue_input_expired_text();
@@ -1171,37 +1413,52 @@ mod tests {
         assert!(!text.contains("/menu"));
     }
 
+    /// 测试目标会话选择请求按钮 ID 是否限定在固定范围内（群组与频道两个固定 ID）。
     #[test]
     fn test_target_chat_request_button_ids_are_scoped() {
+        // 群组选择按钮 ID 应命中
         assert!(is_target_chat_request_button(
             TARGET_GROUP_CHAT_REQUEST_BUTTON_ID
         ));
+        // 频道选择按钮 ID 应命中
         assert!(is_target_chat_request_button(
             TARGET_CHANNEL_CHAT_REQUEST_BUTTON_ID
         ));
+        // 无关 ID 不应被误判
         assert!(!is_target_chat_request_button(7999));
     }
 
-    // 只有原生目标选择键盘的精确按钮文案才允许切换到手动输入，
-    // 防止普通目标文本被误判为流程控制动作。
+    /// 测试手动输入目标会话的触发文案判断：
+    /// 只有原生目标选择键盘的精确按钮文案才允许切换到手动输入，
+    /// 防止普通目标文本被误判为流程控制动作。
     #[test]
     fn test_target_chat_manual_input_text_is_scoped() {
+        // 精确匹配“✍️ 手动输入”
         assert!(is_target_chat_manual_input(TARGET_CHAT_MANUAL_INPUT_TEXT));
+        // 非完全匹配项不应触发
         assert!(!is_target_chat_manual_input("手动输入"));
         assert!(!is_target_chat_manual_input("-100123456"));
     }
 
-    // 同一草稿重复打开选聊时只保留最新消息，完成选择后可一次性取出旧消息 ID。
+    /// 测试选聊提示消息 ID 的追踪与替换清理：
+    /// 同一草稿重复打开选聊时只保留最新消息，完成选择后可一次性取出旧消息 ID 并删除。
     #[test]
     fn test_target_picker_message_tracking_replaces_and_consumes() {
         let key = (i64::MIN + 7001, i64::MIN + 7002);
+        // 初始为空
         assert_eq!(take_target_picker_message(key), None);
+        // 第一次记录，此前无旧消息
         assert_eq!(remember_target_picker_message(key, 101), None);
+        // 第二次记录，返回被替换的旧消息 ID 101
         assert_eq!(remember_target_picker_message(key, 202), Some(101));
+        // 消费取出当前最新的消息 ID 202
         assert_eq!(take_target_picker_message(key), Some(202));
+        // 再次获取应已被清空
         assert_eq!(take_target_picker_message(key), None);
     }
 
+    /// 测试共享会话输入决策：
+    /// 共享会话输入需要严格匹配活跃的选聊器状态及对应的按钮 ID。
     #[test]
     fn test_shared_chat_input_decision_requires_active_picker() {
         let context = state::TargetContext {
@@ -1209,6 +1466,7 @@ mod tests {
             source_link: "https://t.me/c/1/2".to_owned(),
         };
 
+        // 非法按钮 ID 应直接被忽略
         assert_eq!(
             shared_chat_input_decision(
                 7999,
@@ -1216,6 +1474,7 @@ mod tests {
             ),
             SharedChatInputDecision::Ignore
         );
+        // 合法群组请求按钮且处于活跃上下文，应推进至 Confirm 状态
         assert_eq!(
             shared_chat_input_decision(
                 TARGET_GROUP_CHAT_REQUEST_BUTTON_ID,
@@ -1223,6 +1482,7 @@ mod tests {
             ),
             SharedChatInputDecision::Confirm(context)
         );
+        // 步骤不匹配时判定为陈旧消息 (Stale)
         assert_eq!(
             shared_chat_input_decision(
                 TARGET_CHANNEL_CHAT_REQUEST_BUTTON_ID,
@@ -1232,7 +1492,8 @@ mod tests {
         );
     }
 
-    // continue 输入的流程草稿若意外落到本层，也应继续走流程提示，而不是 panic。
+    /// 测试“继续输入”落入流式步骤时的可恢复性：
+    /// continue 输入的流程草稿若意外落到本层，也应正确识别为 SourceLink 步骤并引导流式恢复。
     #[test]
     fn test_continue_input_flow_step_is_still_recoverable() {
         let draft = MenuInputDraft::source_link(MenuInputKind::Transfer);
@@ -1240,7 +1501,8 @@ mod tests {
         assert!(matches!(draft.step, MenuInputStep::SourceLink { .. }));
     }
 
-    // 别名第一步只接受单个 token，和 `/targets set-alias <alias> <target>` 保持一致。
+    /// 测试别名输入的单 token 解析验证：
+    /// 别名第一步只接受单个 token，首尾允许空格，中间不允许空格，与 `/targets set-alias <alias> <target>` 保持一致。
     #[test]
     fn test_parse_single_alias_input() {
         assert_eq!(
@@ -1255,7 +1517,8 @@ mod tests {
         assert_eq!(parse_single_alias_input(""), None);
     }
 
-    // 输入失败提示必须同时包含失败原因和下一步格式，用户才能继续修正。
+    /// 测试重试错误提示文案的组装：
+    /// 输入失败提示必须同时包含失败原因和下一步格式，用户才能清晰了解如何继续修正。
     #[test]
     fn test_build_input_retry_detail_contains_reason_and_next_step() {
         let detail = build_input_retry_detail("输入格式不正确。", "请回复纯数字 job_id。");
@@ -1264,6 +1527,8 @@ mod tests {
         assert!(detail.contains("请回复纯数字 job_id"));
     }
 
+    /// 测试管理员两步流程的步骤指示标签：
+    /// TargetsAliasName 为第一步 "1/2"，TargetsSetDefault 为单步 "1/1"。
     #[test]
     fn test_admin_input_step_label_for_targets_two_step_flow() {
         assert_eq!(
@@ -1276,6 +1541,8 @@ mod tests {
         );
     }
 
+    /// 测试管理员各配置动作是否使用原生聊天选择器（原生键盘）：
+    /// 设置默认目标与设置别名均需选聊，而别名输入、搜索与并发设置则无需原生选聊。
     #[test]
     fn test_admin_target_actions_use_native_chat_picker() {
         assert!(AdminInputAction::TargetsSetDefault.uses_chat_picker());
@@ -1285,6 +1552,8 @@ mod tests {
         assert!(!AdminInputAction::ConfigSetJobConcurrency.uses_chat_picker());
     }
 
+    /// 测试管理员原生选聊请求按钮 ID 的隔离性与唯一性：
+    /// 确保不同动作、不同消息 token 派生的按钮 ID 互不冲突，且不与通用目标选择按钮 ID 混淆。
     #[test]
     fn test_admin_chat_picker_button_ids_are_scoped_to_flow() {
         let default_first =
@@ -1297,14 +1566,20 @@ mod tests {
             state::admin_chat_request_button_ids(AdminInputAction::TargetsSetAlias, Some(100))
                 .expect("target alias supports chat picker");
 
+        // 不同的 token 生成不同的 button_id
         assert_ne!(default_first, default_second);
+        // 不同的 action 生成不同的 button_id
         assert_ne!(default_first, alias_first);
+        // 不应与目标普通选聊 button_id 冲突
         assert!(!is_target_chat_request_button(default_first.0));
         assert!(!is_target_chat_request_button(default_first.1));
+        // 应符合管理员聊天请求按钮的判定
         assert!(state::is_admin_chat_request_button(alias_first.0));
         assert!(state::is_admin_chat_request_button(alias_first.1));
     }
 
+    /// 测试共享管理员聊天回调转化为等价 targets 文本命令：
+    /// 验证选择共享聊天后正确复用既有的 `/targets set-default` 与 `/targets set-alias` 命令参数结构。
     #[test]
     fn test_shared_admin_chat_command_reuses_targets_commands() {
         let default_context = state::AdminInputContext {

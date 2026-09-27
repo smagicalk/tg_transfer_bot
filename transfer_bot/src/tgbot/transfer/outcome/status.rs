@@ -8,6 +8,14 @@ use super::super::command::{
 };
 
 /// 发送“任务已暂停”的状态卡片。
+///
+/// # 参数
+/// - `title`: 卡片顶部大标题（如 "任务已暂停"）。
+/// - `source_link`: 原始源消息链接。
+/// - `target_chat_id`: 目标聊天 ID。
+/// - `job_id`: 任务数据库主键 ID。
+/// - `notify_chat_id`: 接收该状态通知的聊天 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub(in crate::tgbot::transfer) async fn send_paused_message(
     title: &str,
     source_link: &str,
@@ -30,6 +38,14 @@ pub(in crate::tgbot::transfer) async fn send_paused_message(
 }
 
 /// 发送“任务正在停止”的状态卡片。
+///
+/// # 参数
+/// - `title`: 卡片顶部标题。
+/// - `source_link`: 原始源消息链接。
+/// - `target_chat_id`: 目标聊天 ID。
+/// - `job_id`: 任务 ID。
+/// - `notify_chat_id`: 接收通知的聊天 ID。
+/// - `client_id`: TDLib 客户端 ID。
 pub(in crate::tgbot::transfer) async fn send_cancelling_message(
     title: &str,
     source_link: &str,
@@ -52,6 +68,14 @@ pub(in crate::tgbot::transfer) async fn send_cancelling_message(
 }
 
 /// 发送“任务已停止”的状态卡片。
+///
+/// # 参数
+/// - `title`: 卡片顶部标题。
+/// - `source_link`: 原始源消息链接。
+/// - `target_chat_id`: 目标聊天 ID。
+/// - `job_id`: 任务 ID。
+/// - `notify_chat_id`: 接收通知的聊天 ID。
+/// - `client_id`: TDLib 客户端 ID。
 pub(in crate::tgbot::transfer) async fn send_cancelled_message(
     title: &str,
     source_link: &str,
@@ -74,6 +98,14 @@ pub(in crate::tgbot::transfer) async fn send_cancelled_message(
 }
 
 /// 发送“任务仍在运行中”的状态卡片。
+///
+/// # 参数
+/// - `title`: 卡片顶部标题。
+/// - `source_link`: 原始源消息链接。
+/// - `target_chat_id`: 目标聊天 ID。
+/// - `job_id`: 任务 ID。
+/// - `notify_chat_id`: 接收通知的聊天 ID。
+/// - `client_id`: TDLib 客户端 ID。
 pub(in crate::tgbot::transfer) async fn send_running_message(
     title: &str,
     source_link: &str,
@@ -97,7 +129,13 @@ pub(in crate::tgbot::transfer) async fn send_running_message(
 
 /// 构造中间状态卡片按钮。
 ///
-/// 所有状态统一为：第一行任务主操作，第二行列表/命令/菜单导航。
+/// 所有状态统一为两行布局：
+/// - 第一行：针对该任务的主操作（如恢复、暂停、停止、详情）；
+/// - 第二行：全局导航（列表跳转、查看命令帮助、返回主菜单）。
+///
+/// # 参数
+/// - `status`: 状态标识（如 "paused", "cancelling", "cancelled", "running"）。
+/// - `job_id`: 任务 ID。
 pub(in crate::tgbot::transfer) fn build_status_button_rows(
     status: &str,
     job_id: i64,
@@ -120,9 +158,13 @@ pub(in crate::tgbot::transfer) fn build_status_button_rows(
     ]
 }
 
-/// 构造任务操作行。
+/// 构造单任务动作行按钮。
 ///
 /// 这行只承载和单个任务直接相关的操作；列表、命令与菜单导航统一由上层单独拼接。
+///
+/// # 参数
+/// - `status`: 当前任务状态。
+/// - `job_id`: 任务 ID。
 pub(in crate::tgbot::transfer) fn build_job_action_row(
     status: &str,
     job_id: i64,
@@ -164,7 +206,13 @@ pub(in crate::tgbot::transfer) fn build_job_action_row(
     action_row
 }
 
-/// 中间状态卡片的列表入口文案。
+/// 中间状态卡片的列表入口文案映射。
+///
+/// # 参数
+/// - `status`: 状态字符串。
+///
+/// # 返回值
+/// - 适合按钮展示的中文标签。
 fn status_list_label(status: &str) -> &'static str {
     match status {
         "paused" => "查看暂停列表",
@@ -175,7 +223,17 @@ fn status_list_label(status: &str) -> &'static str {
     }
 }
 
-/// 构造任务中间状态卡片。
+/// 构造任务中间状态卡片纯文本。
+///
+/// 组合状态指示行、分隔线、详细说明以及源链接展示块。
+///
+/// # 参数
+/// - `title`: 大标题。
+/// - `status`: 任务状态。
+/// - `source_link`: 源消息链接。
+/// - `target_chat_id`: 目标聊天 ID。
+/// - `job_id`: 任务 ID。
+/// - `detail`: 状态详细说明段落。
 pub(in crate::tgbot::transfer) fn format_status_card_text(
     title: &str,
     status: &str,

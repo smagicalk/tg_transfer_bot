@@ -1,3 +1,16 @@
+//! 进程内全局共享运行时状态管理。
+//!
+//! 提供转存机器人生命周期内所需的全部共享组件，包括：
+//! - 权限与动态白名单控制 (`AccessControlState`)
+//! - 转存任务并发槽位与排空状态 (`TransferRuntimeState`)
+//! - 目标频道映射与运行时配置 (`TargetsRuntimeState`)
+//! - TDLib 下载进度与上传进度监听快照 (`DownloadProgressStore`, `UploadProgressStore`)
+//! - 下载防重合并与 Singleflight 调度 (`InflightDownloadRegistry`)
+//! - 防重执行 Guard 互斥原语 (`TransferExecutionGuards`)
+//! - 机器人键盘/按钮等发送能力开关 (`SendCapabilities`)
+//! - 用户执行器按需登录与生命周期状态 (`ExecutorRuntimeState`)
+//! - 解析失败重试上下文与二次确认计划卡片缓存 (`LookupRetryState`, `RetransferConfirmState`)
+
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
@@ -7,24 +20,41 @@ use std::time::Duration;
 
 use crate::config::{ClientRole, TargetsConfig, TransferClientIds, TransferConfig};
 
+/// 全局懒加载单例实例。
 static APP_CONTEXT: LazyLock<Arc<AppContext>> = LazyLock::new(|| Arc::new(AppContext::default()));
 
+/// 获取全局唯一的应用上下文实例句柄。
 pub(crate) fn app_context() -> Arc<AppContext> {
     APP_CONTEXT.clone()
 }
 
+/// 应用程序全局状态集合体。
+///
+/// 内部所有字段均使用 `Arc` 包裹，并在其内部封装适当的并发原语（`RwLock`、`Mutex` 或原子类型），
+/// 因而整体结构体克隆成本极低，可安全在多个异步任务与 TDLib 事件循环间传递。
 #[derive(Clone)]
 pub struct AppContext {
+    /// 用户鉴权与动态白名单访问控制状态。
     pub(crate) access_control: Arc<AccessControlState>,
+    /// 转存任务并发数限制、排空控制及运行时转存配置。
     pub(crate) transfer_runtime: Arc<TransferRuntimeState>,
+    /// 目标频道与映射分类运行时配置。
     pub(crate) targets_runtime: Arc<TargetsRuntimeState>,
+    /// TDLib 文件下载进度内存快照存储。
     pub(crate) download_progress: Arc<DownloadProgressStore>,
+    /// TDLib 文件上传进度内存快照存储及反向索引。
     pub(crate) upload_progress: Arc<UploadProgressStore>,
+    /// 下载中的文件防击穿/Singleflight 调度注册表。
     pub(crate) inflight_downloads: Arc<InflightDownloadRegistry>,
+    /// 任务与目标频道的互斥执行 Guard 集合，防止相同任务重复拉起。
     pub(crate) transfer_guards: Arc<TransferExecutionGuards>,
+    /// 机器人消息发送能力特性探测（例如是否支持内联按钮 reply_markup）。
     pub(crate) send_capabilities: Arc<SendCapabilities>,
+    /// 按需登录的用户执行器运行时生命周期与登录凭据状态。
     pub(crate) executor_runtime: Arc<ExecutorRuntimeState>,
+    /// 链接解析失败后供重试回调查询的会话上下文缓存。
     pub(crate) lookup_retry: Arc<LookupRetryState>,
+    /// 再次转存确认卡片的短期计划缓存（避免 callback_data 超长）。
     pub(crate) retransfer_confirm: Arc<RetransferConfirmState>,
 }
 
@@ -46,54 +76,76 @@ impl Default for AppContext {
     }
 }
 
-/// 按需登录用户执行器的运行状态。
+/// 按需登录用户执行器的运行状态阶段。
 ///
 /// Bot 始终独立运行；用户执行器只在需要读取私有源或 Bot 权限不足时由 owner 登录。
 /// 状态只保存 client 与交互定位，不保存二维码链接、密码或其他登录凭据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecutorPhase {
+    /// 离线状态：未登录或已登出。
     #[default]
     Offline,
+    /// 正在启动执行器客户端。
     Starting,
+    /// 等待用户扫描二维码登录。
     WaitingQr,
+    /// 等待用户输入两步验证密码。
     WaitingPassword,
+    /// 就绪状态：执行器已正常登录并可承接转存任务。
     Ready,
+    /// 排空状态：正在等待正在处理的任务完成，准备登出或停机。
     Draining,
+    /// 正在执行登出流程。
     LoggingOut,
 }
 
+/// 按需用户执行器（User Client）的运行时内存状态。
 #[derive(Default)]
 pub struct ExecutorRuntimeState {
+    /// 当前执行器所处的生命周期阶段。
     phase: RwLock<ExecutorPhase>,
+    /// 当前用户客户端在 TDLib 内部注册的 Client ID（若已创建）。
     user_client_id: RwLock<Option<i32>>,
+    /// 拥有者（Owner）的 Telegram Chat ID，用于定向推送二维码和登录通知。
     owner_chat_id: RwLock<Option<i64>>,
+    /// 本地生成的二维码图片临时路径。
     qr_image_path: RwLock<Option<PathBuf>>,
+    /// 发送给用户的二维码消息 ID，刷新二维码时可直接编辑该消息。
     qr_message_id: RwLock<Option<i64>>,
+    /// 提示输入两步验证密码的消息 ID。
     password_prompt_message_id: RwLock<Option<i64>>,
+    /// 当前已登录用户执行器的身份摘要信息。
     identity: RwLock<Option<ExecutorIdentity>>,
 }
 
 /// 已登录执行器的非敏感账号摘要，用于 owner 在面板中确认当前会话。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutorIdentity {
+    /// Telegram 用户 ID。
     pub user_id: i64,
+    /// 账号昵称（First Name + Last Name）。
     pub display_name: String,
+    /// 账号用户名（不带 @ 前缀）。
     pub username: Option<String>,
 }
 
 impl ExecutorRuntimeState {
+    /// 获取当前用户执行器的运行生命周期阶段。
     pub fn phase(&self) -> ExecutorPhase {
         *recover_rwlock_read(&self.phase, "executor phase")
     }
 
+    /// 获取当前绑定的 TDLib User Client ID。
     pub fn user_client_id(&self) -> Option<i32> {
         *recover_rwlock_read(&self.user_client_id, "executor user client id")
     }
 
+    /// 获取发起登录的 Owner Chat ID。
     pub fn owner_chat_id(&self) -> Option<i64> {
         *recover_rwlock_read(&self.owner_chat_id, "executor owner chat id")
     }
 
+    /// 标记开始登录流程，重置二维码与身份，并将阶段置为 `Starting`。
     pub fn begin_login(&self, user_client_id: i32, owner_chat_id: i64) {
         *recover_rwlock_write(&self.user_client_id, "executor user client id") =
             Some(user_client_id);
@@ -103,10 +155,12 @@ impl ExecutorRuntimeState {
         *recover_rwlock_write(&self.phase, "executor phase") = ExecutorPhase::Starting;
     }
 
+    /// 若给定的 client_id 与当前用户执行器相匹配，则返回 `ClientRole::User`。
     pub fn role_for_client_id(&self, client_id: i32) -> Option<ClientRole> {
         (self.user_client_id() == Some(client_id)).then_some(ClientRole::User)
     }
 
+    /// 若当前阶段处于 `Starting`，将其转换至 `WaitingQr` 状态以请求二维码。
     pub fn request_qr_if_starting(&self, client_id: i32) -> bool {
         if self.user_client_id() != Some(client_id) {
             return false;
@@ -119,6 +173,7 @@ impl ExecutorRuntimeState {
         true
     }
 
+    /// 将执行器阶段设为等待两步验证密码 (`WaitingPassword`)。
     pub fn set_waiting_password(&self, client_id: i32) -> bool {
         if self.user_client_id() != Some(client_id) {
             return false;
@@ -127,6 +182,7 @@ impl ExecutorRuntimeState {
         true
     }
 
+    /// 标记执行器已就绪 (`Ready`)。
     pub fn mark_ready(&self, client_id: i32) -> bool {
         if self.user_client_id() != Some(client_id) {
             return false;
@@ -135,6 +191,7 @@ impl ExecutorRuntimeState {
         true
     }
 
+    /// 标记执行器正在登出 (`LoggingOut`)。
     pub fn mark_logging_out(&self, client_id: i32) -> bool {
         if self.user_client_id() != Some(client_id) {
             return false;
@@ -143,6 +200,7 @@ impl ExecutorRuntimeState {
         true
     }
 
+    /// 开始排空当前用户执行器中的存量转存任务。
     pub fn begin_draining(&self, client_id: i32) -> bool {
         if self.user_client_id() != Some(client_id) || self.phase() != ExecutorPhase::Ready {
             return false;
@@ -151,6 +209,7 @@ impl ExecutorRuntimeState {
         true
     }
 
+    /// 取消排空状态，恢复就绪 (`Ready`)。
     pub fn cancel_draining(&self, client_id: i32) -> bool {
         if self.user_client_id() != Some(client_id) || self.phase() != ExecutorPhase::Draining {
             return false;
@@ -159,6 +218,7 @@ impl ExecutorRuntimeState {
         true
     }
 
+    /// 登出失败时回滚阶段至就绪 (`Ready`)。
     pub fn restore_ready_after_logout_failure(&self, client_id: i32) -> bool {
         if self.user_client_id() != Some(client_id) || self.phase() != ExecutorPhase::LoggingOut {
             return false;
@@ -167,6 +227,7 @@ impl ExecutorRuntimeState {
         true
     }
 
+    /// 若给定的 client_id 匹配，则清理全部用户执行器会话状态并重置为离线 (`Offline`)。
     pub fn clear_user_client_if(&self, client_id: i32) -> bool {
         if self.user_client_id() != Some(client_id) {
             return false;
@@ -179,10 +240,12 @@ impl ExecutorRuntimeState {
         true
     }
 
+    /// 替换保存的二维码图片文件路径，返回先前的路径（若有）。
     pub fn replace_qr_image_path(&self, path: PathBuf) -> Option<PathBuf> {
         recover_rwlock_write(&self.qr_image_path, "executor qr image path").replace(path)
     }
 
+    /// 取出并移除二维码图片文件路径。
     pub fn take_qr_image_path(&self) -> Option<PathBuf> {
         recover_rwlock_write(&self.qr_image_path, "executor qr image path").take()
     }
@@ -192,10 +255,12 @@ impl ExecutorRuntimeState {
         recover_rwlock_write(&self.qr_message_id, "executor qr message id").replace(message_id)
     }
 
+    /// 获取当前展示二维码的消息 ID。
     pub fn qr_message_id(&self) -> Option<i64> {
         *recover_rwlock_read(&self.qr_message_id, "executor qr message id")
     }
 
+    /// 若执行器处于就绪状态，设置当前账号的身份摘要。
     pub fn set_identity_if_ready(&self, client_id: i32, identity: ExecutorIdentity) -> bool {
         if self.user_client_id() != Some(client_id) || self.phase() != ExecutorPhase::Ready {
             return false;
@@ -204,10 +269,12 @@ impl ExecutorRuntimeState {
         true
     }
 
+    /// 获取当前登录账号的身份摘要（若已就绪）。
     pub fn identity(&self) -> Option<ExecutorIdentity> {
         recover_rwlock_read(&self.identity, "executor identity").clone()
     }
 
+    /// 保存或替换两步验证密码提示消息的 ID。
     pub fn replace_password_prompt_message_id(&self, message_id: i64) -> Option<i64> {
         recover_rwlock_write(
             &self.password_prompt_message_id,
@@ -216,6 +283,7 @@ impl ExecutorRuntimeState {
         .replace(message_id)
     }
 
+    /// 取出并清除两步验证密码提示消息的 ID。
     pub fn take_password_prompt_message_id(&self) -> Option<i64> {
         recover_rwlock_write(
             &self.password_prompt_message_id,
@@ -224,6 +292,7 @@ impl ExecutorRuntimeState {
         .take()
     }
 
+    /// 获取当前两步验证密码提示消息的 ID。
     pub fn password_prompt_message_id(&self) -> Option<i64> {
         *recover_rwlock_read(
             &self.password_prompt_message_id,
@@ -235,6 +304,7 @@ impl ExecutorRuntimeState {
 /// 运行时动态授权名单；持久化由数据库访问层负责。
 #[derive(Default)]
 pub struct AccessControlState {
+    /// 已授权使用机器人的 Telegram 用户 ID 集合。
     authorized_user_ids: RwLock<HashSet<i64>>,
 }
 
@@ -246,6 +316,7 @@ impl AccessControlState {
         guard.extend(user_ids.into_iter().filter(|user_id| *user_id > 0));
     }
 
+    /// 检查指定用户 ID 是否在授权白名单中。
     pub fn is_authorized(&self, user_id: i64) -> bool {
         user_id > 0
             && recover_rwlock_read(&self.authorized_user_ids, "authorized user ids")
@@ -265,25 +336,35 @@ impl AccessControlState {
     }
 }
 
+/// 链接解析重试的会话上下文。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LookupRetryContext {
+    /// 触发解析失败的原始源链接。
     pub source_link: String,
+    /// 用户选定或默认的目标频道/群组 Chat ID。
     pub target_chat_id: i64,
 }
 
+/// 解析失败重试上下文管理器。
 #[derive(Default)]
 pub struct LookupRetryState {
+    /// 按 `(request_chat_id, sender_user_id, message_id)` 定位的上下文条目映射。
     by_message: RwLock<HashMap<(i64, i64, i64), LookupRetryEntry>>,
+    /// 单调递增的序列号生成器，用于淘汰最旧条目。
     sequence: AtomicUsize,
 }
 
+/// 携带插入顺序序号的重试上下文条目。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LookupRetryEntry {
+    /// 解析重试上下文。
     context: LookupRetryContext,
+    /// 插入时的全局时序编号。
     sequence: usize,
 }
 
 impl LookupRetryState {
+    /// 存入解析重试上下文，并限制每个用户的历史条目数量。
     pub fn put_context(
         &self,
         request_chat_id: i64,
@@ -300,6 +381,7 @@ impl LookupRetryState {
         prune_lookup_retry_entries(&mut guard, request_chat_id, sender_user_id);
     }
 
+    /// 取出并移除指定消息的解析重试上下文（一次性消费）。
     pub fn take_context(
         &self,
         request_chat_id: i64,
@@ -312,6 +394,7 @@ impl LookupRetryState {
     }
 }
 
+/// 单个用户在内存中保留的最近解析重试上下文上限。
 const LOOKUP_RETRY_CONTEXT_LIMIT_PER_USER: usize = 8;
 
 /// “再次转存”确认卡的短期上下文。
@@ -319,10 +402,12 @@ const LOOKUP_RETRY_CONTEXT_LIMIT_PER_USER: usize = 8;
 /// callback_data 不能容纳完整源链接，因此按卡片消息定位保存计划；确认后立即消费。
 #[derive(Default)]
 pub struct RetransferConfirmState {
+    /// 键为 `(request_chat_id, sender_user_id, message_id)`，值为对应的转存执行计划。
     by_message: RwLock<HashMap<(i64, i64, i64), crate::tgbot::transfer::types::TransferPlan>>,
 }
 
 impl RetransferConfirmState {
+    /// 存入二次确认计划卡片上下文。
     pub(crate) fn put_plan(
         &self,
         request_chat_id: i64,
@@ -347,6 +432,7 @@ impl RetransferConfirmState {
         }
     }
 
+    /// 取出并消费二次确认转存计划。
     pub(crate) fn take_plan(
         &self,
         request_chat_id: i64,
@@ -361,6 +447,7 @@ impl RetransferConfirmState {
     }
 }
 
+/// 淘汰超出限制的最旧解析重试上下文条目。
 fn prune_lookup_retry_entries(
     entries: &mut HashMap<(i64, i64, i64), LookupRetryEntry>,
     request_chat_id: i64,
@@ -383,26 +470,33 @@ fn prune_lookup_retry_entries(
     }
 }
 
+/// 目标频道配置的运行时动态容器。
 #[derive(Default)]
 pub struct TargetsRuntimeState {
+    /// 当前生效的目标频道配置。
     runtime_config: RwLock<TargetsConfig>,
+    /// 配置文件或数据库中持久化的初始默认配置（用于重置/比对）。
     runtime_default_config: RwLock<TargetsConfig>,
 }
 
 impl TargetsRuntimeState {
+    /// 同时初始化运行时配置与默认基准配置。
     pub fn init_runtime_config(&self, config: TargetsConfig, default_config: TargetsConfig) {
         self.set_runtime_default_config(default_config);
         self.update_runtime_config(config);
     }
 
+    /// 动态热更新当前目标频道配置。
     pub fn update_runtime_config(&self, config: TargetsConfig) {
         *recover_rwlock_write(&self.runtime_config, "targets runtime config") = config;
     }
 
+    /// 获取当前生效的目标频道配置快照。
     pub fn runtime_config(&self) -> TargetsConfig {
         recover_rwlock_read(&self.runtime_config, "targets runtime config").clone()
     }
 
+    /// 设置默认目标频道配置。
     pub fn set_runtime_default_config(&self, config: TargetsConfig) {
         *recover_rwlock_write(
             &self.runtime_default_config,
@@ -410,6 +504,7 @@ impl TargetsRuntimeState {
         ) = config;
     }
 
+    /// 获取默认目标频道配置快照。
     pub fn runtime_default_config(&self) -> TargetsConfig {
         recover_rwlock_read(
             &self.runtime_default_config,
@@ -419,7 +514,9 @@ impl TargetsRuntimeState {
     }
 }
 
+/// 消息发送能力探测开关。
 pub struct SendCapabilities {
+    /// 是否支持附带内联键盘等 reply_markup 发送消息。
     reply_markup_enabled: AtomicBool,
 }
 
@@ -432,25 +529,40 @@ impl Default for SendCapabilities {
 }
 
 impl SendCapabilities {
+    /// 设置是否允许发送 reply_markup。
     pub fn set_reply_markup_enabled(&self, enabled: bool) {
         self.reply_markup_enabled.store(enabled, Ordering::Relaxed);
     }
 
+    /// 查询当前是否允许发送 reply_markup。
     pub fn reply_markup_enabled(&self) -> bool {
         self.reply_markup_enabled.load(Ordering::Relaxed)
     }
 }
 
+/// 转存核心引擎的运行时控制状态。
+///
+/// 负责并发度管控（槽位申请与释放）、平滑排空（Drain）、双客户端 ID 关联以及本地文件路径索引。
 pub struct TransferRuntimeState {
+    /// 当前生效的转存运行时配置（如并发数限制、单任务最大重试次数等）。
     runtime_config: RwLock<TransferConfig>,
+    /// 默认基准配置（用于重置或比对偏差）。
     runtime_default_config: RwLock<TransferConfig>,
+    /// 按客户端角色（Bot / User）索引的 TDLib 本地工作目录与文件缓存路径。
     tdlib_files_directories: RwLock<HashMap<ClientRole, PathBuf>>,
+    /// 当前正在执行中的任务数（占用实际并发槽位）。
     active_transfer_jobs: AtomicUsize,
+    /// 槽位释放或并发上限调大时的唤醒通知器。
     transfer_slot_notify: tokio::sync::Notify,
+    /// 是否接纳新的转存请求（平滑停机或排空维护时置为 `false`）。
     accepting_new_transfers: AtomicBool,
+    /// 已被系统接纳进入调度生命周期的任务总数。
     admitted_transfer_jobs: AtomicUsize,
+    /// 接纳状态变动或接纳任务数归零时的排空通知器。
     transfer_admission_notify: tokio::sync::Notify,
+    /// 当前启用的双客户端 ID 对（包含 Bot Client 与可选的 User Client）。
     transfer_client_ids: RwLock<Option<TransferClientIds>>,
+    /// 标记后台恢复与定期清理服务是否已拉起（确保单例执行）。
     background_services_started: AtomicBool,
 }
 
@@ -472,6 +584,7 @@ impl Default for TransferRuntimeState {
 }
 
 impl TransferRuntimeState {
+    /// 启动时批量初始化转存配置、默认基准配置与 TDLib 目录映射。
     pub fn init_runtime_config(
         &self,
         config: TransferConfig,
@@ -483,15 +596,18 @@ impl TransferRuntimeState {
         self.update_tdlib_files_directories(tdlib_files_directories);
     }
 
+    /// 热更新当前转存配置，并唤醒可能正在等待并发槽位的任务。
     pub fn update_runtime_config(&self, config: TransferConfig) {
         *recover_rwlock_write(&self.runtime_config, "transfer runtime config") = config;
         self.transfer_slot_notify.notify_waiters();
     }
 
+    /// 获取当前转存运行时配置快照。
     pub fn runtime_config(&self) -> TransferConfig {
         recover_rwlock_read(&self.runtime_config, "transfer runtime config").clone()
     }
 
+    /// 设置默认转存基准配置。
     pub fn set_runtime_default_config(&self, config: TransferConfig) {
         *recover_rwlock_write(
             &self.runtime_default_config,
@@ -499,6 +615,7 @@ impl TransferRuntimeState {
         ) = config;
     }
 
+    /// 获取默认转存基准配置快照。
     pub fn runtime_default_config(&self) -> TransferConfig {
         recover_rwlock_read(
             &self.runtime_default_config,
@@ -507,16 +624,19 @@ impl TransferRuntimeState {
         .clone()
     }
 
+    /// 查询指定角色客户端在本地使用的 TDLib 文件目录路径。
     pub fn tdlib_files_directory_for(&self, role: ClientRole) -> Option<PathBuf> {
         recover_rwlock_read(&self.tdlib_files_directories, "tdlib files directory")
             .get(&role)
             .cloned()
     }
 
+    /// 查询当前占用并发槽位的活跃任务数。
     pub fn active_transfer_jobs_count(&self) -> usize {
         self.active_transfer_jobs.load(Ordering::SeqCst)
     }
 
+    /// 异步申请一个任务执行并发槽位。若达到并发上限则挂起等待直到有槽位释放。
     pub async fn acquire_transfer_slot(self: &Arc<Self>) -> TransferExecGuard {
         loop {
             let limit = self.runtime_config().job_concurrency.max(1);
@@ -563,16 +683,19 @@ impl TransferRuntimeState {
         }
     }
 
+    /// 开启平滑排空，停止接纳任何新的转存任务。
     pub fn begin_transfer_drain(&self) {
         self.accepting_new_transfers.store(false, Ordering::SeqCst);
         self.transfer_admission_notify.notify_waiters();
     }
 
+    /// 取消平滑排空，重新开始接纳转存任务。
     pub fn cancel_transfer_drain(&self) {
         self.accepting_new_transfers.store(true, Ordering::SeqCst);
         self.transfer_admission_notify.notify_waiters();
     }
 
+    /// 异步等待当前已接纳的所有存量任务全部执行结束（接纳计数归零）。
     pub async fn wait_for_transfer_drain(&self) {
         loop {
             let notified = self.transfer_admission_notify.notified();
@@ -583,22 +706,26 @@ impl TransferRuntimeState {
         }
     }
 
+    /// 设置双客户端 ID 映射关系。
     pub fn set_transfer_client_ids(&self, client_ids: TransferClientIds) {
         *recover_rwlock_write(&self.transfer_client_ids, "transfer client ids") = Some(client_ids);
     }
 
+    /// 获取双客户端 ID 映射快照。
     pub fn transfer_client_ids(&self) -> Option<TransferClientIds> {
         recover_rwlock_read(&self.transfer_client_ids, "transfer client ids")
             .as_ref()
             .copied()
     }
 
+    /// 尝试原子标记后台定时服务已拉起，若此前未拉起则返回 `true`。
     pub fn mark_background_services_started(&self) -> bool {
         self.background_services_started
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
     }
 
+    /// 更新各角色对应的本地目录路径。
     fn update_tdlib_files_directories(&self, paths: HashMap<ClientRole, PathBuf>) {
         let mut guard =
             recover_rwlock_write(&self.tdlib_files_directories, "tdlib files directory");
@@ -611,12 +738,19 @@ impl TransferRuntimeState {
     }
 }
 
+/// 并发槽位持有凭证（Guard）。
+///
+/// 当该凭证 Drop 时，自动释放活跃并发槽位并唤醒等待队列中的下一个任务。
 pub struct TransferExecGuard {
+    /// 关联的转存运行时状态引用。
     state: Arc<TransferRuntimeState>,
 }
 
 /// 从任务创建到后台 workflow 结束的接纳凭证。
+///
+/// 当任务完全退出或异常结束并释放该 Guard 时，接纳任务计数减一并触发排空检查通知。
 pub struct TransferAdmissionGuard {
+    /// 关联的转存运行时状态引用。
     state: Arc<TransferRuntimeState>,
 }
 
@@ -638,18 +772,24 @@ impl Drop for TransferExecGuard {
     }
 }
 
+/// 单个文件的 TDLib 下载进度快照。
 #[derive(Debug, Clone, Default)]
 pub struct DownloadProgressSnapshot {
+    /// 本地已下载字节数。
     pub downloaded_size: i64,
+    /// 文件总大小（字节），未知时为 `None`。
     pub total_size: Option<i64>,
 }
 
+/// TDLib 文件下载进度内存存储。
 #[derive(Default)]
 pub struct DownloadProgressStore {
+    /// 按 `(client_id, file_id)` 索引的下载进度快照表。
     snapshots: RwLock<HashMap<(i32, i32), DownloadProgressSnapshot>>,
 }
 
 impl DownloadProgressStore {
+    /// 根据 TDLib 的 `UpdateFile` 事件更新指定文件的下载进度快照。
     pub fn update_download_progress(&self, client_id: i32, file: &tdlib_rs::types::File) {
         let total_size = if file.size > 0 {
             Some(file.size)
@@ -683,6 +823,7 @@ impl DownloadProgressStore {
         );
     }
 
+    /// 获取指定客户端和文件 ID 的当前下载进度快照。
     pub fn get_download_progress(
         &self,
         client_id: i32,
@@ -694,26 +835,38 @@ impl DownloadProgressStore {
     }
 }
 
+/// 转存任务关联的所有文件上传进度聚合快照。
 #[derive(Debug, Clone, Default)]
 pub struct JobUploadProgressSnapshot {
+    /// 当前正在并发上传的文件数。
     pub active_files: i32,
+    /// 任务内所有活跃上传文件的已上传字节总和。
     pub uploaded_size: i64,
+    /// 任务内所有已知大小文件的总字节数。
     pub total_size: i64,
+    /// 是否存在部分文件总大小尚未确定的情况。
     pub has_unknown_total: bool,
 }
 
+/// 单个上传文件的临时进度快照。
 #[derive(Debug, Clone)]
 struct UploadFileProgressSnapshot {
+    /// TDLib 中的当前 File ID。
     file_id: i32,
+    /// 已上传字节数（保证单调递增）。
     uploaded_size: i64,
+    /// 文件总大小。
     total_size: Option<i64>,
 }
 
+/// 上传进度内存状态结构体。
 #[derive(Default)]
 struct UploadProgressState {
     /// 逻辑上传项是聚合主键；TDLib 替换 File ID 时不会增加文件数。
+    /// 键为 `(client_id, job_id, item_id)`。
     by_item: HashMap<(i32, i64, i64), UploadFileProgressSnapshot>,
     /// UpdateFile 只携带 client/file ID，用反向索引定位所属任务条目。
+    /// 键为 `(client_id, file_id)`，值为 `(job_id, item_id)`。
     by_file: HashMap<(i32, i32), (i64, i64)>,
 }
 
@@ -723,10 +876,12 @@ struct UploadProgressState {
 /// 隔离保存，并在任务详情读取时按 job 聚合。
 #[derive(Default)]
 pub struct UploadProgressStore {
+    /// 上传进度内部状态读写锁。
     state: RwLock<UploadProgressState>,
 }
 
 impl UploadProgressStore {
+    /// 注册正在发送的文件与逻辑任务条目的关联。
     pub fn register_upload_file(
         &self,
         client_id: i32,
@@ -761,6 +916,7 @@ impl UploadProgressStore {
             .insert((client_id, file.id), (job_id, item_id));
     }
 
+    /// 接收 TDLib 的 UpdateFile 事件更新指定文件的上传进度。
     pub fn update_upload_progress(&self, client_id: i32, file: &tdlib_rs::types::File) {
         let mut guard = recover_rwlock_write(&self.state, "upload progress");
         let Some((job_id, item_id)) = guard.by_file.get(&(client_id, file.id)).copied() else {
@@ -790,6 +946,7 @@ impl UploadProgressStore {
         }
     }
 
+    /// 聚合计算指定任务下所有活跃上传文件的整体进度快照。
     pub fn get_job_upload_progress(
         &self,
         client_id: i32,
@@ -815,6 +972,7 @@ impl UploadProgressStore {
         (progress.active_files > 0).then_some(progress)
     }
 
+    /// 清除指定任务的所有上传进度记录。
     pub fn clear_job(&self, client_id: i32, job_id: i64) {
         let mut guard = recover_rwlock_write(&self.state, "upload progress");
         guard
@@ -829,6 +987,7 @@ impl UploadProgressStore {
             });
     }
 
+    /// 创建一个绑定任务生命周期的上传进度 Guard，在任务结束 Drop 时自动清理记录。
     pub fn job_guard(self: &Arc<Self>, client_id: i32, job_id: i64) -> UploadProgressJobGuard {
         UploadProgressJobGuard {
             store: self.clone(),
@@ -838,9 +997,13 @@ impl UploadProgressStore {
     }
 }
 
+/// 上传进度清理 Guard。
 pub struct UploadProgressJobGuard {
+    /// 关联的上传进度存储引用。
     store: Arc<UploadProgressStore>,
+    /// 客户端 ID。
     client_id: i32,
+    /// 任务 ID。
     job_id: i64,
 }
 
@@ -850,6 +1013,7 @@ impl Drop for UploadProgressJobGuard {
     }
 }
 
+/// 从 TDLib File 对象中提取已知的文件总大小（字节）。
 fn file_total_size(file: &tdlib_rs::types::File) -> Option<i64> {
     if file.size > 0 {
         Some(file.size)
@@ -860,16 +1024,25 @@ fn file_total_size(file: &tdlib_rs::types::File) -> Option<i64> {
     }
 }
 
+/// 下载结果类型别名（成功或错误字符串）。
 type DownloadResult = Result<(), String>;
+/// Singleflight 广播通知发送器。
 type DownloadNotifier = tokio::sync::watch::Sender<Option<DownloadResult>>;
+/// 正在执行中的下载映射表。
 type InflightDownloadMap = HashMap<String, DownloadNotifier>;
 
+/// 下载防重击穿（Singleflight）注册中心。
+///
+/// 当多个转存任务需要同时下载相同源文件时，仅拉起一次实际 TDLib 下载操作，
+/// 其余并发请求挂起并订阅首个下载者的完成广播。
 #[derive(Default)]
 pub struct InflightDownloadRegistry {
+    /// 正在进行的下载跟踪表。
     inflight: Mutex<InflightDownloadMap>,
 }
 
 impl InflightDownloadRegistry {
+    /// 执行 singleflight 任务：如果该 `file_key` 已经在下载中，等待其完成；否则作为执行者执行 `task`。
     pub async fn run_singleflight<F, Fut>(
         self: &Arc<Self>,
         file_key: String,
@@ -931,6 +1104,7 @@ impl InflightDownloadRegistry {
         }
     }
 
+    /// 移除下载项并向所有等待者广播完成结果。
     fn remove_and_notify(&self, file_key: &str, result: DownloadResult) {
         let mut guard = recover_mutex_lock(&self.inflight, "inflight downloads");
         if let Some(tx) = guard.remove(file_key) {
@@ -939,18 +1113,26 @@ impl InflightDownloadRegistry {
     }
 }
 
+/// Singleflight 请求角色划分。
 enum InflightDownloadRole {
+    /// 执行者：首个发起请求者，负责实际执行下载任务。
     Executor(InflightExecutionGuard),
+    /// 等待者：订阅现有任务的结果广播。
     Waiter(tokio::sync::watch::Receiver<Option<DownloadResult>>),
 }
 
+/// 执行者任务守卫，确保无论正常退出还是 panic，都能通知等待者并清理注册表。
 struct InflightExecutionGuard {
+    /// 注册中心引用。
     registry: Arc<InflightDownloadRegistry>,
+    /// 文件唯一键。
     file_key: String,
+    /// 是否已正常显式结束。
     finished: bool,
 }
 
 impl InflightExecutionGuard {
+    /// 创建新的执行者守卫。
     fn new(registry: Arc<InflightDownloadRegistry>, file_key: String) -> Self {
         Self {
             registry,
@@ -959,6 +1141,7 @@ impl InflightExecutionGuard {
         }
     }
 
+    /// 显式标记完成并广播最终结果。
     fn finish(&mut self, result: DownloadResult) {
         self.finished = true;
         self.registry.remove_and_notify(&self.file_key, result);
@@ -978,17 +1161,24 @@ impl Drop for InflightExecutionGuard {
     }
 }
 
+/// 转存执行互斥守卫集合。
+///
+/// 防止同一任务 ID 或同一（源链接 + 目标频道）并发创建导致竞态。
 #[derive(Default)]
 pub struct TransferExecutionGuards {
+    /// 当前正在进程内执行的任务 ID 集合。
     running_job_ids: Mutex<HashSet<i64>>,
+    /// 正在创建或排队的 `(source_link, target_chat_id)` 键集合。
     creating_source_targets: Mutex<HashSet<(String, i64)>>,
 }
 
 impl TransferExecutionGuards {
+    /// 检查指定任务 ID 当前是否正在本进程中运行。
     pub async fn is_job_running_in_process(&self, job_id: i64) -> bool {
         recover_mutex_lock(&self.running_job_ids, "running job id").contains(&job_id)
     }
 
+    /// 尝试获取任务执行独占锁。若已被锁定则返回 `None`。
     pub async fn acquire_job_guard(self: &Arc<Self>, job_id: i64) -> Option<TransferJobGuard> {
         let mut guard = recover_mutex_lock(&self.running_job_ids, "running job id");
         if guard.contains(&job_id) {
@@ -1001,6 +1191,7 @@ impl TransferExecutionGuards {
         })
     }
 
+    /// 轮询获取（源链接 + 目标频道）创建锁，防止瞬时并发重复提交。
     pub async fn acquire_source_target_create_guard(
         self: &Arc<Self>,
         source_link: String,
@@ -1022,8 +1213,11 @@ impl TransferExecutionGuards {
     }
 }
 
+/// 任务执行互斥持有凭证。
 pub struct TransferJobGuard {
+    /// 守卫集合引用。
     guards: Arc<TransferExecutionGuards>,
+    /// 锁定的任务 ID。
     job_id: i64,
 }
 
@@ -1034,8 +1228,11 @@ impl Drop for TransferJobGuard {
     }
 }
 
+/// 源-目标创建防重锁持有凭证。
 pub struct SourceTargetCreateGuard {
+    /// 守卫集合引用。
     guards: Arc<TransferExecutionGuards>,
+    /// 锁定的源链接与目标频道键。
     key: (String, i64),
 }
 

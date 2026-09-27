@@ -8,7 +8,16 @@ use std::time::Duration;
 
 use crate::tgbot::transfer::store;
 
-/// 文件删除队列后台循环（持续运行）。
+/// 文件删除队列后台常驻循环任务。
+///
+/// 循环执行：
+/// 1. 调用 `run_file_gc_once` 消费到期的孤儿缓存；
+/// 2. 动态读取最新的 `file_gc_interval_seconds` 间隔；
+/// 3. 休眠指定秒数后开启下一轮扫描。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文引用。
+/// - `client_ids`: TDLib 客户端角色分配 ID 映射。
 pub(in crate::tgbot::transfer) async fn run_file_gc_loop(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     client_ids: crate::config::TransferClientIds,
@@ -24,7 +33,19 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_loop(
     }
 }
 
-/// 执行一轮文件删除队列消费。
+/// 执行单轮文件删除队列消费。
+///
+/// 流程：
+/// 1. 扫描 `active_refs == 0` 且 `delete_after <= now` 的到期记录；
+/// 2. 原子认领（更新为 deleting）；
+/// 3. 本地路径安全性校验（必须严格落在 TDLib 数据根目录下）；
+/// 4. 异步删除磁盘物理文件；
+/// 5. 调用 TDLib 原生 `delete_file` 释放内部缓存；
+/// 6. 成功后从数据库删除 `file_cache` 记录；若失败则记录错误并推迟重试。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `client_ids`: 客户端分配配置。
 pub(in crate::tgbot::transfer) async fn run_file_gc_once(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     client_ids: crate::config::TransferClientIds,
@@ -141,6 +162,12 @@ pub(in crate::tgbot::transfer) async fn run_file_gc_once(
 }
 
 /// 把删除失败项延后到下一轮之后重试，避免配置了很短 GC 间隔时刷屏热循环。
+///
+/// # 参数
+/// - `file_key`: 文件键。
+/// - `owner_client_role`: 客户端角色。
+/// - `err`: 错误原因。
+/// - `retry_delay_seconds`: 重试延迟秒数。
 async fn mark_delete_failed_retry_later(
     file_key: &str,
     owner_client_role: &str,
@@ -154,6 +181,12 @@ async fn mark_delete_failed_retry_later(
 
 /// 删除队列扫描间隔（秒）：
 /// 从 config.json 读取 `transfer_config.file_gc_interval_seconds`。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+///
+/// # 返回值
+/// - 扫描间隔（至少为 1 秒）。
 fn cleanup_interval_seconds(app_context: &crate::app_context::AppContext) -> u64 {
     app_context
         .transfer_runtime
@@ -167,6 +200,14 @@ fn cleanup_interval_seconds(app_context: &crate::app_context::AppContext) -> u64
 /// 只允许删除位于 `tdlib_config.files_directory` 下的文件；如果配置为空或路径越界，
 /// 调用方必须拒绝 `remove_file`。这里做的是不依赖文件存在性的词法规范化，
 /// 这样文件已经被 TDLib 或人工删掉时也能得到稳定判断。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `owner_client_role`: 文件归属的角色。
+/// - `local_path`: 待验证的文件物理路径。
+///
+/// # 返回值
+/// - 安全解析后的规范化绝对路径，若为空则返回 `None`；越界时报错。
 fn safe_local_file_path(
     app_context: &crate::app_context::AppContext,
     owner_client_role: &str,
@@ -182,6 +223,13 @@ fn safe_local_file_path(
 }
 
 /// 根据文件 owner role 找到对应 TDLib client id。
+///
+/// # 参数
+/// - `client_ids`: 客户端分配 ID 表。
+/// - `owner_client_role`: 角色字符串。
+///
+/// # 返回值
+/// - 对应的 TDLib 客户端实例 ID。
 fn client_id_for_owner(
     client_ids: crate::config::TransferClientIds,
     owner_client_role: &str,
@@ -191,6 +239,14 @@ fn client_id_for_owner(
 }
 
 /// 带 cwd 参数的路径校验纯函数，便于测试覆盖相对路径和 `..` 越界。
+///
+/// # 参数
+/// - `local_path`: 待测试文件路径。
+/// - `tdlib_root`: TDLib 安全根目录。
+/// - `cwd`: 当前工作目录。
+///
+/// # 返回值
+/// - 确认落在根目录内的安全绝对路径。
 fn resolve_safe_local_file_path(
     local_path: &str,
     tdlib_root: &Path,
@@ -222,6 +278,13 @@ fn resolve_safe_local_file_path(
 }
 
 /// 把相对路径基于 cwd 转为绝对路径，并折叠 `.` / `..`。
+///
+/// # 参数
+/// - `path`: 原始路径。
+/// - `cwd`: 当前工作路径。
+///
+/// # 返回值
+/// - 绝对规范化路径。
 fn absolute_normalized_path(path: &Path, cwd: &Path) -> anyhow::Result<PathBuf> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -233,6 +296,12 @@ fn absolute_normalized_path(path: &Path, cwd: &Path) -> anyhow::Result<PathBuf> 
 }
 
 /// 词法规范化路径，不访问文件系统，避免目标文件不存在时无法判断安全边界。
+///
+/// # 参数
+/// - `path`: 待规范化路径。
+///
+/// # 返回值
+/// - 消除 `.` 与 `..` 后的规范化路径（若未向上逃逸）。
 fn normalize_path_lexically(path: &Path) -> Option<PathBuf> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
