@@ -28,6 +28,10 @@
 - 打包脚本 `build_linux_package.sh`、`build_windows_package.ps1` 及相关文档同步分发 `config.example.jsonc`。
 - 自动化单元测试 `test_config_example_json_is_valid` 与 `test_config_example_jsonc_is_valid` 保证两套模板持续有效。
 
+### CI/CD 与 Workflow 增强
+- 工作流输入升级：将 `publish-tag-release.yml` 的 `source_ref`（构建来源）以及所有打包/测试工作流（`publish-tag-release.yml`、`release-packages.yml`、`test-single-target.yml`）中的 `td_ref` 从固定下拉框（`type: choice`）升级为自由输入框（`type: string`）。
+- `td_ref` 默认值保持为 `master`，同时支持按需输入任意 Git tag、分支名或 commit hash，实现灵活自由切换。
+
 ### 业务与架构状态
 当前项目采用 owner + 静态管理员 + 数据库动态管理员模式：
 

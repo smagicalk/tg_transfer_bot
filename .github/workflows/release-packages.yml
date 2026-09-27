@@ -20,12 +20,10 @@ on:
           - package
           - build_only
       td_ref:
-        description: "TDLib git branch/tag/commit"
+        description: "TDLib git branch, tag or commit"
         required: true
         default: "master"
-        type: choice
-        options:
-          - "master"
+        type: string
       run_checks:
         description: "Run fmt/test/clippy before release build"
         required: false
