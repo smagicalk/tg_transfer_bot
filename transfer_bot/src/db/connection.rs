@@ -1,35 +1,38 @@
-// 数据库连接初始化：
-// - 解析业务数据库连接串
-// - 初始化 SeaORM 连接池
-// - 处理 SQLite 文件库目录创建
+//! 数据库连接管理与连接池初始化。
+//!
+//! 负责：
+//! - 解析业务数据库 URL 并识别数据库方言（SQLite / PostgreSQL）；
+//! - 自动为本地 SQLite 文件数据库创建父级目录结构；
+//! - 配置 SeaORM 连接池参数（连接数上限、获取超时、空闲回收等）。
 
 use sea_orm::Database;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-// 正常运行的默认业务数据库；配置文件可切换为 SQLite 或 PostgreSQL。
-// 启动读取配置后会调用 `init_database_url` 覆盖为 config.json 的 `storage.database_url`。
+/// 正常运行的默认业务数据库连接串；启动时可通过 `init_database_url` 由配置文件覆盖。
 #[cfg(not(test))]
 const DATABASE_URL: &str = "sqlite://tg/app/transfer.sqlite?mode=rwc";
 
-// 测试库放到 `target/` 下，避免污染源码目录，也规避旧测试库残留导致的只读/锁文件问题。
+/// 单元测试专用数据库路径，放置在 `target/test-data/` 下避免污染生产文件。
 #[cfg(test)]
 const DATABASE_URL: &str = "sqlite://target/test-data/db.test.sqlite?mode=rwc";
 
-// 运行期数据库连接串。
-// 必须在第一次 `get_db()` 之前设置；测试环境保持固定测试库，避免被运行配置污染。
+/// 运行期覆盖的数据库连接串全局容器（必须在首次 `get_db()` 前设置）。
 #[cfg(not(test))]
 static DATABASE_URL_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
+/// 支持的底层数据库方言类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DbDialect {
+    /// 本地轻量级 SQLite 文件或内存数据库。
     Sqlite,
+    /// 独立部署的 PostgreSQL 数据库服务。
     Postgres,
 }
 
-/// 初始化业务数据库连接串。
+/// 设置并初始化业务数据库连接串。
 ///
-/// 业务数据库保存转存任务、子项和文件引用，不是 TDLib 账号数据库。
+/// 业务数据库用于持久化转存任务、子项、文件引用计数与菜单输入状态。
 #[cfg(not(test))]
 pub(crate) async fn init_database_url(database_url: impl Into<String>) -> anyhow::Result<()> {
     let database_url = database_url.into();
@@ -43,7 +46,7 @@ pub(crate) async fn init_database_url(database_url: impl Into<String>) -> anyhow
     Ok(())
 }
 
-/// 测试环境固定使用 `db.test.sqlite`，不允许运行配置改写。
+/// 测试环境连接串初始化打桩实现（测试环境固定使用独立测试库）。
 #[cfg(test)]
 pub(crate) async fn init_database_url(_database_url: impl Into<String>) -> anyhow::Result<()> {
     if super::DB_POOL.initialized() {
@@ -52,7 +55,7 @@ pub(crate) async fn init_database_url(_database_url: impl Into<String>) -> anyho
     Ok(())
 }
 
-/// 初始化业务数据库连接。
+/// 实际创建并配置 SeaORM 连接池实例。
 pub(crate) async fn init_db() -> anyhow::Result<sea_orm::DatabaseConnection> {
     let database_url = runtime_database_url();
     prepare_database_parent_dir(database_url).await?;
@@ -71,7 +74,7 @@ pub(crate) async fn init_db() -> anyhow::Result<sea_orm::DatabaseConnection> {
     Ok(db)
 }
 
-/// 返回当前生效的业务数据库连接串。
+/// 获取当前生效的业务数据库连接串。
 pub(crate) fn runtime_database_url() -> &'static str {
     #[cfg(not(test))]
     {
@@ -87,7 +90,7 @@ pub(crate) fn runtime_database_url() -> &'static str {
     }
 }
 
-/// 仅 SQLite 文件库需要先创建父目录；PG 等服务型数据库直接跳过。
+/// 若连接串为 SQLite 文件库，自动检测并创建其所在的上级父目录。
 async fn prepare_database_parent_dir(database_url: &str) -> anyhow::Result<()> {
     let Some(path) = sqlite_file_path(database_url) else {
         return Ok(());
@@ -100,9 +103,9 @@ async fn prepare_database_parent_dir(database_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 从 `sqlite://path?mode=rwc` 提取本地文件路径。
+/// 从 SQLite 连接串解析出本地目标文件路径。
 ///
-/// `sqlite::memory:`、`sqlite://:memory:` 和无文件路径的连接串不需要创建目录。
+/// 排除 `:memory:` 纯内存数据库。
 pub(crate) fn sqlite_file_path(database_url: &str) -> Option<PathBuf> {
     if database_dialect(database_url) != Some(DbDialect::Sqlite) {
         return None;
@@ -117,6 +120,7 @@ pub(crate) fn sqlite_file_path(database_url: &str) -> Option<PathBuf> {
     Some(Path::new(path).to_path_buf())
 }
 
+/// 根据连接串协议前缀探测数据库方言（SQLite 或 PostgreSQL）。
 pub(crate) fn database_dialect(database_url: &str) -> Option<DbDialect> {
     if database_url.starts_with("sqlite://") || database_url.starts_with("sqlite:") {
         return Some(DbDialect::Sqlite);

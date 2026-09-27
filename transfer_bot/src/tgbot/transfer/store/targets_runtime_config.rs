@@ -9,8 +9,10 @@ use sea_orm::{EntityTrait, QueryOrder};
 use crate::config::TargetsConfig;
 use crate::db;
 
+/// 目标配置单行主键 ID。
 const TARGET_CONFIG_ROW_ID: i32 = 1;
 
+/// 统一生成 UTC+8 时间戳。
 fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
     let Some(offset) = chrono::FixedOffset::east_opt(8 * 3600) else {
         tracing::error!("failed to build targets config UTC+8 fixed offset, fallback to UTC");
@@ -19,6 +21,13 @@ fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
     chrono::Utc::now().with_timezone(&offset)
 }
 
+/// 确保数据库中存在目标配置；若不存在则使用默认配置初始化。
+///
+/// # 参数
+/// - `default_config`: 默认目标配置引用。
+///
+/// # 返回值
+/// - 最终生效的目标配置。
 #[cfg(test)]
 pub(crate) async fn ensure_targets_runtime_config(
     default_config: &TargetsConfig,
@@ -27,6 +36,13 @@ pub(crate) async fn ensure_targets_runtime_config(
 }
 
 /// 在显式数据库连接上确保 targets 运行态存在。
+///
+/// # 参数
+/// - `db_conn`: 目标数据库连接。
+/// - `default_config`: 默认目标配置。
+///
+/// # 返回值
+/// - 最终生效的目标配置。
 pub(crate) async fn ensure_targets_runtime_config_on(
     db_conn: &sea_orm::DatabaseConnection,
     default_config: &TargetsConfig,
@@ -39,12 +55,22 @@ pub(crate) async fn ensure_targets_runtime_config_on(
     Ok(default_config.clone())
 }
 
+/// 从数据库中读取 targets 运行时配置。
+///
+/// # 返回值
+/// - 读出的 `TargetsConfig` 或 `None`。
 #[cfg(test)]
 pub(crate) async fn load_targets_runtime_config() -> anyhow::Result<Option<TargetsConfig>> {
     load_targets_runtime_config_on(db::get_db().await?).await
 }
 
-/// 在显式数据库连接上读取 targets 运行态。
+/// 在显式数据库连接上读取 targets 运行态（包含默认目标与别名映射表）。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接。
+///
+/// # 返回值
+/// - 查出的 `TargetsConfig` 或 `None`。
 pub(crate) async fn load_targets_runtime_config_on(
     db_conn: &sea_orm::DatabaseConnection,
 ) -> anyhow::Result<Option<TargetsConfig>> {
@@ -74,11 +100,19 @@ pub(crate) async fn load_targets_runtime_config_on(
     }
 }
 
+/// 保存 targets 运行时配置到数据库。
+///
+/// # 参数
+/// - `config`: 新目标配置。
 pub(crate) async fn save_targets_runtime_config(config: &TargetsConfig) -> anyhow::Result<()> {
     save_targets_runtime_config_on(db::get_db().await?, config).await
 }
 
-/// 在显式数据库连接上写回 targets 运行态。
+/// 在显式数据库连接上写回 targets 运行态（写入默认目标并全量刷新别名表）。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接。
+/// - `config`: 新目标配置。
 pub(crate) async fn save_targets_runtime_config_on(
     db_conn: &sea_orm::DatabaseConnection,
     config: &TargetsConfig,

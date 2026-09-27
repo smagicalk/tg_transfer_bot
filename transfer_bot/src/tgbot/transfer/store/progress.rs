@@ -21,7 +21,15 @@ use super::{
 };
 
 /// 按 `source_link + target_chat_id` 查找最近已成功转存且已保存入口链接的任务。
+///
 /// 命中后优先复用历史链接；如果旧链接不可点击，调用方会用 result_message_id 刷新。
+///
+/// # 参数
+/// - `source_link`: 来源 Telegram 链接。
+/// - `target_chat_id`: 目标频道或群组 ID。
+///
+/// # 返回值
+/// - `Some(SuccessfulJobResult)` 历史转存成功记录，或 `None`（未命中）。
 pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
     source_link: &str,
     target_chat_id: i64,
@@ -57,8 +65,16 @@ pub(in crate::tgbot::transfer) async fn find_success_job_by_source_target(
     ))
 }
 
-/// 按 `source_link + target_chat_id` 查找最近进行中的任务。
-/// 用于阻止同一目标的重复转存并返回明确提示。
+/// 按 `source_link + target_chat_id` 查找最近处于进行中（未终态）的任务。
+///
+/// 用于阻止对同一目标的并发重复转存请求，并给出对应状态（运行中/暂停中/取消中）的友好提示。
+///
+/// # 参数
+/// - `source_link`: 来源链接。
+/// - `target_chat_id`: 目标聊天 ID。
+///
+/// # 返回值
+/// - 查找到的未完成任务模型。
 pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
     source_link: &str,
     target_chat_id: i64,
@@ -82,7 +98,14 @@ pub(in crate::tgbot::transfer) async fn find_active_job_by_source_target(
         .map_err(Into::into)
 }
 
-/// 查询最近任务。
+/// 分页查询最近的任务进度快照列表（供 `/downloads` 汇总面板展示）。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `limit`: 查询条数上限。
+///
+/// # 返回值
+/// - 包含各任务实时下载与上传字节数统计的 `JobProgressSnapshot` 列表。
 pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
     app_context: &crate::app_context::AppContext,
     limit: u64,
@@ -146,9 +169,16 @@ pub(in crate::tgbot::transfer) async fn list_recent_job_snapshots(
     build_job_progress_snapshots(app_context, jobs).await
 }
 
-/// 查询单个任务的进度快照。
+/// 查询单个任务的实时进度快照。
 ///
 /// `/transfer` 进度面板会按 job_id 轮询该快照，然后编辑同一条消息。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `job_id`: 目标任务主键 ID。
+///
+/// # 返回值
+/// - `Some(JobProgressSnapshot)` 包含当前任务各项子项和实时吞吐统计；未找到则为 `None`。
 pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_context(
     app_context: &crate::app_context::AppContext,
     job_id: i64,
@@ -211,6 +241,13 @@ pub(in crate::tgbot::transfer) async fn get_job_progress_snapshot_with_context(
 ///
 /// 该函数集中处理子项状态统计和 TDLib 实时下载进度，避免 `/downloads`
 /// 与单任务进度面板各自实现一套统计逻辑。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `jobs`: 待构建快照的任务列表。
+///
+/// # 返回值
+/// - 包含了实时传输进度的快照列表。
 async fn build_job_progress_snapshots(
     app_context: &crate::app_context::AppContext,
     jobs: Vec<JobProgressJob>,

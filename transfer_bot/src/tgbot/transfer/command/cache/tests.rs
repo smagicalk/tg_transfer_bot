@@ -7,6 +7,7 @@ use super::render::{compute_cache_page_count, format_cache_page_text, format_cac
 use super::types::{CacheArgs, CacheView, parse_cache_args};
 use crate::tgbot::transfer::store;
 
+/// 验证 `/cache` 命令解析默认参数、概览视图以及完整分页参数。
 #[test]
 fn test_parse_cache_args() {
     assert_eq!(parse_cache_args(&["/cache"]).unwrap(), CacheArgs::default());
@@ -28,6 +29,7 @@ fn test_parse_cache_args() {
     );
 }
 
+/// 验证缓存默认入口以分页明细视图打开第 1 页并生成翻页按钮。
 #[test]
 fn test_cache_default_entry_opens_first_page_with_navigation() {
     let args = parse_cache_args(&["/cache"]).unwrap();
@@ -48,6 +50,7 @@ fn test_cache_default_entry_opens_first_page_with_navigation() {
     );
 }
 
+/// 验证缓存页数计算算法（0 条时保底 1 页，非零时向上取整）。
 #[test]
 fn test_compute_cache_page_count() {
     assert_eq!(compute_cache_page_count(0, 10), 1);
@@ -55,6 +58,7 @@ fn test_compute_cache_page_count() {
     assert_eq!(compute_cache_page_count(11, 10), 2);
 }
 
+/// 验证缓存回调数据序列化与反序列化双向一致性。
 #[test]
 fn test_cache_callback_roundtrip() {
     let data = build_cache_view_callback_data(CacheView::Page, 10, 2);
@@ -69,6 +73,7 @@ fn test_cache_callback_roundtrip() {
     assert_eq!(parse_cache_callback_data("d:r:run:8:1"), None);
 }
 
+/// 验证缓存边界页导航按钮保留 callback 刷新行为，不会变成不可点击死按钮。
 #[test]
 fn test_cache_keyboard_boundary_navigation_is_callback_button() {
     let keyboard = build_cache_keyboard(
@@ -95,6 +100,7 @@ fn test_cache_keyboard_boundary_navigation_is_callback_button() {
     }
 }
 
+/// 验证缓存键盘分行层级（视图切换、功能操作与翻页排布）。
 #[test]
 fn test_cache_keyboard_follow_row_hierarchy() {
     let keyboard = build_cache_keyboard(
@@ -122,6 +128,7 @@ fn test_cache_keyboard_follow_row_hierarchy() {
     assert_eq!(keyboard.rows[2][0].text, "首页");
 }
 
+/// 验证概览视图下提供直接切回列表按钮且不放冗余分页控制。
 #[test]
 fn test_cache_summary_can_return_to_default_list_without_pagination_button() {
     let keyboard = build_cache_keyboard(
@@ -147,6 +154,7 @@ fn test_cache_summary_can_return_to_default_list_without_pagination_button() {
     );
 }
 
+/// 验证概览文本卡片格式化包含健康总览与状态分布。
 #[test]
 fn test_format_cache_summary_text() {
     let health = store::TransferHealthSnapshot {
@@ -185,6 +193,7 @@ fn test_format_cache_summary_text() {
     assert!(!text.contains("/cache"));
 }
 
+/// 验证明细分页列表卡片包含客户端角色、file_key、td_file_id 等字段。
 #[test]
 fn test_format_cache_page_text() {
     let health = store::TransferHealthSnapshot {

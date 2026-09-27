@@ -26,6 +26,12 @@ pub use state::{
 };
 
 /// 设置当前发送层是否允许携带 reply_markup。
+///
+/// 当以机器人（Bot）模式运行时，允许使用 inline keyboard 或 reply keyboard；
+/// 当以普通用户（User）模式运行时，Telegram 官方协议对用户发送的键盘有严格限制，通常需要禁用。
+///
+/// # 参数
+/// - `enabled`: `true` 表示启用 reply_markup 发送，`false` 表示禁用并在发送前剥离。
 pub fn set_reply_markup_enabled(enabled: bool) {
     crate::app_context::app_context()
         .send_capabilities
@@ -34,6 +40,12 @@ pub fn set_reply_markup_enabled(enabled: bool) {
 }
 
 /// 查询当前发送层是否允许携带 reply_markup。
+///
+/// 从全局应用上下文 `send_capabilities` 中读取当前配置标志。
+///
+/// # 返回值
+/// - `true`: 允许携带键盘标记。
+/// - `false`: 禁止携带键盘标记。
 pub(in crate::tgbot::send) fn is_reply_markup_enabled() -> bool {
     crate::app_context::app_context()
         .send_capabilities
@@ -41,12 +53,30 @@ pub(in crate::tgbot::send) fn is_reply_markup_enabled() -> bool {
 }
 
 /// 向指定 chat 发送纯文本消息。
+///
+/// 不包含任何富文本格式化实体（FormattedText 的 entities 为空），适用于最基础的提示信息。
+///
+/// # 参数
+/// - `text`: 要发送的纯字符串内容。
+/// - `chat_id`: 目标 Telegram 聊天的唯一标识 ID。
+/// - `client_id`: 执行发送操作的 TDLib 客户端实例 ID。
+///
+/// # 返回值
+/// - `Ok(())`: 发送成功。
+/// - `Err(anyhow::Error)`: 发送失败，包含 TDLib 错误描述。
 pub async fn send_text_message(text: String, chat_id: i64, client_id: i32) -> anyhow::Result<()> {
     send_formatted_text_message(build_plain_formatted_text(text), chat_id, None, client_id).await
 }
 
 /// 向指定 chat 发送 Markdown 文本。
+///
 /// 适合“说明文字 + 命令示例”这种场景，命令可用反引号包成代码格式。
+/// 发送前会调用 TDLib 的 `parse_text_entities` 将 Markdown v1 语法解析为富文本实体。
+///
+/// # 参数
+/// - `text`: 待解析并发送的 Markdown 文本字符串。
+/// - `chat_id`: 目标 Telegram 聊天的唯一标识 ID。
+/// - `client_id`: 执行发送操作的 TDLib 客户端实例 ID。
 pub async fn send_markdown_message(
     text: String,
     chat_id: i64,
@@ -57,7 +87,14 @@ pub async fn send_markdown_message(
 }
 
 /// 向指定 chat 发送 Markdown 文本并附带 inline keyboard。
-/// 适合分页列表、命令面板等需要“原地翻页”的场景。
+///
+/// 适合分页列表、命令面板等需要“原地翻页”或交互按钮的场景。
+///
+/// # 参数
+/// - `text`: Markdown 格式的正文文本。
+/// - `chat_id`: 目标 Telegram 聊天 ID。
+/// - `keyboard`: 待附带的行内键盘结构体 `ReplyMarkupInlineKeyboard`。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_markdown_message_with_inline_keyboard(
     text: String,
     chat_id: i64,
@@ -68,14 +105,24 @@ pub async fn send_markdown_message_with_inline_keyboard(
     send_formatted_text_message(
         formatted_text,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(keyboard)),
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
         client_id,
     )
     .await
 }
 
-/// 向指定 chat 发送 Markdown 文本并附带 inline keyboard，同时返回消息对象。
-/// `/transfer` 进度面板依赖返回的 message_id 执行后续编辑。
+/// 向指定 chat 发送 Markdown 文本并附带 inline keyboard，同时返回消息对象回执。
+///
+/// `/transfer` 进度面板依赖返回的 `SentMessageReceipt` 获取最终 message_id 并执行后续编辑。
+///
+/// # 参数
+/// - `text`: Markdown 格式文本。
+/// - `chat_id`: 目标聊天 ID。
+/// - `rows`: 行内按钮的二维数组，由外层业务组装。
+/// - `client_id`: TDLib 客户端实例 ID。
+///
+/// # 返回值
+/// - `Ok(SentMessageReceipt)`: 包含消息 ID、聊天 ID 以及是否为临时 ID 的轻量回执。
 pub async fn send_markdown_message_with_buttons_returning(
     text: String,
     chat_id: i64,
@@ -87,7 +134,7 @@ pub async fn send_markdown_message_with_buttons_returning(
         formatted_text,
         chat_id,
         Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            build_inline_keyboard(rows),
+            Box::new(build_inline_keyboard(rows)),
         )),
         client_id,
     )
@@ -95,7 +142,15 @@ pub async fn send_markdown_message_with_buttons_returning(
 }
 
 /// 向指定 chat 发送 Markdown 文本并使用按钮行配置键盘。
-/// 这是上层命令最常用的入口，避免每个模块都手动构造 `ReplyMarkupInlineKeyboard`。
+///
+/// 这是上层命令最常用的入口，内部自动调用 `build_inline_keyboard` 构建键盘，
+/// 避免每个模块都手动构造 `ReplyMarkupInlineKeyboard`。
+///
+/// # 参数
+/// - `text`: Markdown 正文。
+/// - `chat_id`: 目标聊天 ID。
+/// - `rows`: 按钮行定义。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_markdown_message_with_buttons(
     text: String,
     chat_id: i64,
@@ -113,7 +168,16 @@ pub async fn send_markdown_message_with_buttons(
 
 /// 向指定 chat 发送卡片风格文本。
 ///
-/// 卡片文本会在本地转成 TDLib 原生 `FormattedText`，不经过 Markdown 解析。
+/// 卡片文本会在本地通过 `build_card_formatted_text` 转成 TDLib 原生 `FormattedText`，不经过 Markdown 解析：
+/// - 首行和以 `■` 开头的段落自动加粗；
+/// - `‹...›` 自动转为行内等宽代码实体；
+/// - `«...»` 自动转为多行代码块；
+/// - `【...】(...)` 自动转为超链接实体。
+///
+/// # 参数
+/// - `text`: 遵循卡片标记格式的纯文本。
+/// - `chat_id`: 目标聊天 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_card_message(text: String, chat_id: i64, client_id: i32) -> anyhow::Result<()> {
     let formatted_text = build_card_formatted_text(text)?;
     send_formatted_text_message(formatted_text, chat_id, None, client_id).await
@@ -123,6 +187,11 @@ pub async fn send_card_message(text: String, chat_id: i64, client_id: i32) -> an
 ///
 /// Telegram 的原生“选择聊天”按钮属于 reply keyboard，和 inline keyboard 不是同一类控件。
 /// 选择完成、取消或过期时发送这个消息，能避免输入框下方残留旧的“选择聊天”按钮。
+///
+/// # 参数
+/// - `text`: 卡片文本。
+/// - `chat_id`: 目标聊天 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_card_message_with_remove_keyboard(
     text: String,
     chat_id: i64,
@@ -133,7 +202,7 @@ pub async fn send_card_message_with_remove_keyboard(
         formatted_text,
         chat_id,
         Some(tdlib_rs::enums::ReplyMarkup::RemoveKeyboard(
-            tdlib_rs::types::ReplyMarkupRemoveKeyboard { is_personal: true },
+            Box::new(tdlib_rs::types::ReplyMarkupRemoveKeyboard { is_personal: true }),
         )),
         client_id,
     )
@@ -144,6 +213,11 @@ pub async fn send_card_message_with_remove_keyboard(
 ///
 /// 交互向导会在阶段切换时产生新的卡片；调用方只应传入由发送 API 返回的
 /// bot 消息 ID。删除失败不应阻断主流程，由上层决定是否记录并继续。
+///
+/// # 参数
+/// - `chat_id`: 消息所属的聊天 ID。
+/// - `message_id`: 要删除的消息 ID（必须 > 0）。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn delete_message(chat_id: i64, message_id: i64, client_id: i32) -> anyhow::Result<()> {
     if message_id <= 0 {
         anyhow::bail!("invalid message id: {message_id}");
@@ -156,6 +230,11 @@ pub async fn delete_message(chat_id: i64, message_id: i64, client_id: i32) -> an
 /// 删除指定消息上的默认 reply markup（原生选聊/ForceReply）。
 ///
 /// TDLib 要求先调用这个接口再删除承载键盘的消息，否则客户端可能继续显示旧键盘。
+///
+/// # 参数
+/// - `chat_id`: 消息所属的聊天 ID。
+/// - `message_id`: 承载键盘的消息 ID（必须 > 0）。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn delete_chat_reply_markup(
     chat_id: i64,
     message_id: i64,
@@ -170,6 +249,12 @@ pub async fn delete_chat_reply_markup(
 }
 
 /// 向指定 chat 发送卡片风格文本并附带按钮。
+///
+/// # 参数
+/// - `text`: 卡片格式文本。
+/// - `chat_id`: 目标聊天 ID。
+/// - `rows`: 行内键盘按钮行定义。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_card_message_with_buttons(
     text: String,
     chat_id: i64,
@@ -181,7 +266,7 @@ pub async fn send_card_message_with_buttons(
         formatted_text,
         chat_id,
         Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            build_inline_keyboard(rows),
+            Box::new(build_inline_keyboard(rows)),
         )),
         client_id,
     )
@@ -191,6 +276,14 @@ pub async fn send_card_message_with_buttons(
 /// 发送卡片风格文本和按钮，并回复一条已转存的目标消息。
 ///
 /// 同聊天使用普通回复，跨聊天使用 TDLib 的 external message reply。
+///
+/// # 参数
+/// - `text`: 卡片正文文本。
+/// - `chat_id`: 当前发送目标聊天 ID。
+/// - `rows`: 行内按钮行定义。
+/// - `target_chat_id`: 被回复消息所在的原始聊天 ID。
+/// - `target_message_id`: 被回复消息的原始 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_card_message_with_buttons_replying_to(
     text: String,
     chat_id: i64,
@@ -209,7 +302,7 @@ pub async fn send_card_message_with_buttons_replying_to(
             target_message_id,
         )),
         Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            build_inline_keyboard(rows),
+            Box::new(build_inline_keyboard(rows)),
         )),
         client_id,
     )
@@ -218,6 +311,13 @@ pub async fn send_card_message_with_buttons_replying_to(
 }
 
 /// 发送卡片风格文本，并回复一条已转存的目标消息。
+///
+/// # 参数
+/// - `text`: 卡片正文。
+/// - `chat_id`: 发送目标聊天 ID。
+/// - `target_chat_id`: 被回复消息所在的目标聊天 ID。
+/// - `target_message_id`: 被回复消息 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_card_message_replying_to(
     text: String,
     chat_id: i64,
@@ -241,7 +341,16 @@ pub async fn send_card_message_replying_to(
     .map(|_| ())
 }
 
-/// 向指定 chat 发送卡片风格文本并附带按钮，同时返回消息对象。
+/// 向指定 chat 发送卡片风格文本并附带按钮，同时返回消息对象回执。
+///
+/// # 参数
+/// - `text`: 卡片正文。
+/// - `chat_id`: 目标聊天 ID。
+/// - `rows`: 行内键盘按钮行定义。
+/// - `client_id`: TDLib 客户端实例 ID。
+///
+/// # 返回值
+/// - `Ok(SentMessageReceipt)`: 发送成功后的轻量消息回执。
 pub async fn send_card_message_with_buttons_returning(
     text: String,
     chat_id: i64,
@@ -253,7 +362,7 @@ pub async fn send_card_message_with_buttons_returning(
         formatted_text,
         chat_id,
         Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            build_inline_keyboard(rows),
+            Box::new(build_inline_keyboard(rows)),
         )),
         client_id,
     )
@@ -263,6 +372,12 @@ pub async fn send_card_message_with_buttons_returning(
 /// 向指定 chat 发送卡片风格文本并触发 ForceReply 输入框。
 ///
 /// ForceReply 不能和 inline keyboard 同时存在，因此这里只负责“要求用户回复输入”这一类场景。
+///
+/// # 参数
+/// - `text`: 提示卡片正文。
+/// - `chat_id`: 目标聊天 ID。
+/// - `placeholder`: 输入框内展示的占位提示文字（最多保留前 64 个字符）。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_card_message_with_force_reply_returning(
     text: String,
     chat_id: i64,
@@ -274,10 +389,10 @@ pub async fn send_card_message_with_force_reply_returning(
         formatted_text,
         chat_id,
         Some(tdlib_rs::enums::ReplyMarkup::ForceReply(
-            tdlib_rs::types::ReplyMarkupForceReply {
+            Box::new(tdlib_rs::types::ReplyMarkupForceReply {
                 is_personal: true,
                 input_field_placeholder: placeholder.chars().take(64).collect(),
-            },
+            }),
         )),
         client_id,
     )
@@ -285,6 +400,18 @@ pub async fn send_card_message_with_force_reply_returning(
 }
 
 /// 向指定私聊发送 Telegram 原生目标聊天选择器。
+///
+/// 使用 Telegram 官方 `keyboardButtonTypeRequestChat` 特性，在客户端底部弹窗列出用户有权操作的群组或频道。
+///
+/// # 参数
+/// - `text`: 提示卡片正文。
+/// - `chat_id`: 目标用户的私聊 ID。
+/// - `group_button_id`: 选择群组按钮的唯一请求 ID，在 `updateNewMessage` 中用于匹配回调。
+/// - `channel_button_id`: 选择频道按钮的唯一请求 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
+///
+/// # 返回值
+/// - `Ok(SentMessageReceipt)`: 包含已发送消息 ID 的轻量回执。
 pub async fn send_card_message_with_target_chat_request_keyboard_returning(
     text: String,
     chat_id: i64,
@@ -297,7 +424,7 @@ pub async fn send_card_message_with_target_chat_request_keyboard_returning(
         formatted_text,
         chat_id,
         Some(tdlib_rs::enums::ReplyMarkup::ShowKeyboard(
-            build_target_chat_request_keyboard(group_button_id, channel_button_id, "选择目标聊天"),
+            Box::new(build_target_chat_request_keyboard(group_button_id, channel_button_id, "选择目标聊天")),
         )),
         client_id,
     )
@@ -308,6 +435,15 @@ pub async fn send_card_message_with_target_chat_request_keyboard_returning(
 ///
 /// `keyboardButtonTypeRequestUsers` 只能在 bot 私聊中使用；调用方负责在发送前
 /// 记录当前等待的业务动作，并在 `messageUsersShared` 到达后消费它。
+///
+/// # 参数
+/// - `text`: 提示卡片正文。
+/// - `chat_id`: 目标用户的私聊 ID。
+/// - `button_id`: 用户选择器按钮的请求 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
+///
+/// # 返回值
+/// - `Ok(SentMessageReceipt)`: 包含已发送消息 ID 的轻量回执。
 pub async fn send_card_message_with_user_request_keyboard_returning(
     text: String,
     chat_id: i64,
@@ -319,23 +455,33 @@ pub async fn send_card_message_with_user_request_keyboard_returning(
         formatted_text,
         chat_id,
         Some(tdlib_rs::enums::ReplyMarkup::ShowKeyboard(
-            build_user_request_keyboard(button_id, "选择要授权的用户"),
+            Box::new(build_user_request_keyboard(button_id, "选择要授权的用户")),
         )),
         client_id,
     )
     .await
 }
 
+/// 构造 Telegram 原生目标聊天选择器键盘。
+///
+/// 包含“选择群组”、“选择频道”、“手动输入目标”以及“取消”按钮。
+///
+/// # 参数
+/// - `group_button_id`: 群组请求按钮 ID。
+/// - `channel_button_id`: 频道请求按钮 ID（预设发消息和管理权限检查）。
+/// - `placeholder`: 输入框提示文本。
 fn build_target_chat_request_keyboard(
     group_button_id: i32,
     channel_button_id: i32,
     placeholder: &str,
 ) -> tdlib_rs::types::ReplyMarkupShowKeyboard {
+    // 频道通常需要管理员权限才能转发/发表消息
     let channel_rights = tdlib_rs::types::ChatAdministratorRights {
         can_manage_chat: true,
         can_post_messages: true,
         ..Default::default()
     };
+    // 闭包：构造标准的 RequestChat 按钮
     let request_button = |text: &str,
                           id: i32,
                           chat_is_channel: bool,
@@ -346,7 +492,7 @@ fn build_target_chat_request_keyboard(
         icon_custom_emoji_id: 0,
         style: tdlib_rs::enums::ButtonStyle::Primary,
         r#type: tdlib_rs::enums::KeyboardButtonType::RequestChat(
-            tdlib_rs::types::KeyboardButtonTypeRequestChat {
+            Box::new(tdlib_rs::types::KeyboardButtonTypeRequestChat {
                 id,
                 chat_is_channel,
                 restrict_chat_is_forum: false,
@@ -360,7 +506,7 @@ fn build_target_chat_request_keyboard(
                 request_title: true,
                 request_username: true,
                 request_photo: false,
-            },
+            }),
         ),
     };
     let group_button = request_button("选择群组", group_button_id, false, None, None, true);
@@ -398,9 +544,15 @@ fn build_target_chat_request_keyboard(
         one_time: true,
         is_personal: true,
         input_field_placeholder: placeholder.chars().take(64).collect(),
+        force_reply: false,
     }
 }
 
+/// 构造 Telegram 原生授权用户选择器键盘。
+///
+/// # 参数
+/// - `button_id`: 用户选择器唯一请求 ID。
+/// - `placeholder`: 底部输入框占位符。
 fn build_user_request_keyboard(
     button_id: i32,
     placeholder: &str,
@@ -410,7 +562,7 @@ fn build_user_request_keyboard(
         icon_custom_emoji_id: 0,
         style: tdlib_rs::enums::ButtonStyle::Primary,
         r#type: tdlib_rs::enums::KeyboardButtonType::RequestUsers(
-            tdlib_rs::types::KeyboardButtonTypeRequestUsers {
+            Box::new(tdlib_rs::types::KeyboardButtonTypeRequestUsers {
                 id: button_id,
                 restrict_user_is_bot: true,
                 user_is_bot: false,
@@ -420,7 +572,7 @@ fn build_user_request_keyboard(
                 request_name: true,
                 request_username: true,
                 request_photo: false,
-            },
+            }),
         ),
     };
     let cancel_button = tdlib_rs::types::KeyboardButton {
@@ -437,10 +589,19 @@ fn build_user_request_keyboard(
         one_time: true,
         is_personal: true,
         input_field_placeholder: placeholder.chars().take(64).collect(),
+        force_reply: false,
     }
 }
 
 /// 构造指向已转存消息的 Telegram 原生回复锚点。
+///
+/// 当发送 chat 和目标 chat 相同且同源时，构造普通同聊回复 `InputMessageReplyTo::Message`；
+/// 当跨聊天时，利用 Telegram 官方跨聊引用协议构造 `InputMessageReplyTo::ExternalMessage`。
+///
+/// # 参数
+/// - `send_chat_id`: 发送回复消息所在的聊天 ID。
+/// - `target_chat_id`: 被回复的原消息所在的聊天 ID。
+/// - `target_message_id`: 被回复的原消息 ID。
 fn build_message_reply_to(
     send_chat_id: i64,
     target_chat_id: i64,
@@ -448,26 +609,35 @@ fn build_message_reply_to(
 ) -> tdlib_rs::enums::InputMessageReplyTo {
     if send_chat_id == target_chat_id {
         return tdlib_rs::enums::InputMessageReplyTo::Message(
-            tdlib_rs::types::InputMessageReplyToMessage {
+            Box::new(tdlib_rs::types::InputMessageReplyToMessage {
                 message_id: target_message_id,
                 quote: None,
                 checklist_task_id: 0,
-            },
+                poll_option_id: String::new(),
+            }),
         );
     }
 
     tdlib_rs::enums::InputMessageReplyTo::ExternalMessage(
-        tdlib_rs::types::InputMessageReplyToExternalMessage {
+        Box::new(tdlib_rs::types::InputMessageReplyToExternalMessage {
             chat_id: target_chat_id,
             message_id: target_message_id,
             quote: None,
             checklist_task_id: 0,
-        },
+            poll_option_id: String::new(),
+        }),
     )
 }
 
 /// 向指定 chat 发送便于复制的等宽文本，并附带按钮。
+///
 /// 适合错误详情、诊断信息这类“主体要复制，附加动作也要点”的场景。
+///
+/// # 参数
+/// - `text`: 等宽文本内容。
+/// - `chat_id`: 目标聊天 ID。
+/// - `rows`: 行内键盘按钮行定义。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_copyable_message_with_buttons(
     text: String,
     chat_id: i64,
@@ -478,7 +648,7 @@ pub async fn send_copyable_message_with_buttons(
         build_copyable_formatted_text(text)?,
         chat_id,
         Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            build_inline_keyboard(rows),
+            Box::new(build_inline_keyboard(rows)),
         )),
         client_id,
     )
@@ -486,7 +656,13 @@ pub async fn send_copyable_message_with_buttons(
 }
 
 /// 向指定 chat 发送便于整段复制的等宽文本。
-/// 使用 TDLib 的 `textEntityTypePreCode` 包裹整段消息。
+///
+/// 使用 TDLib 的 `textEntityTypePreCode` 包裹整段消息，用户点击即可一键复制全部文本。
+///
+/// # 参数
+/// - `text`: 等宽文本内容。
+/// - `chat_id`: 目标聊天 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_copyable_message(
     text: String,
     chat_id: i64,
@@ -502,6 +678,13 @@ pub async fn send_copyable_message(
 }
 
 /// 发送错误信息（统一转成字符串后发送）。
+///
+/// 内部将 `anyhow::Error` 转为字符串，并通过 `send_copyable_message` 发送等宽可复制文本。
+///
+/// # 参数
+/// - `error`: 捕获的任意错误对象。
+/// - `chat_id`: 目标聊天 ID。
+/// - `client_id`: TDLib 客户端实例 ID。
 pub async fn send_error_message(
     error: anyhow::Error,
     chat_id: i64,

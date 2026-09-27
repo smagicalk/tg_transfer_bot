@@ -34,7 +34,8 @@
 
 ```text
 .
-├── config.example.json     # 本地配置模板
+├── config.example.json     # 本地配置模板（纯净无注释版）
+├── config.example.jsonc    # 本地配置模板（带详细字段注释与说明）
 ├── session.md              # 跨会话恢复文档
 ├── Cargo.toml              # workspace 配置
 ├── tdlib_rs/               # TDLib Rust 绑定
@@ -78,7 +79,12 @@ Copy-Item .\config.example.json .\config.json
 
 ### 1. 准备 TDLib
 
-项目通过 `tdjson` 连接 TDLib。构建和运行前需要设置 `LOCAL_TDLIB_PATH`。
+项目通过 `tdjson` 连接 TDLib。构建和运行前需要准备编译好的 TDLib 动态链接库，并设置 `LOCAL_TDLIB_PATH`。
+
+- **官方仓库**：[tdlib/td](https://github.com/tdlib/td)
+- **当前兼容分支**：`master` 分支（官方主分支）
+- **当前兼容基线 Commit**：[`42e6a5259551178d1dab54a22ad96d14bd906e20`](https://github.com/tdlib/td/commit/42e6a5259551178d1dab54a22ad96d14bd906e20)（对应 TDLib 1.8.67）
+- **最低版本要求**：TDLib `>1.8.29`
 
 PowerShell 示例：
 
@@ -90,11 +96,16 @@ $env:LOCAL_TDLIB_PATH = "F:/tdlib/td/tdlib"
 
 - `include/`
 - `lib/`
-- `bin/tdjson.dll`
+- `bin/tdjson.dll`（Windows）或 `libtdjson.so`（Linux）
 
 ### 2. 创建本地配置
 
-以 [config.example.json](config.example.json) 为模板创建 `config.json`。真实配置不要提交到仓库。
+仓库提供了两套配置模板供参考：
+- [config.example.json](config.example.json)：纯净无注释版，严格遵循标准 RFC 8259 JSON 规范，适合快速比对和自动化工具处理；
+- [config.example.jsonc](config.example.jsonc)：带详细字段中文注释版，包含每个配置项说明及可选的高级配置模板（`targets` 与 `transfer_config`）。
+
+以模板创建本地 `config.json`（或 `config.jsonc`）。真实配置不要提交到仓库。
+程序内置单行（`//`）与多行（`/* */`）注释安全剥离预处理，直接在本地配置文件中保留或编写注释不会引起解析错误。
 
 最小可运行配置通常需要先填好这些值：
 

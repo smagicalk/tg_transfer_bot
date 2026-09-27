@@ -220,6 +220,7 @@ README_RUN
 
 cp README.md "$DIST_DIR/README.md"
 cp config.example.json "$DIST_DIR/config.example.json"
+cp config.example.jsonc "$DIST_DIR/config.example.jsonc"
 cp LICENSE "$DIST_DIR/LICENSE"
 
 {

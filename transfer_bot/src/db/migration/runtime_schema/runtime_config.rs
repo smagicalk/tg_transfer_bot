@@ -1,8 +1,11 @@
+//! 转存运行时配置与目标频道别名表 DDL 定义与初始化。
+
 use sea_orm::ConnectionTrait;
 use sea_orm::sea_query::{ColumnDef, Table};
 
 use super::exec_schema_statement;
 
+/// 批量创建转存运行时控制配置表、目标频道配置表与快捷别名映射表。
 pub(super) async fn create<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,
@@ -98,6 +101,7 @@ where
     Ok(())
 }
 
+/// 批量删除所有转存配置与别名相关数据表结构（若存在）。
 pub(super) async fn drop<C>(db: &C) -> anyhow::Result<()>
 where
     C: ConnectionTrait,

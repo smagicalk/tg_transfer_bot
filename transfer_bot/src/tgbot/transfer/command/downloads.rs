@@ -71,7 +71,7 @@ pub(in crate::tgbot::transfer::command) fn downloads_help_filter_values() -> &'s
     "all | wait | dl | up | done | ok | fail | run | ready | pause | cancelling | cancel"
 }
 
-/// `/downloads` 帮助详情复用的示例命令。
+/// `/downloads` 帮助详情复用的示例命令列表。
 pub(in crate::tgbot::transfer::command) fn downloads_help_example_commands() -> Vec<String> {
     vec![
         build_downloads_command(None, None, None, CommandStyle::Long),
@@ -110,7 +110,7 @@ pub(in crate::tgbot::transfer::command) fn build_downloads_help_detail_text() ->
     lines.join("\n")
 }
 
-/// `/help downloads` 详情页共用的按钮入口。
+/// `/help downloads` 详情页共用的按钮入口行。
 ///
 /// 这里把常用筛选统一收在 `/downloads` 模块里，避免 help 层重复维护。
 pub(in crate::tgbot::transfer::command) fn build_downloads_help_entry_rows()
@@ -137,7 +137,7 @@ pub(in crate::tgbot::transfer::command) fn build_downloads_help_entry_rows()
     ]]
 }
 
-/// `/menu` 下载页复用的筛选按钮行。
+/// `/menu` 下载页复用的筛选按钮行矩阵。
 pub(in crate::tgbot::transfer::command) fn build_downloads_menu_filter_rows()
 -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     [
@@ -185,13 +185,14 @@ pub(in crate::tgbot::transfer::command) fn build_downloads_menu_filter_rows()
     .collect()
 }
 
-/// 在指定上下文上执行 `/downloads` 命令。
+/// 在指定上下文上执行 `/downloads` 文本命令。
 pub async fn downloads_command_on(
     app: &crate::app_context::AppContext,
     text: Vec<&str>,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 解析命令参数中的筛选、条数与页码
     let args = parse_downloads_args_on(app, &text)?;
     tracing::info!(
         request_chat_id = actor.request_chat_id,
@@ -201,6 +202,7 @@ pub async fn downloads_command_on(
         page = args.page,
         "downloads command started"
     );
+    // 渲染下载列表卡片并发送
     render_downloads_page_on(app, actor, args)
         .await?
         .panel
@@ -208,13 +210,14 @@ pub async fn downloads_command_on(
         .await
 }
 
-/// 在指定上下文上处理 `/downloads` callback。
+/// 在指定上下文上处理 `/downloads` 分页/筛选/刷新按钮回调。
 pub async fn downloads_callback_query_on(
     app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 提取回调数据
     let payload = match update.payload {
         tdlib_rs::enums::CallbackQueryPayload::Data(data) => data.data,
         _ => {
@@ -223,6 +226,7 @@ pub async fn downloads_callback_query_on(
         }
     };
 
+    // 解析回调动作与分页参数
     let Some((action, args)) = parse_downloads_callback_data(&payload) else {
         send::answer_callback_query(update.id, Some("分页参数无效"), client_id).await?;
         return Ok(());
@@ -237,6 +241,7 @@ pub async fn downloads_callback_query_on(
         "downloads callback page requested"
     );
 
+    // 根据动作显示短提示浮窗
     let callback_tip = match action {
         DownloadsCallbackAction::Page => None,
         DownloadsCallbackAction::Refresh => Some("已刷新"),
@@ -244,6 +249,7 @@ pub async fn downloads_callback_query_on(
     };
     send::answer_callback_query(update.id, callback_tip, client_id).await?;
 
+    // 重新拉取并渲染目标页
     let rendered = match render_downloads_page_on(app, actor, args).await {
         Ok(rendered) => rendered,
         Err(err) => {
@@ -252,6 +258,7 @@ pub async fn downloads_callback_query_on(
         }
     };
     let (text, keyboard) = rendered.panel.into_card_parts()?;
+    // 原位编辑消息卡片
     send::edit_interaction_card_or_error(
         text,
         update.chat_id,
@@ -264,7 +271,7 @@ pub async fn downloads_callback_query_on(
     .await
 }
 
-/// 下载列表按钮失败提示。
+/// 下载列表按钮失败提示卡片发送。
 ///
 /// callback 已经先 ACK，失败时不能再 answer 同一个 callback，因此发送一条短卡片说明错误。
 async fn send_downloads_callback_error(
@@ -282,8 +289,9 @@ async fn send_downloads_callback_error(
     .await
 }
 
-/// `/downloads` 页面渲染结果。
+/// `/downloads` 页面渲染结果结构体。
 struct DownloadsRenderedPage {
+    /// 包含正文文本与行按键的回调面板
     panel: send::ReplyPanel,
 }
 
@@ -296,6 +304,7 @@ async fn render_downloads_page_on(
     // 先拉取更大窗口，再按筛选条件裁剪，避免“最近几条碰巧不匹配”导致空结果。
     let query_limit = compute_downloads_query_limit(args.limit, args.page);
     let snapshots = store::list_recent_job_snapshots(app, query_limit).await?;
+    // 根据筛选器过滤任务快照
     let filtered = snapshots
         .into_iter()
         .filter(|snapshot| args.filter.matches(snapshot))
@@ -322,7 +331,9 @@ async fn render_downloads_page_on(
         page_items = page_items.len(),
         "downloads page rendered"
     );
+    // 格式化正文文本
     let text = format_downloads_text(&page_items, &normalized_args, total);
+    // 构造分页与快捷操作键盘
     let keyboard = build_downloads_keyboard(&normalized_args, total_pages, &page_items);
 
     Ok(DownloadsRenderedPage {

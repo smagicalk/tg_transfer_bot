@@ -5,7 +5,11 @@ use crate::tgbot::transfer::card;
 use crate::tgbot::transfer::command::common::{build_page_empty_note, build_ready_page_header};
 use crate::tgbot::transfer::store;
 
-/// 计算缓存页数。
+/// 计算缓存分页总页数（至少保证展示 1 页）。
+///
+/// # 参数
+/// - `total`: 缓存记录总条目数
+/// - `limit`: 单页容量
 pub(super) fn compute_cache_page_count(total: usize, limit: u64) -> u64 {
     if total == 0 {
         1
@@ -14,7 +18,13 @@ pub(super) fn compute_cache_page_count(total: usize, limit: u64) -> u64 {
     }
 }
 
-/// 渲染缓存概览文本。
+/// 渲染缓存概览富文本卡片内容。
+///
+/// 包含总记录数、活跃记录数、待删除、删除失败、关联任务总览及各状态分布分布明细。
+///
+/// # 参数
+/// - `health`: 传输系统运行健康快照
+/// - `summary_rows`: 缓存状态统计摘要切片
 pub(super) fn format_cache_summary_text(
     health: &store::TransferHealthSnapshot,
     summary_rows: &[store::FileCacheStatusSummary],
@@ -33,6 +43,7 @@ pub(super) fn format_cache_summary_text(
     if summary_rows.is_empty() {
         lines.push("暂无缓存记录".to_owned());
     } else {
+        // 逐行渲染各状态下的条目数与活跃引用计数
         for row in summary_rows {
             lines.push(card::field_pair(
                 &row.status,
@@ -45,7 +56,13 @@ pub(super) fn format_cache_summary_text(
     lines.join("\n")
 }
 
-/// 渲染缓存分页文本。
+/// 渲染缓存明细分页列表富文本卡片。
+///
+/// # 参数
+/// - `health`: 传输健康快照
+/// - `rows`: 当前页包含的缓存文件快照切片
+/// - `args`: 当前请求的分页参数
+/// - `total_pages`: 列表总页码
 pub(super) fn format_cache_page_text(
     health: &store::TransferHealthSnapshot,
     rows: &[store::FileCacheSnapshot],
@@ -59,11 +76,13 @@ pub(super) fn format_cache_page_text(
         card::field("每页", args.limit),
         card::field("总数", health.file_cache_rows),
     ]);
+    // 空态排版
     if rows.is_empty() {
         lines.push(build_page_empty_note("当前页没有缓存记录。"));
         return lines.join("\n");
     }
 
+    // 逐个渲染当前页缓存项的详细属性
     for row in rows {
         lines.push(card::DIVIDER.to_owned());
         lines.push(card::section(&format!(

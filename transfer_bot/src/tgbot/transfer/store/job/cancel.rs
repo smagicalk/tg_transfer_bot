@@ -25,14 +25,20 @@ const CANCEL_FINALIZING_WAIT_LIMIT: usize = 40;
 /// 取消收尾等待轮询间隔。
 const CANCEL_FINALIZING_WAIT_DELAY_MS: u64 = 50;
 
-// 进程内取消收尾互斥：同一个 job 的 stop/cancel 收尾只允许一个执行者进入数据库写事务。
+// 进程内取消收尾互斥集合：同一个 job 的 stop/cancel 收尾只允许一个执行者进入数据库写事务。
 static CANCEL_FINALIZING_JOB_IDS: LazyLock<Mutex<HashSet<i64>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// 获取同 job 的取消收尾进程内锁。
+/// 获取指定 job 的取消收尾进程内排他锁。
 ///
-/// 数据库里的 `cancel_finalizing` 负责跨流程幂等；这里额外避免同进程内两个 stop
-/// 同时进入 SQLite 写事务，降低 `database is locked` 风险。
+/// 数据库里的 `cancel_finalizing` 负责跨进程/跨连接幂等；这里额外避免同进程内两个 stop
+/// 协程同时进入 SQLite 写事务，降低 `database is locked` 锁竞争风险。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+///
+/// # 返回值
+/// - `CancelFinalizingGuard` 互斥保护守卫。
 async fn acquire_cancel_finalizing_guard(job_id: i64) -> CancelFinalizingGuard {
     loop {
         {
@@ -45,7 +51,7 @@ async fn acquire_cancel_finalizing_guard(job_id: i64) -> CancelFinalizingGuard {
     }
 }
 
-/// 取消收尾进程内锁 guard，drop 时同步释放。
+/// 取消收尾进程内锁 guard，在 drop 时从全局集合中移除该 job_id。
 struct CancelFinalizingGuard {
     job_id: i64,
 }
@@ -57,7 +63,10 @@ impl Drop for CancelFinalizingGuard {
     }
 }
 
-/// 获取取消收尾锁；锁中毒时恢复集合，避免单个取消 panic 后所有 stop 都无法继续。
+/// 获取取消收尾互斥锁；当出现锁中毒（Mutex Poisoned）时自动重置集合，避免单个异常崩溃波及后续所有 stop 操作。
+///
+/// # 返回值
+/// - 内部集合的 `MutexGuard`。
 fn lock_cancel_finalizing_job_ids() -> MutexGuard<'static, HashSet<i64>> {
     match CANCEL_FINALIZING_JOB_IDS.lock() {
         Ok(guard) => guard,
@@ -68,9 +77,23 @@ fn lock_cancel_finalizing_job_ids() -> MutexGuard<'static, HashSet<i64>> {
     }
 }
 
-/// 立即取消任务并释放文件引用。
+/// 立即取消任务并释放其占用的文件引用。
 ///
-/// 使用 `cancel_finalizing` 做数据库级认领，确保同一个 job 的文件引用只释放一次。
+/// 内部流程：
+/// 1. 获取进程内互斥 Guard；
+/// 2. 两阶段认领：先原子将状态从 `pending/running/paused/cancelling` 更新为 `cancel_finalizing`；
+/// 3. 若并发冲突且对方正在收尾，则轮询等待最终结果，超时则接管；
+/// 4. 开启写事务：统计已完成/失败项，将未完成项全部置为 `cancelled`；
+/// 5. 将任务主表状态更新为 `cancelled` 并记录终止原因；
+/// 6. 批量释放本任务持有的文件缓存引用（`release_job_file_refs_on_conn`），设定延迟删除期。
+///
+/// # 参数
+/// - `job_id`: 待取消的任务 ID。
+/// - `reason`: 终止原因（如用户指令输入或超时退出）。
+/// - `delay_minutes`: 文件引用的安全删除延迟（分钟）。
+///
+/// # 返回值
+/// - 终止后的 `transfer_job::Model` 数据库模型。
 pub(in crate::tgbot::transfer) async fn cancel_job_now(
     job_id: i64,
     reason: impl Into<String>,

@@ -30,6 +30,12 @@ pub(in crate::tgbot::transfer) struct ResultMessageRecord {
 }
 
 /// 查询任务的所有结果入口。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+///
+/// # 返回值
+/// - 该任务关联的全部结果消息记录列表（按分组序号升序排列）。
 pub(in crate::tgbot::transfer) async fn list_result_messages_by_job(
     job_id: i64,
 ) -> anyhow::Result<Vec<ResultMessageRecord>> {
@@ -37,9 +43,14 @@ pub(in crate::tgbot::transfer) async fn list_result_messages_by_job(
     list_result_messages_by_job_on_conn(db_conn, job_id).await
 }
 
-/// 在事务内重建任务结果入口。
+/// 在指定事务/连接内原子重建任务结果入口。
 ///
-/// 上传成功后调用；先删除旧结果再写入新结果，避免恢复/重试路径留下过期入口。
+/// 上传成功后调用；先全量删除原旧结果再批量写入新结果，避免恢复/重试路径留下过期的悬挂入口。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `job_id`: 任务主键 ID。
+/// - `records`: 待持久化的新结果消息记录切片。
 pub(in crate::tgbot::transfer) async fn replace_result_messages_on_conn<C>(
     conn: &C,
     job_id: i64,
@@ -73,7 +84,14 @@ where
     Ok(())
 }
 
-/// 在事务内查询任务结果入口。
+/// 在指定事务/连接内查询任务的结果入口。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `job_id`: 任务主键 ID。
+///
+/// # 返回值
+/// - 查出的结果消息记录列表。
 async fn list_result_messages_by_job_on_conn<C>(
     conn: &C,
     job_id: i64,
@@ -99,10 +117,15 @@ where
     Ok(records)
 }
 
-/// 更新单个结果入口链接。
+/// 更新单条具体结果入口的链接。
 ///
-/// 旧链接不可点击时，lookup/重复转存会刷新主表首链接；如果新表已有对应记录，
-/// 同步写回新表，保证后续多结果展示也使用可点击链接。
+/// 当旧链接失效或不可点击时，lookup 或重复转存解析出新的可用 URL 后，同步写回
+/// `transfer_result_message` 表，确保多相册/多卡片跳转按钮都能使用最新有效链接。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+/// - `message_id`: 目标消息 ID。
+/// - `message_link`: 新的结果消息链接。
 pub(in crate::tgbot::transfer) async fn update_result_message_record_link(
     job_id: i64,
     message_id: i64,

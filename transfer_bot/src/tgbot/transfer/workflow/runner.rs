@@ -20,10 +20,20 @@ use super::control::{apply_job_control, finish_skipped_by_control};
 use super::result_link::build_result_message_link;
 use super::upload::{is_initial_upload_rejected, upload_prepared};
 
-/// 已持有 job 运行锁后的核心执行逻辑：
-/// 1. 准备所有上传内容（包括下载与缓存回填）
-/// 2. 若全部成功，再进行上传（单条 send_message，多条 send_message_album）
-/// 3. 结束后释放引用，进入延迟删除队列
+/// 已持有 job 运行锁后的核心执行总入口：
+/// 1. 准备所有上传内容（包括下载媒体与本地缓存元数据回填）；
+/// 2. 若全部成功，再进行整批上传（单条 `send_message`，多条 `send_message_album`）；
+/// 3. 执行结束后在数据库事务中原子写入终态，释放文件引用进入 GC 延迟删除队列；
+/// 4. 默认启用 Bot 源准备失败自动降级到 User 源重试能力。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `job`: 待执行的转存任务模型。
+/// - `messages`: 属于该任务的源 TDLib 消息列表。
+/// - `client_ids`: TDLib 客户端角色分配配置。
+///
+/// # 返回值
+/// - 最终产物 `TransferOutcome`。
 pub(super) async fn run_job_inner(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: db::transfer_job::Model,
@@ -41,6 +51,13 @@ pub(super) async fn run_job_inner(
 ///
 /// `allow_prepare_fallback` 防止 user 重试失败后无限递归。BotMessage 源不 fallback，因为 user 通常无法读取
 /// bot 私聊或 bot 可见消息的本地 message_id。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `job`: 任务模型。
+/// - `messages`: 源消息列表。
+/// - `client_ids`: 客户端配置。
+/// - `allow_prepare_fallback`: 是否允许失败时向 User 账号降级。
 async fn run_job_inner_with_fallback(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: db::transfer_job::Model,
@@ -106,7 +123,13 @@ async fn run_job_inner_with_fallback(
     }
 }
 
-/// 执行一次任务，不做 source fallback。
+/// 执行单次转存核心流水线（下载准备 -> 上传 -> 终态落库），不做外层源降级重试。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `job`: 任务模型。
+/// - `messages`: 源消息列表。
+/// - `client_ids`: 客户端配置。
 async fn run_job_inner_once(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: db::transfer_job::Model,
@@ -535,6 +558,19 @@ async fn run_job_inner_once(
 }
 
 /// 判断一次准备失败是否允许从 bot 源切到 user 源重试。
+///
+/// 判定条件：
+/// 1. 任务源类型为 `link`（链接源）；
+/// 2. 当前客户端角色为 `bot`；
+/// 3. 该任务在创建时标记了 `allow_user_fallback == true`；
+/// 4. 报错属于准备阶段错误（`transfer failed during prepare`）。
+///
+/// # 参数
+/// - `job`: 任务模型。
+/// - `err`: 发生的错误对象。
+///
+/// # 返回值
+/// - `true` 表示允许切 User 源降级重试；`false` 表示直接报错。
 fn should_fallback_prepare_to_user(job: &db::transfer_job::Model, err: &anyhow::Error) -> bool {
     if job.source_kind != SourceKind::Link.as_str() || job.source_client_role != "bot" {
         return false;
@@ -548,15 +584,26 @@ fn should_fallback_prepare_to_user(job: &db::transfer_job::Model, err: &anyhow::
 }
 
 /// bot 链接源准备失败时先把错误交给外层 fallback，不立刻写失败终态。
+///
+/// # 参数
+/// - `job`: 任务模型。
+///
+/// # 返回值
+/// - `true` 表示需要向上抛出错误供外层 fallback 捕获。
 fn should_return_prepare_error_for_fallback(job: &db::transfer_job::Model) -> bool {
     job.source_kind == SourceKind::Link.as_str()
         && job.source_client_role == "bot"
         && job.allow_user_fallback
 }
 
-/// 将 bot 源任务切换为 user 源任务。
+/// 将 bot 源任务切换为 user 源任务，并对齐子项。
 ///
 /// 复用恢复流程的 reconcile：新增/消失/owner 变化都会在同一事务里更新 item 和 file_cache 引用。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `job_id`: 任务主键 ID。
+/// - `bundle`: User 客户端爬取到的新消息包。
 async fn reconcile_job_source_for_fallback(
     app_context: &crate::app_context::AppContext,
     job_id: i64,
@@ -574,6 +621,12 @@ async fn reconcile_job_source_for_fallback(
 }
 
 /// bot 准备失败且 user fallback 也失败时，必须把任务收敛成失败并释放已有引用。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `job`: 任务模型。
+/// - `bot_err`: 首次 Bot 准备报错。
+/// - `fallback_err`: User 降级重试报错。
 async fn finish_prepare_fallback_failed_job(
     app_context: &crate::app_context::AppContext,
     job: &db::transfer_job::Model,

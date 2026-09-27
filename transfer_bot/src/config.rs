@@ -1,25 +1,34 @@
-// 配置模型定义：
-// 负责 JSON <-> Rust 结构体映射。
+//! 配置模型定义：
+//! 负责 JSON <-> Rust 结构体映射，涵盖 TDLib 底层参数、转存引擎并发与 GC、
+//! 存储连接串以及多客户端架构（Bot + User Executor）的角色分配。
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
-// 运行时配置文件路径：
-// - 主程序启动时写入
-// - 目前只保留给需要知道“当前配置文件来自哪里”的流程使用
+/// 运行时配置文件路径单例容器：
+/// - 主程序启动时通过 CLI 参数解析写入；
+/// - 目前保留给需要追溯“当前配置文件来自何处”的流程使用。
 static CONFIG_FILE_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
-// TDLib client 角色。
-// bot 固定负责命令、卡片、按钮以及默认转存；user 是按需登录的回退执行器。
+/// TDLib 客户端角色类型。
+///
+/// 本系统采用双客户端架构：
+/// - `Bot`: 官方机器人客户端，固定负责处理命令、展示卡片与内联键盘、状态更新及默认转存上传；
+/// - `User`: 用户账号客户端，作为按需登录的回退执行器，仅在需要读取私有频道或 Bot 权限不足时介入。
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ClientRole {
+    /// 用户号执行器客户端角色。
     User,
+    /// 官方机器人客户端角色。
     Bot,
 }
 
 impl ClientRole {
-    /// 角色名用于日志，不包含任何敏感信息。
+    /// 获取角色的字符串标识（"user" 或 "bot"）。
+    ///
+    /// 常用于日志记录与模块标签，不包含任何敏感信息。
     pub fn as_str(self) -> &'static str {
         match self {
             Self::User => "user",
@@ -28,57 +37,73 @@ impl ClientRole {
     }
 }
 
-// TDLib 参数配置。
+/// TDLib 底层运行时参数配置。
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct TdlibConfig {
+    /// 是否连接 Telegram 官方测试数据中心（Test DC）。
     pub use_test_dc: bool,
+    /// TDLib 数据库本地存储目录路径。
     pub database_directory: String,
+    /// TDLib 下载与上传文件的本地缓存目录路径。
     pub files_directory: String,
+    /// TDLib 本地数据库加密密钥（留空表示不启用加密）。
     pub database_encryption_key: String,
+    /// 是否启用本地文件元数据数据库以加速文件定位。
     pub use_file_database: bool,
+    /// 是否启用会话与聊天信息本地数据库。
     pub use_chat_info_database: bool,
+    /// 是否启用历史消息本地数据库。
     pub use_message_database: bool,
+    /// 是否支持端到端加密秘密聊天。
     pub use_secret_chats: bool,
+    /// Telegram API Application ID。
     pub api_id: i32,
+    /// Telegram API Application Hash。
     pub api_hash: String,
+    /// 客户端系统语言代码（例如 "zh-hans"、"en"）。
     pub system_language_code: String,
+    /// 运行设备型号标识（例如 "tg_transfer_bot"）。
     pub device_model: String,
+    /// 操作系统或系统版本号。
     pub system_version: String,
+    /// 应用程序发布版本号。
     pub application_version: String,
 }
 
-// 转存运行时配置。
-// 这类参数原先散落在环境变量里，现在统一放进 config.json，便于修改和持久化。
+/// 转存运行时控制配置。
+///
+/// 涵盖后台并发控制、文件垃圾回收（GC）延迟、状态卡片编辑频率等核心调控参数。
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct TransferConfig {
-    // 后台转存重任务并发数。
+    /// 后台转存重任务并发数上限。
     #[serde(default = "default_transfer_job_concurrency")]
     pub job_concurrency: usize,
 
-    // 文件引用归零后的延迟删除分钟数。
-    // `alias` 兼容旧配置键，旧值会按“分钟”解释，保存后会写成新键。
+    /// 本地文件引用归零后的延迟物理删除时间（分钟）。
+    ///
+    /// 预留延迟缓冲时间可允许用户在转存后立即再次转发而无需重新从 Telegram 云端下载。
+    /// `alias` 兼容历史旧配置键 `file_delete_delay_hours`。
     #[serde(
         default = "default_transfer_file_delete_delay_minutes",
         alias = "file_delete_delay_hours"
     )]
     pub file_delete_delay_minutes: i64,
 
-    // 文件 GC 扫描间隔（秒）。
+    /// 本地垃圾文件（GC）定期扫描回收的循环间隔时间（秒）。
     #[serde(default = "default_transfer_file_gc_interval_seconds")]
     pub file_gc_interval_seconds: u64,
 
-    // 进度消息编辑间隔（秒）。
-    // 默认值与旧代码常量保持一致，后续可通过运行态管理命令动态修改。
+    /// 向 Telegram 聊天会话中编辑刷新转存进度卡片的时间间隔（秒），避免触碰 Telegram Flood 限速。
     #[serde(default = "default_progress_edit_interval_seconds")]
     pub progress_edit_interval_seconds: u64,
 
-    // 下载列表默认分页大小。
+    /// `/downloads` 命令展示下载列表时的默认单页条数。
     #[serde(default = "default_downloads_page_size")]
     pub downloads_default_page_size: u64,
 
-    // 菜单等待用户输入的超时时间（秒）。
+    /// 交互式菜单等待用户输入文本或按钮操作的超时时间（秒）。
     #[serde(default = "default_menu_input_timeout_seconds")]
     pub menu_input_timeout_seconds: u64,
 }
@@ -97,7 +122,7 @@ impl Default for TransferConfig {
 }
 
 impl TransferConfig {
-    /// 转成数据库单行配置使用的整数视图。
+    /// 将当前转存配置转换为数据库单行配置的 `ActiveModel`，用于持久化入库。
     pub fn to_db_row(
         &self,
         now: chrono::DateTime<chrono::FixedOffset>,
@@ -123,7 +148,7 @@ impl TransferConfig {
         }
     }
 
-    /// 从数据库单行配置恢复运行时配置。
+    /// 从数据库单行持久化模型中解析并恢复运行时配置。
     pub fn from_db_model(
         model: &crate::db::transfer_runtime_config::Model,
     ) -> anyhow::Result<Self> {
@@ -138,8 +163,9 @@ impl TransferConfig {
     }
 }
 
-// 登录方式配置。
-// JSON 示例：{ "type": "PHONE", "data": "..." }
+/// 客户端登录鉴权方式。
+///
+/// 序列化为 JSON 格式形如：`{ "type": "PHONE", "data": "..." }` 或 `{ "type": "OCR" }`。
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(
     rename = "login_info",
@@ -148,39 +174,52 @@ impl TransferConfig {
     content = "data"
 )]
 pub enum LoginInfo {
-    // 手机号登录，序列化后仍保持配置文件中的 PHONE。
+    /// 手机号登录，携带国际格式手机号字符串（例如 "+8613800000000"）。
     Phone(String),
-    // Bot token 登录，序列化后仍保持配置文件中的 TOKEN。
+    /// Bot Token 凭据登录，携带完整的 BotFather Token。
     Token(String),
     #[default]
-    // 交互式 OCR 登录，序列化后仍保持配置文件中的 OCR。
+    /// 交互式二维码扫码登录（按需用户执行器默认方式）。
     Ocr,
 }
 
-// TDLib 公共默认参数。
-// v2 配置把“公共参数”和“客户端本地目录”拆开，避免 bot/user 误用同一个 TDLib 目录。
+/// TDLib 跨客户端共享的公共默认参数。
+///
+/// v2 配置将“公共默认参数”与“客户端独占本地目录”拆分，避免 Bot 与 User 误用同一个 TDLib 存储目录。
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct TdlibDefaults {
+    /// 是否连接 Telegram 官方测试数据中心（Test DC）。
     pub use_test_dc: bool,
+    /// Telegram API Application ID。
     pub api_id: i32,
+    /// Telegram API Application Hash。
     pub api_hash: String,
+    /// 客户端系统语言代码（例如 "zh-hans"、"en"）。
     pub system_language_code: String,
+    /// 运行设备型号标识（例如 "tg_transfer_bot"）。
     pub device_model: String,
+    /// 操作系统或系统版本号。
     pub system_version: String,
+    /// 应用程序发布版本号。
     pub application_version: String,
+    /// 是否支持端到端加密秘密聊天。
     pub use_secret_chats: bool,
+    /// TDLib 底层 C++ 内核日志详细程度级别（默认 1，仅记录警告与错误）。
     #[serde(default = "default_tdlib_log_verbosity_level")]
     pub log_verbosity_level: i32,
 }
 
-// 机器人自身的本地存储配置。
-// TDLib 的 database_directory 只属于 Telegram client；转存任务、文件引用和恢复状态使用这里的 SQLite。
+/// 机器人业务持久化存储配置。
+///
+/// 注意：TDLib 的 `database_directory` 只属于 Telegram 内部引擎；
+/// 转存任务队列、文件引用计数、断点恢复和授权名单等应用层数据均持久化在当前配置的 SQLite 中。
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct StorageConfig {
-    // SeaORM/SQLx 使用的数据库连接串。
-    // 当前推荐 SQLite 文件：sqlite://tg/app/transfer.sqlite?mode=rwc
+    /// SeaORM / SQLx 连接使用的数据库连接串。
+    ///
+    /// 推荐使用本地 SQLite 文件路径：`sqlite://tg/app/transfer.sqlite?mode=rwc`。
     #[serde(default = "default_storage_database_url")]
     pub database_url: String,
 }
@@ -193,20 +232,26 @@ impl Default for StorageConfig {
     }
 }
 
-// 单个 TDLib client 独有的本地配置。
+/// 单个 TDLib 客户端实例独占的本地存储与目录配置。
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct ClientTdlibConfig {
+    /// 该客户端独占的 TDLib 数据库本地存储目录。
     pub database_directory: String,
+    /// 该客户端独占的 TDLib 下载与上传文件本地缓存目录。
     pub files_directory: String,
+    /// 该客户端数据库本地加密密钥（留空表示不加密）。
     pub database_encryption_key: String,
+    /// 是否启用本地文件元数据数据库。
     pub use_file_database: bool,
+    /// 是否启用会话与聊天信息本地数据库。
     pub use_chat_info_database: bool,
+    /// 是否启用历史消息本地数据库。
     pub use_message_database: bool,
 }
 
 impl ClientTdlibConfig {
-    /// 把 v2 的公共参数 + client 本地参数合成为 TDLib 启动参数。
+    /// 将公共默认参数与客户端独占本地目录合成为完整的 TDLib 启动参数。
     fn to_tdlib_config(&self, defaults: &TdlibDefaults) -> TdlibConfig {
         TdlibConfig {
             use_test_dc: defaults.use_test_dc,
@@ -227,36 +272,42 @@ impl ClientTdlibConfig {
     }
 }
 
-// 用户号 client 配置。
+/// 用户执行器客户端专属配置。
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct UserClientConfig {
+    /// 用户执行器的登录鉴权方式（默认二维码登录）。
     #[serde(default)]
     pub login_info: LoginInfo,
+    /// 用户执行器独占的 TDLib 本地目录与数据库配置。
     pub tdlib: ClientTdlibConfig,
 }
 
-// bot client 配置。
+/// 官方 Bot 客户端专属配置。
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct BotClientConfig {
+    /// 官方 Bot 的 Telegram Bot Token（由 @BotFather 发行）。
     pub token: String,
+    /// 官方 Bot 独占的 TDLib 本地目录与数据库配置。
     pub tdlib: ClientTdlibConfig,
 }
 
-// v2 固定 client 集合。
+/// v2 固定客户端组合配置（明确划分 User 执行器与 Bot 客户端）。
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct ClientsConfig {
+    /// 用户号执行器客户端配置。
     pub user: UserClientConfig,
+    /// 官方 Bot 客户端配置。
     pub bot: BotClientConfig,
 }
 
-// 业务流程角色配置。
+/// 业务流程客户端角色分配配置。
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkflowConfig {
-    // 兼容旧配置字段；当前上传固定由 Bot 优先执行。
+    /// 负责向目标频道上传文件的客户端角色（兼容历史字段，当前固定为 Bot 优先执行）。
     #[serde(default = "default_client_role_bot")]
     pub upload_client: ClientRole,
 }
@@ -269,68 +320,87 @@ impl Default for WorkflowConfig {
     }
 }
 
-// 所有者的一次 bot 交互上下文。
+/// 所有者或管理员的一次 Bot 私聊交互上下文操作人凭据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestActor {
+    /// 发生私聊交互的 Telegram 会话 Chat ID。
     pub request_chat_id: i64,
+    /// 发送请求的用户 Telegram User ID。
     pub user_id: i64,
 }
 
-// 默认目标配置。
+/// 默认转存目标频道与快捷别名配置。
 #[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct TargetsConfig {
+    /// 未指定目标频道时的全局默认目标频道或群组 Chat ID。
     pub default_chat_id: i64,
+    /// 目标频道快捷别名映射表（例如 "anime" -> -100123456789）。
     #[serde(default)]
     pub aliases: HashMap<String, i64>,
 }
 
 impl TargetsConfig {
-    /// 判断 targets 默认值是否为空。
+    /// 判断目标配置是否为空（未配置默认频道且无任何别名映射）。
     pub fn is_empty(&self) -> bool {
         self.default_chat_id == 0 && self.aliases.is_empty()
     }
 }
 
-// v2 原始配置。
+/// v2 格式的配置文件顶层结构。
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct BotConfigV2 {
+    /// 配置文件格式版本（必须为 2）。
     pub config_version: i32,
+    /// 拥有者（Owner）的 Telegram User ID，具备最高管理权限。
     #[serde(default)]
     pub owner_user_id: i64,
+    /// 具有同等管理权限的管理员 Telegram User ID 列表。
     #[serde(default)]
     pub admin_user_ids: Vec<i64>,
+    /// TDLib 跨客户端共享的基础默认参数。
     pub tdlib_defaults: TdlibDefaults,
+    /// 业务 SQLite 数据库存储配置。
     #[serde(default)]
     pub storage: StorageConfig,
+    /// 固定客户端集合配置（User 执行器与 Bot 客户端）。
     pub clients: ClientsConfig,
+    /// 工作流角色分配配置。
     #[serde(default)]
     pub workflow: WorkflowConfig,
+    /// 默认目标频道与别名映射配置。
     #[serde(default)]
     pub targets: TargetsConfig,
+    /// 转存调度与 GC 运行时配置。
     #[serde(default)]
     pub transfer_config: TransferConfig,
 }
 
-// 运行期单 client 配置。
+/// 运行时单个 TDLib 客户端的组装就绪配置。
 #[derive(Debug, Clone)]
 pub struct RuntimeClientConfig {
+    /// 客户端角色类型（User 或 Bot）。
     pub role: ClientRole,
+    /// 完整的 TDLib 启动参数。
     pub tdlib_config: TdlibConfig,
+    /// 登录鉴权方式。
     pub login_info: LoginInfo,
+    /// TDLib 内核日志详细级别。
     pub log_verbosity_level: i32,
 }
 
-// 运行期 TDLib client id 集合。
+/// 运行期分配给各个角色的 TDLib Client ID 记录容器。
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeClientIds {
+    /// 用户执行器分配到的 Client ID。
     pub user: Option<i32>,
+    /// 官方 Bot 分配到的 Client ID。
     pub bot: Option<i32>,
 }
 
 impl RuntimeClientIds {
-    /// 写入角色对应的 TDLib client id。
+    /// 写入指定角色对应的 TDLib Client ID。
     pub fn set(&mut self, role: ClientRole, client_id: i32) {
         match role {
             ClientRole::User => self.user = Some(client_id),
@@ -338,7 +408,7 @@ impl RuntimeClientIds {
         }
     }
 
-    /// 按角色读取 TDLib client id。
+    /// 按角色读取分配的 TDLib Client ID。
     pub fn get(&self, role: ClientRole) -> Option<i32> {
         match role {
             ClientRole::User => self.user,
@@ -346,7 +416,7 @@ impl RuntimeClientIds {
         }
     }
 
-    /// 反查 TDLib client id 对应的角色。
+    /// 反查 TDLib Client ID 对应的角色。
     pub fn role_for_client_id(&self, client_id: i32) -> Option<ClientRole> {
         if self.user == Some(client_id) {
             return Some(ClientRole::User);
@@ -358,21 +428,26 @@ impl RuntimeClientIds {
     }
 }
 
-// 转存执行需要的 client id。
-//
-// `download` 是旧 workflow 字段对应的兼容 client；真实源读取/下载会跟随每个任务的
-// `source_client_role`，可通过 `get(ClientRole)` 取得实际 client id。
+/// 转存执行所需的各环节 Client ID 聚合视图。
+///
+/// `download` 是旧 workflow 字段对应的兼容 client；真实源读取/下载会跟随每个任务的
+/// `source_client_role`，可通过 `get(ClientRole)` 取得实际 client id。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferClientIds {
+    /// 负责发送交互消息与进度卡片的 Client ID（固定为 Bot）。
     pub interaction: i32,
+    /// 默认下载环节使用的 Client ID。
     pub download: i32,
+    /// 负责将文件上传至目标频道的 Client ID（固定为 Bot）。
     pub upload: i32,
+    /// 已就绪的用户执行器 Client ID（若已登录）。
     pub user: Option<i32>,
+    /// 已就绪的官方 Bot Client ID。
     pub bot: Option<i32>,
 }
 
 impl TransferClientIds {
-    /// 按角色获取 TDLib client id。
+    /// 按角色获取对应的 TDLib Client ID，若未登录或未就绪则返回明确错误提示。
     pub fn get(self, role: ClientRole) -> anyhow::Result<i32> {
         match role {
             ClientRole::User => self.user.ok_or_else(|| {
@@ -385,42 +460,44 @@ impl TransferClientIds {
     }
 }
 
-// 机器人运行时配置。
-// 这里是业务代码读取的“视图”，不再要求和 config.json 结构一一对应。
+/// 机器人应用程序运行时核心配置上下文视图。
+///
+/// 业务代码直接与该视图交互，无需关心底层配置是 v1 还是 v2 格式。
 #[derive(Debug, Clone, Default)]
 pub struct BotConfig {
-    // 始终允许与 bot 私聊交互的所有者 Telegram user ID。
+    /// 始终允许与 Bot 私聊交互的拥有者 Telegram User ID。
     pub owner_user_id: i64,
 
-    // 与所有者同权的管理员 Telegram user ID 白名单。
+    /// 与拥有者具有同等权限的管理员 Telegram User ID 白名单集合。
     pub admin_user_ids: BTreeSet<i64>,
 
-    // 机器人业务数据库配置。
+    /// 机器人业务数据库持久化配置。
     pub storage: StorageConfig,
 
-    // 启动时用于 seed 数据库的目标配置。
+    /// 启动时用于向数据库播种（Seed）的初始目标频道配置。
     pub targets: TargetsConfig,
 
-    // 转存相关运行参数。
+    /// 转存调度与 GC 运行时控制参数。
     pub transfer_config: TransferConfig,
 
-    // v2 原始配置中提取出的工作流角色。
+    /// 工作流执行角色配置。
     pub workflow: WorkflowConfig,
 
-    // 运行期 client id 集合。
+    /// 运行期动态分配的 Client ID 映射集合。
     pub client_ids: RuntimeClientIds,
 
-    // user/bot 的运行期 TDLib 配置。
+    /// User 与 Bot 各自完整的运行时 TDLib 参数与鉴权信息映射。
     pub runtime_clients: HashMap<ClientRole, RuntimeClientConfig>,
 }
 
 impl BotConfig {
-    /// 从 JSON 文本解析运行时配置。
+    /// 从 JSON 文本解析运行时配置（支持包含 `//` 或 `/* */` 注释）。
     ///
     /// 这里集中处理 v1/v2 兼容，业务模块只使用运行时视图，避免命令层散落配置版本判断。
     pub fn from_json_str(text: &str) -> anyhow::Result<Self> {
-        if is_v2_config(text)? {
-            let config = serde_json::from_str::<BotConfigV2>(text)?;
+        let stripped = strip_json_comments(text);
+        if is_v2_config(&stripped)? {
+            let config = serde_json::from_str::<BotConfigV2>(&stripped)?;
             return Self::from_v2(config);
         }
 
@@ -634,51 +711,105 @@ pub fn init_runtime_config_path(path: impl Into<PathBuf>) {
     let _ = CONFIG_FILE_PATH.set(path.into());
 }
 
-/// 判断配置文件是否是 v2 结构。
+/// 去除 JSON 文本中的单行注释（`//`）与多行注释（`/* ... */`），支持字符串内部包含斜杠等转义情况。
+pub fn strip_json_comments(json: &str) -> String {
+    let mut result = String::with_capacity(json.len());
+    let mut chars = json.chars().peekable();
+    let mut in_string = false;
+    let mut escape = false;
+
+    while let Some(ch) = chars.next() {
+        if in_string {
+            result.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+        } else if ch == '"' {
+            in_string = true;
+            result.push(ch);
+        } else if ch == '/' {
+            match chars.peek() {
+                Some('/') => {
+                    // 单行注释：跳过当前行直到换行符
+                    chars.next();
+                    for next_ch in chars.by_ref() {
+                        if next_ch == '\n' {
+                            result.push('\n');
+                            break;
+                        }
+                    }
+                }
+                Some('*') => {
+                    // 多行注释：跳过直到遇到 */
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '*' && chars.peek() == Some(&'/') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    result.push(ch);
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// 判断配置文件是否是 v2 结构（自动剥离注释后校验）。
 fn is_v2_config(text: &str) -> anyhow::Result<bool> {
-    let value = serde_json::from_str::<serde_json::Value>(text)?;
+    let stripped = strip_json_comments(text);
+    let value = serde_json::from_str::<serde_json::Value>(&stripped)?;
     Ok(value
         .get("config_version")
         .and_then(|v| v.as_i64())
         .is_some_and(|version| version >= 2))
 }
 
-// 默认后台转存并发数。
+/// 默认后台转存任务并发数（默认值为 2）。
 fn default_transfer_job_concurrency() -> usize {
     2
 }
 
-// 默认文件延迟删除分钟数。
+/// 默认本地文件延迟删除缓冲时间（默认值为 2 分钟）。
 fn default_transfer_file_delete_delay_minutes() -> i64 {
     2
 }
 
-// 默认文件 GC 扫描间隔秒数。
+/// 默认垃圾文件定期回收（GC）检查循环间隔（默认值为 60 秒）。
 fn default_transfer_file_gc_interval_seconds() -> u64 {
     60
 }
 
-// 默认进度编辑间隔秒数。
+/// 默认转存进度消息编辑刷新间隔时间（默认值为 2 秒）。
 fn default_progress_edit_interval_seconds() -> u64 {
     2
 }
 
-// 默认下载列表分页大小。
+/// 默认 `/downloads` 列表命令的分页条目数（默认值为 8 条）。
 fn default_downloads_page_size() -> u64 {
     8
 }
 
-// 默认菜单输入超时时间秒数。
+/// 默认交互式菜单等待用户输入操作的超时时间（默认值为 10 分钟）。
 fn default_menu_input_timeout_seconds() -> u64 {
     10 * 60
 }
 
-// 默认 TDLib 日志级别。
+/// 默认 TDLib 内核日志详细度输出级别（默认值为 1，仅警告与错误）。
 fn default_tdlib_log_verbosity_level() -> i32 {
     1
 }
 
-// 默认业务 SQLite 数据库路径。
+/// 默认业务 SQLite 本地数据库连接 URL。
 fn default_storage_database_url() -> String {
     "sqlite://tg/app/transfer.sqlite?mode=rwc".to_owned()
 }
@@ -699,7 +830,7 @@ fn looks_like_bot_token(token: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-// workflow 的上传端默认 bot。
+/// 工作流的上传端客户端角色默认值为 Bot。
 fn default_client_role_bot() -> ClientRole {
     ClientRole::Bot
 }
@@ -993,6 +1124,99 @@ mod tests {
         let serialized = serde_json::to_string(&cfg).unwrap();
         assert!(serialized.contains("file_delete_delay_minutes"));
         assert!(!serialized.contains("file_delete_delay_hours"));
+    }
+
+    /// 验证支持解析带有 `//` 和 `/* */` 注释的 JSON 配置文件。
+    #[test]
+    fn test_v2_config_accepts_comments() {
+        let text_with_comments = r#"
+        // 顶层配置文件
+        {
+          /* 配置文件协议版本 */
+          "config_version": 2,
+          "owner_user_id": 1, // 超管用户 ID
+          "tdlib_defaults": {
+            "use_test_dc": false,
+            "api_id": 1,
+            "api_hash": "hash//with-slashes",
+            "system_language_code": "zh-hans",
+            "device_model": "tg_transfer_bot",
+            "system_version": "1.8.62",
+            "application_version": "0.0.1",
+            "use_secret_chats": false,
+            "log_verbosity_level": 1
+          },
+          "storage": {
+            // 数据库连接串
+            "database_url": "sqlite://tg/app/transfer.sqlite?mode=rwc"
+          },
+          "clients": {
+            "user": {
+              "login_info": {
+                "type": "OCR"
+              },
+              "tdlib": {
+                "database_directory": "tg/user/db",
+                "files_directory": "tg/user/files",
+                "database_encryption_key": "user-key",
+                "use_file_database": true,
+                "use_chat_info_database": true,
+                "use_message_database": true
+              }
+            },
+            "bot": {
+              "token": "123456789:abcdefghijklmnopqrstuvwxyzABCDEF",
+              "tdlib": {
+                "database_directory": "tg/bot/db",
+                "files_directory": "tg/bot/files",
+                "database_encryption_key": "bot-key",
+                "use_file_database": true,
+                "use_chat_info_database": true,
+                "use_message_database": true
+              }
+            }
+          },
+          "workflow": {
+            "upload_client": "bot"
+          }
+        }"#;
+
+        let config = BotConfig::from_json_str(text_with_comments).expect("must parse with comments");
+        assert_eq!(config.owner_user_id, 1);
+        assert_eq!(
+            config.runtime_client(ClientRole::Bot).unwrap().tdlib_config.api_hash,
+            "hash//with-slashes"
+        );
+    }
+
+    /// 验证仓库根目录的 `config.example.json` 模板能够被正确解析且符合规范（不带注释的标准 JSON）。
+    #[test]
+    fn test_config_example_json_is_valid() {
+        let example_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("config.example.json");
+        let content = std::fs::read_to_string(example_path).expect("read config.example.json");
+        // 确保纯原生 serde_json 也能直接解析（无任何注释）
+        let _raw: serde_json::Value = serde_json::from_str(&content).expect("raw serde_json must parse config.example.json");
+        let config = BotConfig::from_json_str(&content).expect("config.example.json must parse successfully");
+        assert_eq!(config.owner_user_id, 123456789);
+        assert_eq!(config.admin_user_ids.len(), 0);
+        assert_eq!(config.workflow.upload_client, ClientRole::Bot);
+    }
+
+    /// 验证仓库根目录的 `config.example.jsonc` 模板能够被正确解析且符合规范（带有详细注释）。
+    #[test]
+    fn test_config_example_jsonc_is_valid() {
+        let example_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("config.example.jsonc");
+        let content = std::fs::read_to_string(example_path).expect("read config.example.jsonc");
+        let config = BotConfig::from_json_str(&content).expect("config.example.jsonc must parse successfully");
+        assert_eq!(config.owner_user_id, 123456789);
+        assert_eq!(config.admin_user_ids.len(), 0);
+        assert_eq!(config.workflow.upload_client, ClientRole::Bot);
     }
 
     fn v2_config_text() -> &'static str {

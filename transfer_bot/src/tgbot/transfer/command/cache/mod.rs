@@ -29,7 +29,7 @@ pub(in crate::tgbot::transfer::command) fn cache_help_summary() -> &'static str 
     "查看 file_cache 概览和最近缓存记录；只读，不执行清理。"
 }
 
-/// `cache` 菜单页和帮助详情页共用的开场说明。
+/// `cache` 菜单页和帮助详情页共用的开场说明文本行。
 pub(in crate::tgbot::transfer::command) fn cache_intro_lines() -> Vec<String> {
     vec!["默认展示最近更新的缓存记录并直接分页；概览可查看状态汇总，不执行删除。".to_owned()]
 }
@@ -77,23 +77,33 @@ pub(in crate::tgbot::transfer::command) fn build_cache_help_entry_rows()
     ]]
 }
 
-/// 判断 callback payload 是否属于 `/cache`。
+/// 判断 callback payload 是否属于 `/cache` 模块。
+///
+/// # 参数
+/// - `data`: 回调原始载荷
 pub(super) fn is_cache_callback_data(data: &str) -> bool {
     keyboard::is_cache_callback_data(data)
 }
 
-/// 给菜单页生成缓存默认入口 callback 数据。
+/// 给菜单页生成缓存默认入口 callback 数据（默认第 1 页列表）。
 pub(super) fn build_cache_default_callback_data() -> String {
     keyboard::build_cache_view_callback_data(CacheView::Page, CacheArgs::default().limit, 1)
 }
 
-/// 在指定上下文上执行 `/cache` 命令。
+/// 在指定应用上下文上执行 `/cache` 命令。
+///
+/// # 参数
+/// - `app`: 全局应用上下文实例引用
+/// - `text`: 命令行切片
+/// - `request_chat_id`: 请求发起的 Telegram 会话 ID
+/// - `client_id`: TDLib 客户端实例 ID
 pub async fn cache_command_on(
     app: &crate::app_context::AppContext,
     text: Vec<&str>,
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 1. 解析命令参数
     let args = parse_cache_args(&text)?;
     tracing::info!(
         request_chat_id,
@@ -103,16 +113,24 @@ pub async fn cache_command_on(
         "cache command started"
     );
 
+    // 2. 渲染卡片内容与配套 inline 键盘
     let rendered = render_cache_page_on(app, args).await?;
+    // 3. 发送回复卡片
     rendered.panel.send(request_chat_id, client_id).await
 }
 
-/// 在指定上下文上处理 `/cache` callback。
+/// 在指定应用上下文上处理 `/cache` 内联键盘点击回调。
+///
+/// # 参数
+/// - `app`: 全局应用上下文实例引用
+/// - `update`: 回调更新事件
+/// - `client_id`: TDLib 客户端实例 ID
 pub async fn cache_callback_query_on(
     app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 提取载荷
     let payload = match update.payload {
         tdlib_rs::enums::CallbackQueryPayload::Data(data) => data.data,
         _ => {
@@ -121,13 +139,16 @@ pub async fn cache_callback_query_on(
         }
     };
 
+    // 解析缓存参数
     let Some(args) = parse_cache_callback_data(&payload) else {
         send::answer_callback_query(update.id, Some("缓存参数无效"), client_id).await?;
         return Ok(());
     };
 
+    // 立即响应 ACK 消除加载圈
     send::answer_callback_query(update.id, Some("已刷新"), client_id).await?;
 
+    // 重新拉取并渲染最新数据
     let rendered = match render_cache_page_on(app, args).await {
         Ok(rendered) => rendered,
         Err(err) => {
@@ -135,6 +156,7 @@ pub async fn cache_callback_query_on(
             return Err(err);
         }
     };
+    // 原地编辑更新原消息卡片
     let (text, keyboard) = rendered.panel.into_card_parts()?;
     send::edit_interaction_card_or_error(
         text,
@@ -148,23 +170,32 @@ pub async fn cache_callback_query_on(
     .await
 }
 
-/// 缓存命令渲染结果。
+/// 缓存命令渲染结果包装体。
 struct CacheRenderedPage {
+    /// 包含富文本卡片与按钮矩阵的面板实例
     panel: send::ReplyPanel,
 }
 
-/// 在指定上下文上渲染缓存页面。
+/// 在指定应用上下文上渲染缓存页面。
+///
+/// # 参数
+/// - `app`: 应用上下文引用
+/// - `args`: 缓存分页与视图参数
 async fn render_cache_page_on(
     app: &crate::app_context::AppContext,
     args: CacheArgs,
 ) -> anyhow::Result<CacheRenderedPage> {
+    // 1. 查询缓存状态统计与整体传输健康
     let summary_rows = store::list_file_cache_status_summaries().await?;
     let health = store::list_transfer_health_snapshot(app).await?;
+    // 2. 计算总页码并钳制当前页码在有效区间内
     let total_pages = compute_cache_page_count(health.file_cache_rows as usize, args.limit);
     let page = args.page.min(total_pages).max(1);
     let normalized = CacheArgs { page, ..args };
+    // 3. 构建内联键盘
     let keyboard = build_cache_keyboard(&normalized, total_pages);
 
+    // 4. 根据视图模式分别渲染概览卡片或分页明细卡片
     let text = match normalized.view {
         CacheView::Summary => format_cache_summary_text(&health, &summary_rows),
         CacheView::Page => {
@@ -179,7 +210,12 @@ async fn render_cache_page_on(
     })
 }
 
-/// 缓存命令失败提示。
+/// 发送缓存回调操作异常卡片。
+///
+/// # 参数
+/// - `request_chat_id`: 会话 ID
+/// - `client_id`: 客户端 ID
+/// - `err`: 错误原因
 async fn send_cache_callback_error(
     request_chat_id: i64,
     client_id: i32,

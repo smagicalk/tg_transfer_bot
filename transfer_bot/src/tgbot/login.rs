@@ -1,5 +1,14 @@
-// 登录状态处理模块。
-// 负责根据 TDLib 返回的 AuthorizationState 推进登录流程。
+//! TDLib 客户端授权状态机与登录流转模块。
+//!
+//! # 核心职责
+//! 1. **状态机流转（AuthorizationState）**：接收并响应 TDLib 抛出的各阶段授权状态更新（参数配置、手机号/Token 提交、扫码确认、二次密码验证、登录就绪、登出关闭）。
+//! 2. **多角色登录隔离**：区分 Bot 与 User 角色：
+//!    - Bot 角色通过 Token 自动完成登录，并在首次 Ready 时注册 Telegram 原生斜杠命令菜单。
+//!    - User 角色（执行器）通过二维码与二次密码以交互方式登录，不阻塞进程主启动流。
+//! 3. **安全凭据加密与兼容**：
+//!    - TDLib 数据库加密密钥（`database_encryption_key`）以 Base64 进行 JSON 通信编码。
+//!    - 自动兼容旧版直接传入 Base64 字符串的遗留测试库。
+
 use crate::config::{ClientRole, LoginInfo};
 use crate::tgbot::TdError;
 use base64::{Engine as _, engine::general_purpose};
@@ -9,14 +18,25 @@ use std::process::exit;
 use tdlib_rs::enums::AuthorizationState;
 use tokio::sync::Mutex;
 
-/// 已经注册过命令的 bot client。
+/// 已经成功注册过斜杠命令的 Bot 客户端集合。
 ///
-/// TDLib 可能在恢复会话或重连时再次报告 `AuthorizationState::Ready`；
-/// 这里按 client_id 去重，避免每次 Ready 都重复调用 `setCommands`。
+/// TDLib 可能在会话恢复或网络重连时多次上报 `AuthorizationState::Ready`；
+/// 这里按 `client_id` 去重记录，避免每次重连时重复调用 `setCommands` 请求。
 static REGISTERED_BOT_COMMAND_CLIENTS: Lazy<Mutex<BTreeSet<i32>>> =
     Lazy::new(|| Mutex::new(BTreeSet::new()));
 
-// 根据授权状态执行下一步动作。
+/// 根据 TDLib 返回的 `AuthorizationState` 状态推进登录流程。
+///
+/// # 参数
+/// * `app_context` - 全局应用上下文引用
+/// * `authorization_state` - TDLib 授权状态枚举
+/// * `role` - 当前客户端角色（`Bot` 或 `User`）
+/// * `client_id` - 当前客户端标识
+/// * `config` - 机器人全局配置
+/// * `ready_roles` - 已就绪客户端角色集合互斥锁
+///
+/// # 返回
+/// 推进成功返回 `Ok(())`，遇到未实现状态或异常报错返回 Err
 pub async fn handle_authorization(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     authorization_state: tdlib_rs::enums::AuthorizationState,
@@ -37,7 +57,7 @@ pub async fn handle_authorization(
     );
 
     match authorization_state {
-        // 初始化 TDLib 参数。
+        // 第一阶段：初始化 TDLib 运行参数（本地目录、API 凭证、加密密钥等）
         AuthorizationState::WaitTdlibParameters => {
             tracing::info!(client_id, role = role.as_str(), "setting tdlib parameters");
             tokio::fs::create_dir_all(&tdlib_config.files_directory).await?;
@@ -56,10 +76,10 @@ pub async fn handle_authorization(
             set_tdlib_parameters_with_key_compat(&tdlib_config, role, client_id).await
         }
 
-        // 进入手机 / Token / OCR 登录分支。
+        // 第二阶段：进入手机号 / Bot Token / 扫码登录分支
         AuthorizationState::WaitPhoneNumber => {
-            // 用户执行器只能由 owner 在 Bot 面板中显式启动。禁止在进程启动或 TDLib
-            // 重连时自动弹出终端二维码，避免它反过来阻塞 Bot 的默认工作流。
+            // 用户执行器只能由 Owner 在 Bot 私聊面板中显式发起。
+            // 严禁在进程启动或 TDLib 意外重连时自动弹出终端二维码，避免阻塞主流程。
             if role == ClientRole::User {
                 if app_context
                     .executor_runtime
@@ -123,7 +143,8 @@ pub async fn handle_authorization(
             }
         }
 
-        // 以下状态暂未实现：返回可控错误，避免 `todo!` 触发 panic。
+
+        // 暂未实现的认证状态：返回显式受控错误，避免 todo! 触发程序崩溃
         AuthorizationState::WaitPremiumPurchase(_) => {
             tracing::warn!(client_id, "tdlib authorization waits for premium purchase");
             anyhow::bail!("WaitPremiumPurchase 未实现")
@@ -137,7 +158,7 @@ pub async fn handle_authorization(
             anyhow::bail!("WaitEmailCode 未实现")
         }
 
-        // 输入短信验证码。
+        // 第三阶段：输入手机验证码
         AuthorizationState::WaitCode(authorization_state_wait_code) => {
             let phone_number = authorization_state_wait_code.code_info.phone_number.clone();
             tracing::info!(client_id, "waiting for phone login code");
@@ -155,12 +176,13 @@ pub async fn handle_authorization(
                 .map_err(|e| anyhow::Error::new(TdError(e)))
         }
 
-        // 输出扫码登录二维码。
+        // 第四阶段：等待其他设备扫码确认
         AuthorizationState::WaitOtherDeviceConfirmation(
             authorization_state_wait_other_device_confirmation,
         ) => {
             tracing::info!(client_id, "qr login confirmation requested");
             let link = authorization_state_wait_other_device_confirmation.link;
+            // 若为 User 客户端，向 Owner 私聊发送二维码图片卡片
             if role == ClientRole::User {
                 return crate::tgbot::executor::send_qr_code_to_owner(
                     app_context.as_ref(),
@@ -170,6 +192,7 @@ pub async fn handle_authorization(
                 )
                 .await;
             }
+            // 终端环境渲染 ANSI 二维码
             let code =
                 qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::Q)?;
             let qr = code
@@ -191,9 +214,10 @@ pub async fn handle_authorization(
             anyhow::bail!("WaitRegistration 未实现")
         }
 
-        // 输入二次密码。
+        // 第五阶段：输入二次验证（两步验证）密码
         AuthorizationState::WaitPassword(authorization_state_wait_password) => {
             tracing::info!(client_id, "waiting for two-factor password");
+            // 若为 User 客户端，通过 Bot 私聊使用 ForceReply 交互输入密码
             if role == ClientRole::User {
                 return crate::tgbot::executor::request_two_factor_password(
                     app_context.as_ref(),
@@ -203,6 +227,7 @@ pub async fn handle_authorization(
                 )
                 .await;
             }
+            // 终端环境掩码输入密码
             let password =
                 inquire::Password::new(authorization_state_wait_password.password_hint.as_str())
                     .with_help_message("请输入密码")
@@ -214,23 +239,25 @@ pub async fn handle_authorization(
                 .map_err(|e| anyhow::Error::new(TdError(e)))
         }
 
-        // 登录完成。
+        // 第六阶段：登录完成，会话就绪
         AuthorizationState::Ready => {
             let login_mode = match &login_info {
                 LoginInfo::Phone(_) => "phone",
                 LoginInfo::Token(_) => "token",
                 LoginInfo::Ocr => "ocr",
             };
-            // 登录凭证属于敏感信息，日志只记录登录方式，不记录手机号或 token。
+            // 登录凭证属于敏感信息，日志只记录登录方式，不记录手机号或 token
             tracing::info!(
                 client_id,
                 role = role.as_str(),
                 login_mode,
                 "tdlib authorization ready"
             );
+            // Bot 首次就绪时注册斜杠命令菜单
             if role == ClientRole::Bot {
                 register_bot_commands_once(client_id).await;
             }
+            // User 客户端就绪时更新运行时身份快照并清理临时二维码图片与密码提示
             if role == ClientRole::User && app_context.executor_runtime.mark_ready(client_id) {
                 if let Err(error) = crate::tgbot::executor::refresh_executor_identity(
                     app_context.as_ref(),
@@ -238,7 +265,7 @@ pub async fn handle_authorization(
                 )
                 .await
                 {
-                    // 账号摘要仅用于面板展示；读取失败不能阻止已完成的执行器登录。
+                    // 账号摘要仅用于面板展示；读取失败不能阻止已完成的执行器登录
                     tracing::warn!(client_id, error = %error, "load executor account identity failed");
                 }
                 if let Some(path) = app_context.executor_runtime.take_qr_image_path() {
@@ -258,6 +285,7 @@ pub async fn handle_authorization(
             }
             let mut ready_roles = ready_roles.lock().await;
             ready_roles.insert(role);
+            // 当所有必需客户端均就绪时，触发转存运行时就绪回调并初始化后台工作流
             if config.all_required_clients_ready(&ready_roles) {
                 let mut transfer_clients =
                     config.transfer_client_ids_for_ready_roles(&ready_roles)?;
@@ -268,7 +296,8 @@ pub async fn handle_authorization(
             Ok(())
         }
 
-        // Bot 生命周期终止才退出进程；用户执行器可以独立退出或重新登录。
+        // 第七阶段：正在注销
+        // Bot 生命周期终止才退出进程；用户执行器可以独立退出或重新登录
         AuthorizationState::LoggingOut => {
             tracing::info!(client_id, "tdlib logging out");
             if role == ClientRole::User {
@@ -277,6 +306,7 @@ pub async fn handle_authorization(
             }
             exit(0)
         }
+        // 第八阶段：正在关闭
         AuthorizationState::Closing => {
             tracing::info!(client_id, "tdlib closing");
             if role == ClientRole::User {
@@ -284,6 +314,7 @@ pub async fn handle_authorization(
             }
             exit(0)
         }
+        // 第九阶段：已完全关闭
         AuthorizationState::Closed => {
             tracing::info!(client_id, "tdlib closed");
             if role == ClientRole::User {
@@ -319,12 +350,18 @@ pub async fn handle_authorization(
     }
 }
 
-/// 为 bot 注册 Telegram 斜杠命令。
+
+/// 为 Bot 客户端向 Telegram 注册斜杠命令菜单。
 ///
-/// 注册失败不阻塞主流程：命令菜单只是交互增强，转存命令本身仍可手动输入。
+/// 注册失败不阻塞机器人主流程：斜杠命令菜单属于原生客户端输入提示的体验增强，
+/// 所有的转存与管理命令仍可通过输入文本正常执行。
+///
+/// # 参数
+/// * `client_id` - Bot TDLib 客户端标识
 async fn register_bot_commands_once(client_id: i32) {
     {
         let mut registered = REGISTERED_BOT_COMMAND_CLIENTS.lock().await;
+        // 幂等去重：若当前 client_id 已注册过则直接跳过
         if !registered.insert(client_id) {
             tracing::trace!(client_id, "bot commands already registered for client");
             return;
@@ -338,6 +375,7 @@ async fn register_bot_commands_once(client_id: i32) {
         .await
         .map_err(|e| anyhow::Error::new(TdError(e)))
     {
+        // 若注册失败，移除标记以允许重试
         REGISTERED_BOT_COMMAND_CLIENTS
             .lock()
             .await
@@ -352,10 +390,10 @@ async fn register_bot_commands_once(client_id: i32) {
     tracing::info!(client_id, command_count, "bot commands registered");
 }
 
-/// 构造 bot 命令列表。
+/// 构造 Bot 支持的全部官方斜杠命令列表定义。
 ///
-/// 日常操作仍以交互菜单为主；这里注册完整命令是为了保留 Telegram 输入 `/`
-/// 时的原生命令提示，不会把命令说明重新写回普通消息卡片。
+/// # 返回
+/// 包含所有命令标识与简要中文说明的 `BotCommand` 列表
 fn bot_command_definitions() -> Vec<tdlib_rs::types::BotCommand> {
     vec![
         bot_command("menu", "打开交互菜单"),
@@ -372,17 +410,25 @@ fn bot_command_definitions() -> Vec<tdlib_rs::types::BotCommand> {
     ]
 }
 
-/// 构造单条 bot command。
+/// 辅助函数：构造单条 `BotCommand` 对象。
+///
+/// # 参数
+/// * `command` - 命令字符串（不带斜杠 `/`）
+/// * `description` - 命令功能简要描述
 fn bot_command(command: &str, description: &str) -> tdlib_rs::types::BotCommand {
     tdlib_rs::types::BotCommand {
         command: command.to_owned(),
         description: description.to_owned(),
+        is_ephemeral: false,
     }
 }
 
-/// 返回授权状态名，用于日志判断当前是否已经登录成功。
+/// 返回授权状态的字符串简述，供日志统一记录。
 ///
-/// 不直接打印完整 AuthorizationState，避免把临时二维码链接、手机号等敏感信息写入日志。
+/// 避免直接打印完整的 `AuthorizationState` 导致把二维码链接或手机号打入日志。
+///
+/// # 参数
+/// * `state` - 授权状态枚举引用
 fn authorization_state_kind(state: &AuthorizationState) -> &'static str {
     match state {
         AuthorizationState::WaitTdlibParameters => "wait_tdlib_parameters",
@@ -401,19 +447,23 @@ fn authorization_state_kind(state: &AuthorizationState) -> &'static str {
     }
 }
 
-/// TDLib JSON 协议里的 `database_encryption_key` 是 bytes 字段，必须用 base64 字符串传输。
+/// 将数据库加密密钥编码为 TDLib JSON 协议所要求的 Base64 字符串。
 ///
-/// 配置文件仍然按普通明文 key 填写；这里在进入 TDLib 前统一编码，避免用户手动处理
-/// base64，也避免生成的 `tdlib_rs` wrapper 直接透传普通字符串导致 `Wrong padding length`。
+/// TDLib JSON 协议中的 bytes 字段要求以 Base64 传输；
+/// 配置文件中用户输入普通明文密码，此处在进入 TDLib 前统一编码，避免用户手动计算 Base64。
+///
+/// # 参数
+/// * `key` - 明文密钥字符串
 fn tdlib_database_encryption_key_for_json(key: &str) -> String {
     general_purpose::STANDARD.encode(key.as_bytes())
 }
 
-/// 设置 TDLib 参数，并兼容旧库中已经按 base64 key 打开的数据库。
+/// 设置 TDLib 参数，并对早期以 Base64 字符串直接初始化的数据库进行向后兼容重试。
 ///
-/// 正常路径：配置中的普通字符串会先编码成 TDLib JSON bytes 需要的 base64。
-/// 兼容路径：如果现有数据库返回 401 `Wrong database encryption key`，且原配置值本身就是
-/// 合法 base64，则再用原值直传一次，兼容早期版本直接把 base64 字符串传给 TDLib 的库。
+/// # 参数
+/// * `tdlib_config` - TDLib 客户端运行配置
+/// * `role` - 客户端角色
+/// * `client_id` - 客户端标识
 async fn set_tdlib_parameters_with_key_compat(
     tdlib_config: &crate::config::TdlibConfig,
     role: ClientRole,
@@ -430,6 +480,7 @@ async fn set_tdlib_parameters_with_key_compat(
                 role = role.as_str(),
                 "tdlib database key matched legacy base64 mode, retrying compatibility path"
             );
+            // 兼容路径：若报错密钥错误且原值本身即为 Base64，直接以原配置值重试一次
             set_tdlib_parameters_with_key(
                 tdlib_config,
                 tdlib_config.database_encryption_key.clone(),
@@ -442,7 +493,12 @@ async fn set_tdlib_parameters_with_key_compat(
     }
 }
 
-/// 使用指定 JSON key 设置 TDLib 参数。
+/// 将参数组装并调用底层 TDLib `setTdlibParameters` 接口。
+///
+/// # 参数
+/// * `tdlib_config` - TDLib 配置
+/// * `database_encryption_key_json` - JSON 传输用的加密密钥字符串
+/// * `client_id` - 客户端标识
 async fn set_tdlib_parameters_with_key(
     tdlib_config: &crate::config::TdlibConfig,
     database_encryption_key_json: String,
@@ -468,7 +524,10 @@ async fn set_tdlib_parameters_with_key(
     .await
 }
 
-/// 判断是否需要按旧版“原值已经是 base64”语义重试。
+/// 判断是否需要按照旧版“原配置值已经是 Base64”的语义进行二次重试。
+///
+/// 只有当：密钥非空、错误码为 401（Wrong database encryption key）、
+/// 且配置字符串本身能够成功进行 Base64 解码时，才触发兼容重试。
 fn should_retry_legacy_database_key(key: &str, err: &tdlib_rs::types::Error) -> bool {
     !key.is_empty()
         && err.code == 401
@@ -485,7 +544,7 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
-    // TDLib JSON bytes 字段要求 base64；空 key 编码后仍是空字符串。
+    /// 验证数据库加密密钥 Base64 编码逻辑。
     #[test]
     fn test_tdlib_database_encryption_key_for_json() {
         assert_eq!(tdlib_database_encryption_key_for_json(""), "");
@@ -495,7 +554,7 @@ mod tests {
         );
     }
 
-    // 只有“现有库 key 错误 + 原配置像合法 base64”时才走旧库兼容重试。
+    /// 验证只有“库返回 401 密钥错误 且 原配置值符合 Base64 格式”时才命中重试分支。
     #[test]
     fn test_should_retry_legacy_database_key() {
         let wrong_key = tdlib_rs::types::Error {
@@ -519,7 +578,7 @@ mod tests {
         ));
     }
 
-    // Telegram 斜杠菜单应覆盖路由支持的命令；普通回复是否展示命令由消息卡片单独控制。
+    /// 验证注册的 Bot 命令列表包含所有支持的命令，且命令名称合法、描述非空。
     #[test]
     fn test_bot_command_definitions_expose_all_supported_commands() {
         let commands = bot_command_definitions();
@@ -560,3 +619,4 @@ mod tests {
         }
     }
 }
+

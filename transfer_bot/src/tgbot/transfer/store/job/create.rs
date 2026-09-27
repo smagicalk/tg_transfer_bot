@@ -8,7 +8,17 @@ use crate::tgbot::transfer::types::{TransferBundle, TransferPlan, client_role_as
 
 use super::super::{JOB_STATUS_RUNNING, now_utc8};
 
-/// 创建 transfer_job 主记录。
+/// 创建 `transfer_job` 主记录。
+///
+/// 将转存规划（`TransferPlan`）与爬虫解析出的消息包（`TransferBundle`）持久化到数据库中。
+/// 初始状态设为 `running`，条目总数设置为 `bundle.messages.len()`，各进度计数归零。
+///
+/// # 参数
+/// - `plan`: 用户发起转存请求的规划参数（发起人、来源链接、目标群组等）。
+/// - `bundle`: 抓取到的消息实体与客户端角色上下文。
+///
+/// # 返回值
+/// - 成功写入的 `transfer_job::Model` 数据库模型。
 pub(in crate::tgbot::transfer) async fn create_job(
     plan: &TransferPlan,
     bundle: &TransferBundle,

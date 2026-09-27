@@ -67,7 +67,7 @@ pub(in crate::tgbot::transfer::command) fn build_health_help_entry_rows()
     ]]
 }
 
-/// `/health` callback 前缀。
+/// `/health` callback 数据前缀。
 const HEALTH_CALLBACK_PREFIX: &str = "hl:";
 
 /// 判断 callback payload 是否属于 `/health`。
@@ -87,19 +87,22 @@ pub async fn health_command_on(
     request_chat_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 构造当前系统运行状态快照
     let snapshot = build_health_snapshot_on(app).await?;
+    // 发送只读健康卡片
     send::ReplyPanel::card(format_health_text(&snapshot))
         .rows(build_health_buttons())
         .send(request_chat_id, client_id)
         .await
 }
 
-/// 在指定上下文上处理 `/health` callback。
+/// 在指定上下文上处理 `/health` 按钮回调事件。
 pub async fn health_callback_query_on(
     app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 提取回调数据文本
     let payload = match update.payload {
         tdlib_rs::enums::CallbackQueryPayload::Data(data) => data.data,
         _ => {
@@ -107,22 +110,28 @@ pub async fn health_callback_query_on(
             return Ok(());
         }
     };
+    // 校验 payload 格式合法性
     if payload != build_health_callback_data() {
         send::answer_callback_query(update.id, Some("健康页参数无效"), client_id).await?;
         return Ok(());
     }
 
+    // 响应 Telegram 客户端提示已刷新
     send::answer_callback_query(update.id, Some("已刷新"), client_id).await?;
+    // 重新拉取健康快照
     let snapshot = match build_health_snapshot_on(app).await {
         Ok(snapshot) => snapshot,
         Err(err) => {
+            // 获取失败发送错误提示卡片
             send_health_callback_error(update.chat_id, client_id, &err).await?;
             return Err(err);
         }
     };
+    // 构造更新后的卡片文本与按键行
     let (text, keyboard) = send::ReplyPanel::card(format_health_text(&snapshot))
         .rows(build_health_buttons())
         .into_card_parts()?;
+    // 原位编辑消息卡片
     send::edit_interaction_card_or_error(
         text,
         update.chat_id,
@@ -135,7 +144,7 @@ pub async fn health_callback_query_on(
     .await
 }
 
-/// 健康页刷新失败提示。
+/// 健康页刷新失败提示卡片发送。
 async fn send_health_callback_error(
     request_chat_id: i64,
     client_id: i32,
@@ -151,7 +160,7 @@ async fn send_health_callback_error(
     .await
 }
 
-/// `health` 卡片按钮。
+/// 构造 `health` 卡片交互按钮行集合。
 fn build_health_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
         vec![
@@ -182,7 +191,7 @@ fn build_health_buttons() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     ]
 }
 
-/// 健康页进入运行列表按钮。
+/// 健康页进入运行中下载列表按钮。
 ///
 /// 这里使用固定合法筛选值，协议漂移应在开发阶段暴露，而不是运行时退化成复制按钮。
 fn downloads_run_button() -> tdlib_rs::types::InlineKeyboardButton {
@@ -193,18 +202,18 @@ fn downloads_run_button() -> tdlib_rs::types::InlineKeyboardButton {
     )
 }
 
-/// 运行状态快照。
+/// 运行状态快照结构体。
 #[derive(Debug, Clone)]
 struct HealthSnapshot {
-    /// 当前运行时统计。
+    /// 当前运行时统计指标
     transfer: store::TransferHealthSnapshot,
-    /// 转存执行所需的 client id；如果后台服务尚未完全 ready，会显示为缺失。
+    /// 转存执行所需的 client id 组合；如果后台服务尚未完全 ready，会显示为缺失
     clients: Option<crate::config::TransferClientIds>,
-    /// 当前时间。
+    /// 快照生成时刻（UTC+8）
     now: chrono::DateTime<chrono::FixedOffset>,
 }
 
-/// 在指定上下文上构造健康快照。
+/// 在指定上下文上构造系统运行健康快照。
 async fn build_health_snapshot_on(
     app: &crate::app_context::AppContext,
 ) -> anyhow::Result<HealthSnapshot> {
@@ -215,7 +224,7 @@ async fn build_health_snapshot_on(
     })
 }
 
-/// 构造健康卡片正文。
+/// 构造健康卡片完整正文文本。
 fn format_health_text(snapshot: &HealthSnapshot) -> String {
     let transfer = &snapshot.transfer;
     let mut lines = build_ready_page_header("运行健康");
@@ -277,7 +286,7 @@ fn format_health_text(snapshot: &HealthSnapshot) -> String {
     lines.join("\n")
 }
 
-/// 格式化当前执行 client 组合。
+/// 格式化当前执行 client 组合状态行。
 fn format_client_line(clients: Option<crate::config::TransferClientIds>) -> String {
     let Some(clients) = clients else {
         return card::field("transfer_clients", "not-ready");
@@ -294,7 +303,7 @@ fn format_client_line(clients: Option<crate::config::TransferClientIds>) -> Stri
 mod tests {
     use super::*;
 
-    // 健康页应像控制面板一样直接跳转/刷新，命令说明通过“查看命令”打开。
+    /// 测试健康页按键应像控制面板一样直接跳转/刷新，命令说明通过“查看命令”打开。
     #[test]
     fn test_build_health_buttons_prefer_callbacks() {
         let rows = build_health_buttons();
@@ -324,6 +333,7 @@ mod tests {
         }
     }
 
+    /// 测试健康页第一行主操作与第二行导航行的层级分布
     #[test]
     fn test_build_health_buttons_primary_row_hierarchy() {
         let rows = build_health_buttons();
@@ -335,6 +345,7 @@ mod tests {
         assert_eq!(rows[1][2].text, "菜单");
     }
 
+    /// 测试健康页正文格式化默认隐藏命令分区，保持卡片紧凑
     #[test]
     fn test_format_health_text_hides_command_section_by_default() {
         let now = store::now_utc8();

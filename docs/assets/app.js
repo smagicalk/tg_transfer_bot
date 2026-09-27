@@ -3,6 +3,7 @@
 
       var body = document.body;
       var toggle = document.querySelector(".menu-toggle");
+      var themeToggle = document.querySelector(".theme-toggle");
       var backdrop = document.querySelector(".backdrop");
       var navLinks = Array.prototype.slice.call(document.querySelectorAll(".nav-link"));
       var sections = navLinks
@@ -11,6 +12,55 @@
           return href.charAt(0) === "#" ? document.querySelector(href) : null;
         })
         .filter(Boolean);
+
+      var themeStorageKey = "tg_transfer_bot_docs_theme";
+
+      function getPreferredTheme() {
+        return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+
+      function updateThemeToggle(theme) {
+        var isDark = theme === "dark";
+        themeToggle.querySelector("span").textContent = isDark ? "☀" : "☾";
+        themeToggle.setAttribute("aria-pressed", String(isDark));
+        themeToggle.setAttribute("aria-label", isDark ? "切换到浅色模式" : "切换到深色模式");
+        themeToggle.setAttribute("title", isDark ? "切换到浅色模式" : "切换到深色模式");
+      }
+
+      function setTheme(theme, persist) {
+        document.documentElement.dataset.theme = theme;
+        updateThemeToggle(theme);
+        if (persist) {
+          try {
+            window.localStorage.setItem(themeStorageKey, theme);
+          } catch (error) {
+            // 浏览器隐私模式可能禁用本地存储，主题仍在当前页面生效。
+          }
+        }
+      }
+
+      var savedTheme;
+      try {
+        savedTheme = window.localStorage.getItem(themeStorageKey);
+      } catch (error) {
+        savedTheme = null;
+      }
+      if (savedTheme === "dark" || savedTheme === "light") {
+        setTheme(savedTheme, false);
+      } else {
+        updateThemeToggle(getPreferredTheme());
+      }
+
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function (event) {
+        if (!document.documentElement.dataset.theme) {
+          updateThemeToggle(event.matches ? "dark" : "light");
+        }
+      });
+
+      themeToggle.addEventListener("click", function () {
+        var activeTheme = document.documentElement.dataset.theme || getPreferredTheme();
+        setTheme(activeTheme === "dark" ? "light" : "dark", true);
+      });
 
       function setNavigation(open) {
         body.classList.toggle("nav-open", open);

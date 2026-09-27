@@ -17,12 +17,18 @@ use super::{
     build_view_commands_button,
 };
 
+/// `/lookup` 回调数据的统一协议前缀。
 const LOOKUP_CALLBACK_PREFIX: &str = "lk:";
 
+/// 判断回调数据字符串是否属于 `/lookup` 协议。
+///
+/// # 参数
+/// - `data`: 原始回调载荷文本
 pub(super) fn is_lookup_callback_data(data: &str) -> bool {
     data.starts_with(LOOKUP_CALLBACK_PREFIX)
 }
 
+/// 构造未命中时“重新转存”按钮的回调数据。
 pub(in crate::tgbot::transfer) fn build_lookup_retry_transfer_callback_data() -> String {
     format!("{LOOKUP_CALLBACK_PREFIX}rt")
 }
@@ -70,7 +76,14 @@ pub(in crate::tgbot::transfer::command) fn build_lookup_help_entry_rows()
     ]]
 }
 
-/// 在指定上下文上执行 `/lookup`。
+/// 在指定应用上下文上执行 `/lookup <link> [target]` 命令。
+///
+/// # 参数
+/// - `app`: 全局应用上下文实例引用
+/// - `text`: 命令行切片，如 `["/lookup", "https://t.me/c/...", "-100..."]`
+/// - `_config`: Bot 配置引用
+/// - `actor`: 发起请求的用户信息
+/// - `client_id`: TDLib 客户端实例 ID
 pub async fn lookup_command_on(
     app: &crate::app_context::AppContext,
     text: Vec<&str>,
@@ -78,23 +91,27 @@ pub async fn lookup_command_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 校验最少参数数量（需提供链接）
     if text.len() < 2 {
         anyhow::bail!("usage: /lookup <link> [target]");
     }
 
     let source_link = text[1].to_string();
+    // 解析目标会话 ID（支持别名解析，缺失时兜底为当前请求所在会话）
     let target_chat_id = resolve_target_chat_id_on(app, &text, actor.request_chat_id)?;
     // 源链接可能来自私有聊天，日志只记录请求 chat 与目标 chat。
     tracing::info!(
         request_chat_id = actor.request_chat_id,
         owner_user_id = actor.user_id,
-        owner_user_id = actor.user_id,
         target_chat_id,
         "lookup command started"
     );
+
+    // 1. 优先在数据库中查找完全成功的历史转存任务记录
     if let Some(job) =
         store::find_success_job_by_source_target(&source_link, target_chat_id).await?
     {
+        // 尝试向 TDLib 刷新主消息链接
         let link = refresh_stored_result_link(
             job.id,
             job.target_chat_id,
@@ -103,6 +120,7 @@ pub async fn lookup_command_on(
             super::super::transfer_client_ids()?.upload,
         )
         .await?;
+        // 查询该任务的所有转存结果消息明细
         let result_messages = store::list_result_messages_by_job(job.id).await?;
         let result_messages = crate::tgbot::transfer::outcome::normalize_result_messages(
             result_messages,
@@ -122,6 +140,7 @@ pub async fn lookup_command_on(
             result_count = result_messages.len(),
             "lookup command hit success job"
         );
+        // 渲染统一历史转存成功卡片
         let text = crate::tgbot::transfer::outcome::format_result_card_text(
             "已找到历史转存结果",
             &source_link,
@@ -141,6 +160,7 @@ pub async fn lookup_command_on(
         .await;
     }
 
+    // 2. 若未命中成功历史，查找是否存在正在执行中的活跃任务（pending/running/paused）
     if let Some(job) = store::find_active_job_by_source_target(&source_link, target_chat_id).await?
     {
         tracing::info!(
@@ -161,9 +181,9 @@ pub async fn lookup_command_on(
         .await;
     }
 
+    // 3. 彻底未命中：向用户展示未找到结果卡片，并暂存重试上下文以便一键触发重新转存
     tracing::info!(
         request_chat_id = actor.request_chat_id,
-        owner_user_id = actor.user_id,
         owner_user_id = actor.user_id,
         target_chat_id,
         "lookup command missed"
@@ -175,6 +195,7 @@ pub async fn lookup_command_on(
         client_id,
     )
     .await?;
+    // 将源链接和目标暂存到 lookup_retry 内存映射表中
     app.lookup_retry.put_context(
         actor.request_chat_id,
         actor.user_id,
@@ -190,6 +211,9 @@ pub async fn lookup_command_on(
 /// 构建 lookup 命中成功结果时的导航按钮。
 ///
 /// lookup 成功页复用统一结果导航层级，保持结果页布局一致。
+///
+/// # 参数
+/// - `job_id`: 目标任务主键 ID
 fn build_lookup_success_navigation_buttons(
     job_id: i64,
 ) -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
@@ -200,7 +224,7 @@ fn build_lookup_success_navigation_buttons(
     )
 }
 
-/// 构建 lookup 未命中时的按钮。
+/// 构建 lookup 未命中时的操作按钮行。
 ///
 /// “重新转存”通过短 callback + 进程内上下文触发，避免把长链接塞进 callback_data。
 fn build_lookup_miss_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
@@ -219,6 +243,14 @@ fn build_lookup_miss_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardBut
     ]]
 }
 
+/// 处理 `/lookup` 相关的 inline keyboard 回调点击（如未命中卡片上的“重新转存”）。
+///
+/// # 参数
+/// - `app`: 全局应用上下文实例引用
+/// - `update`: 回调更新事件
+/// - `config`: 配置实例
+/// - `actor`: 操作者身份
+/// - `client_id`: TDLib 客户端实例 ID
 pub async fn lookup_callback_query_on(
     app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
@@ -238,10 +270,12 @@ pub async fn lookup_callback_query_on(
         return Ok(());
     }
 
+    // 从内存中提取暂存的转存重试上下文
     let Some(context) =
         app.lookup_retry
             .take_context(update.chat_id, update.sender_user_id, update.message_id)
     else {
+        // 上下文已超时被清理或服务重启，提示入口失效
         send::answer_callback_query(update.id, Some("重试入口已失效"), client_id).await?;
         send::ReplyPanel::card(super::menu::build_menu_recovery_text_for_outer(
             "重新转存入口已失效",
@@ -254,10 +288,12 @@ pub async fn lookup_callback_query_on(
         return Ok(());
     };
 
+    // 成功取出重试参数，ACK 回调并清理进行中的对话态
     send::answer_callback_query(update.id, Some("开始重新转存"), client_id).await?;
     super::menu::discard_menu_input_for_command(update.chat_id, update.sender_user_id, client_id)
         .await?;
     let target = context.target_chat_id.to_string();
+    // 派发 `/transfer` 命令开启全新转存
     super::transfer_cmd::transfer_link_command_on(
         Arc::new(app.clone()),
         vec!["/transfer", context.source_link.as_str(), target.as_str()],
@@ -273,7 +309,7 @@ pub async fn lookup_callback_query_on(
     .await
 }
 
-/// 重新转存上下文失效后的恢复入口。
+/// 重新转存上下文失效后的引导恢复按钮行。
 fn build_expired_retry_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![vec![
         send::build_callback_button(
@@ -289,21 +325,27 @@ fn build_expired_retry_button_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardB
     ]]
 }
 
-/// 构建 lookup 命中进行中任务时的控制按钮。
+/// 构建 lookup 命中进行中任务时的控制动作按钮（暂停/恢复/停止）。
 ///
 /// 控制按钮复用 `/job` callback；停止按钮会先进入确认页。
 /// 这里不再额外复制 `job_id`，避免和“查看任务详情”形成重复入口。
+///
+/// # 参数
+/// - `job_id`: 目标任务主键 ID
+/// - `status`: 任务当前状态
 fn build_lookup_active_control_buttons(
     job_id: i64,
     status: &str,
 ) -> Vec<tdlib_rs::types::InlineKeyboardButton> {
     let mut row = Vec::new();
+    // 暂停状态显示“恢复”按钮
     if status == store::JOB_STATUS_PAUSED {
         row.push(send::build_callback_button(
             "恢复",
             &build_job_resume_button_data(job_id),
             tdlib_rs::enums::ButtonStyle::Primary,
         ));
+    // 运行/排队状态显示“暂停”按钮
     } else if matches!(
         status,
         store::JOB_STATUS_PENDING | store::JOB_STATUS_RUNNING
@@ -315,6 +357,7 @@ fn build_lookup_active_control_buttons(
         ));
     }
 
+    // 只要不是已经处于取消终态，就提供“停止”危险按钮
     if !matches!(
         status,
         store::JOB_STATUS_CANCELLED
@@ -330,7 +373,11 @@ fn build_lookup_active_control_buttons(
     row
 }
 
-/// 构建 lookup 命中进行中任务时的完整按钮层级。
+/// 构建 lookup 命中进行中任务时的完整内联键盘层级。
+///
+/// # 参数
+/// - `job_id`: 任务 ID
+/// - `status`: 任务状态
 fn build_lookup_active_button_rows(
     job_id: i64,
     status: &str,
@@ -358,7 +405,13 @@ fn build_lookup_active_button_rows(
     rows
 }
 
-/// 构造命中进行中任务时的查询卡片。
+/// 构造命中进行中任务时的富文本卡片内容。
+///
+/// # 参数
+/// - `source_link`: 原始转存来源链接
+/// - `target_chat_id`: 目标群组/频道 ID
+/// - `job_id`: 任务 ID
+/// - `status`: 状态
 fn format_lookup_active_text(
     source_link: &str,
     target_chat_id: i64,
@@ -377,7 +430,11 @@ fn format_lookup_active_text(
     lines.join("\n")
 }
 
-/// 构造未命中历史结果时的查询卡片。
+/// 构造未命中历史结果时的富文本卡片内容。
+///
+/// # 参数
+/// - `source_link`: 原始源链接
+/// - `target_chat_id`: 目标群组 ID
 fn format_lookup_miss_text(source_link: &str, target_chat_id: i64) -> String {
     let mut lines = vec![
         "未找到转存结果".to_owned(),
@@ -400,7 +457,7 @@ mod tests {
         format_lookup_miss_text, is_lookup_callback_data,
     };
 
-    // lookup 命中运行中任务时应使用 card 标记，避免 Markdown 原文泄露到消息里。
+    /// lookup 命中运行中任务时应使用 card 标记，避免 Markdown 原文泄露到消息里。
     #[test]
     fn test_format_lookup_active_text() {
         let text = format_lookup_active_text("https://t.me/c/1/2", -100, 42, "running");
@@ -412,7 +469,7 @@ mod tests {
         assert!(text.contains("可直接用按钮控制任务"));
     }
 
-    // lookup 未命中时应保留源链接并给出 miss 状态。
+    /// lookup 未命中时应保留源链接并给出 miss 状态。
     #[test]
     fn test_format_lookup_miss_text() {
         let text = format_lookup_miss_text("https://t.me/c/1/2", -100);
@@ -422,7 +479,7 @@ mod tests {
         assert!(text.contains("可直接点击下方“重新转存”"));
     }
 
-    // lookup 命中运行中任务时，应给暂停 callback 和一次点击停止 callback，而不是只能复制命令。
+    /// lookup 命中运行中任务时，应给暂停 callback 和一次点击停止 callback，而不是只能复制命令。
     #[test]
     fn test_build_lookup_active_control_buttons_for_running() {
         let buttons = build_lookup_active_control_buttons(42, "running");
@@ -447,7 +504,7 @@ mod tests {
         ));
     }
 
-    // paused 任务应给恢复 callback；停止中任务不再展示停止按钮。
+    /// paused 任务应给恢复 callback；停止中任务不再展示停止按钮。
     #[test]
     fn test_build_lookup_active_control_buttons_by_status() {
         let paused = build_lookup_active_control_buttons(42, "paused");
@@ -460,7 +517,7 @@ mod tests {
         assert!(!cancelling.iter().any(|button| button.text == "复制 job_id"));
     }
 
-    // 查询命中卡应先展示任务详情和控制，最后再放列表、命令和菜单导航。
+    /// 查询命中卡应先展示任务详情和控制，最后再放列表、命令和菜单导航。
     #[test]
     fn test_build_lookup_active_button_rows_prioritizes_job_actions() {
         let rows = build_lookup_active_button_rows(42, "running");
@@ -475,7 +532,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
     }
 
-    // 停止中任务没有可执行控制时，详情和导航之间不能插入空行。
+    /// 停止中任务没有可执行控制时，详情和导航之间不能插入空行。
     #[test]
     fn test_build_lookup_active_button_rows_omits_empty_controls() {
         let rows = build_lookup_active_button_rows(42, "cancelling");
@@ -487,7 +544,7 @@ mod tests {
         assert_eq!(rows[1][2].text, "菜单");
     }
 
-    // lookup 成功命中已有结果时，按钮区应使用真实 callback 导航，不再重复复制查询/重转命令。
+    /// lookup 成功命中已有结果时，按钮区应使用真实 callback 导航，不再重复复制查询/重转命令。
     #[test]
     fn test_build_lookup_success_navigation_buttons_drop_command_copy_buttons() {
         let rows = build_lookup_success_navigation_buttons(42);
@@ -504,7 +561,7 @@ mod tests {
         assert!(!buttons.iter().any(|button| button.text == "复制重新转存"));
     }
 
-    // lookup 未命中时应优先给真实 callback，只保留重新转存和菜单，不再重复复制源链接。
+    /// lookup 未命中时应优先给真实 callback，只保留重新转存和菜单，不再重复复制源链接。
     #[test]
     fn test_build_lookup_miss_button_rows_keep_only_retry_buttons() {
         let rows = build_lookup_miss_button_rows();
@@ -520,13 +577,14 @@ mod tests {
         assert!(!labels.contains(&"复制查询命令"));
     }
 
+    /// 校验 lookup callback 前缀匹配判断。
     #[test]
     fn test_lookup_retry_callback_prefix() {
         assert!(is_lookup_callback_data("lk:rt"));
         assert!(!is_lookup_callback_data("l:rt"));
     }
 
-    // 重试上下文过期后应能直接重新开始转存，不必先返回菜单再找入口。
+    /// 重试上下文过期后应能直接重新开始转存，不必先返回菜单再找入口。
     #[test]
     fn test_build_expired_retry_button_rows_restart_transfer_directly() {
         use base64::{Engine as _, engine::general_purpose};

@@ -210,7 +210,16 @@ pub(super) struct FinishJobSummary {
     pub delay_minutes: i64,
 }
 
-/// 判断任务是否已经处于终态。
+/// 判断任务状态是否已经进入不可变更的终态（Terminal State）。
+///
+/// 终态包括：成功（success）、完全失败（failed）、部分成功（partial）、已取消（cancelled）。
+/// 一旦任务进入终态，不可再转为运行或暂停。
+///
+/// # 参数
+/// - `status`: 待判定的任务状态字符串。
+///
+/// # 返回值
+/// - `true` 表示任务已处于终态；`false` 表示任务仍在进行或等待恢复中。
 pub(super) fn is_finished_job_status(status: &str) -> bool {
     matches!(
         status,
@@ -218,12 +227,27 @@ pub(super) fn is_finished_job_status(status: &str) -> bool {
     )
 }
 
-/// 判断是否是文本占位 file_key。
+/// 判断给定的文件键是否属于纯文本占位键（Text Placeholder）。
+///
+/// 纯文本类型的消息在转存中没有物理磁盘媒体文件，但为了统一纳入 Item/Job 流水线，
+/// 系统会为其分配以 `text:` 为前缀的伪 file_key。
+///
+/// # 参数
+/// - `file_key`: 待判断的文件唯一键。
+///
+/// # 返回值
+/// - `true` 表示属于纯文本占位；`false` 表示对应实际媒体文件。
 fn is_text_file_key(file_key: &str) -> bool {
     file_key.starts_with("text:")
 }
 
-/// 统一生成 UTC+8 时间戳。
+/// 统一生成当前东八区（UTC+8 / 北京时间）带固定偏移的时区时间戳。
+///
+/// 在所有数据库写入、卡片渲染、日志输出中统一使用东八区时间，避免由于主机环境
+/// 默认时区不同而导致的时间戳与展示混淆。
+///
+/// # 返回值
+/// - `DateTime<FixedOffset>` 当前北京时间。若构造偏移失败则降级为 UTC。
 pub(super) fn now_utc8() -> chrono::DateTime<chrono::FixedOffset> {
     let Some(offset) = chrono::FixedOffset::east_opt(8 * 3600) else {
         tracing::error!("failed to build UTC+8 fixed offset, fallback to UTC");

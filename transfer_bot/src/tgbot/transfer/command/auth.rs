@@ -5,31 +5,47 @@ use crate::tgbot::transfer::card;
 
 /// Telegram 原生用户选择按钮 ID；必须和 `MessageUsersShared.button_id` 一致。
 pub(in crate::tgbot::transfer::command) const AUTH_USER_REQUEST_BUTTON_ID: i32 = 7003;
+
+/// 授权相关回调按钮数据前缀。
 const AUTH_CALLBACK_PREFIX: &str = "au:";
 
+/// 授权面板回调按钮动作枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthCallbackAction {
+    /// 打开添加管理员方式选项卡
     Add,
+    /// 触发原生用户选择器键盘
     PickUser,
+    /// 触发 ForceReply 手动输入用户 ID
     ManualId,
+    /// 展开显示命令行用法
     ShowCommands,
+    /// 折叠隐藏命令行用法
     HideCommands,
+    /// 刷新管理员列表面板
     Refresh,
+    /// 取消当前输入流程并返回列表
     Cancel,
+    /// 删除指定动态管理员（附带目标用户的 Telegram ID）
     Delete(i64),
 }
 
+/// 挂起的授权输入状态枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingAuthInput {
+    /// 正在等待用户通过原生选择器选择联系人
     UserPicker,
+    /// 正在等待用户通过文本或 ForceReply 输入纯数字 ID
     ManualId,
 }
 
+/// 授权输入状态键名：`(chat_id, user_id)`，将会话与操作用户严格隔离。
 type AuthInputKey = (i64, i64);
 
 /// 授权向导只允许 owner 在同一个私聊中保留一个等待态。
 static PENDING_AUTH_INPUTS: LazyLock<Mutex<HashMap<AuthInputKey, PendingAuthInput>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
 /// 当前授权向导由 bot 发出的输入提示消息。
 ///
 /// 用户选择、取消或切换输入方式后会删除旧提示，避免原生键盘和 ForceReply
@@ -37,25 +53,46 @@ static PENDING_AUTH_INPUTS: LazyLock<Mutex<HashMap<AuthInputKey, PendingAuthInpu
 static PENDING_AUTH_PROMPTS: LazyLock<Mutex<HashMap<AuthInputKey, i64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// 用户资料简要快照（用于展示与记录）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct UserProfileSnapshot {
+    /// 显示名称（名 + 姓）
     display_name: Option<String>,
+    /// Telegram 用户名（不带 @）
     username: Option<String>,
 }
 
+/// 授权列表中的单条成员信息条目。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AuthListEntry {
+    /// 角色名称（如“所有者”、“配置管理员”、“动态管理员”）
     role: &'static str,
+    /// Telegram 用户 ID
     user_id: i64,
+    /// 用户快照资料
     profile: UserProfileSnapshot,
+    /// 是否可被动态删除（静态配置的 owner/admin 为 false）
     removable: bool,
 }
 
 /// 判断 callback 是否属于授权管理面板。
+///
+/// # 参数
+/// - `data`: 回调数据字符串
+///
+/// # 返回值
+/// - `bool`: 若匹配 `au:` 前缀返回 true
 pub(in crate::tgbot::transfer::command) fn is_auth_callback_data(data: &str) -> bool {
     data.starts_with(AUTH_CALLBACK_PREFIX)
 }
 
+/// 解析授权回调数据为 `AuthCallbackAction` 枚举。
+///
+/// # 参数
+/// - `data`: 原始回调数据
+///
+/// # 返回值
+/// - `Option<AuthCallbackAction>`: 解析出的动作枚举
 fn parse_auth_callback_data(data: &str) -> Option<AuthCallbackAction> {
     let payload = data.strip_prefix(AUTH_CALLBACK_PREFIX)?;
     match payload {
@@ -75,15 +112,30 @@ fn parse_auth_callback_data(data: &str) -> Option<AuthCallbackAction> {
     }
 }
 
+/// 拼接生成完整的授权回调数据。
+///
+/// # 参数
+/// - `action`: 动作后缀字符串
+///
+/// # 返回值
+/// - `String`: 附带前缀的回调字符串
 fn auth_callback_data(action: &str) -> String {
     format!("{AUTH_CALLBACK_PREFIX}{action}")
 }
 
 /// 生成授权管理首页 callback，供菜单的 owner 专属入口复用。
+///
+/// # 返回值
+/// - `String`: 刷新授权面板的回调数据
 pub(in crate::tgbot::transfer::command) fn build_auth_panel_callback_data() -> String {
     auth_callback_data("refresh")
 }
 
+/// 登记挂起的授权输入状态。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+/// - `input`: 输入类型
 fn set_pending_auth_input(key: AuthInputKey, input: PendingAuthInput) {
     let mut guard = PENDING_AUTH_INPUTS
         .lock()
@@ -91,6 +143,13 @@ fn set_pending_auth_input(key: AuthInputKey, input: PendingAuthInput) {
     guard.insert(key, input);
 }
 
+/// 消费并取走挂起的授权输入状态。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+///
+/// # 返回值
+/// - `Option<PendingAuthInput>`: 原有挂起状态
 fn take_pending_auth_input(key: AuthInputKey) -> Option<PendingAuthInput> {
     PENDING_AUTH_INPUTS
         .lock()
@@ -98,6 +157,13 @@ fn take_pending_auth_input(key: AuthInputKey) -> Option<PendingAuthInput> {
         .remove(&key)
 }
 
+/// 查看挂起的授权输入状态（不移除）。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+///
+/// # 返回值
+/// - `Option<PendingAuthInput>`: 当前挂起状态
 fn pending_auth_input(key: AuthInputKey) -> Option<PendingAuthInput> {
     PENDING_AUTH_INPUTS
         .lock()
@@ -106,6 +172,13 @@ fn pending_auth_input(key: AuthInputKey) -> Option<PendingAuthInput> {
         .copied()
 }
 
+/// 清除挂起的授权输入状态。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+///
+/// # 返回值
+/// - `bool`: 若之前存在状态返回 true
 fn clear_pending_auth_input(key: AuthInputKey) -> bool {
     PENDING_AUTH_INPUTS
         .lock()
@@ -115,6 +188,13 @@ fn clear_pending_auth_input(key: AuthInputKey) -> bool {
 }
 
 /// 记录当前授权输入提示，并返回同一会话上一条未清理的提示 ID。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+/// - `message_id`: 新提示消息 ID
+///
+/// # 返回值
+/// - `Option<i64>`: 旧提示消息 ID
 fn remember_auth_prompt(key: AuthInputKey, message_id: i64) -> Option<i64> {
     PENDING_AUTH_PROMPTS
         .lock()
@@ -123,6 +203,12 @@ fn remember_auth_prompt(key: AuthInputKey, message_id: i64) -> Option<i64> {
 }
 
 /// 取出并清除当前授权输入提示 ID。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+///
+/// # 返回值
+/// - `Option<i64>`: 原有提示消息 ID
 fn take_auth_prompt(key: AuthInputKey) -> Option<i64> {
     PENDING_AUTH_PROMPTS
         .lock()
@@ -131,6 +217,11 @@ fn take_auth_prompt(key: AuthInputKey) -> Option<i64> {
 }
 
 /// 删除授权输入提示及其原生键盘；清理失败只记日志，不回滚业务状态。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+/// - `message_id`: 提示消息 ID
+/// - `client_id`: TDLib 客户端实例 ID
 async fn delete_auth_prompt(key: AuthInputKey, message_id: i64, client_id: i32) {
     if let Err(error) =
         crate::tgbot::send::delete_chat_reply_markup(key.0, message_id, client_id).await
@@ -155,6 +246,13 @@ async fn delete_auth_prompt(key: AuthInputKey, message_id: i64, client_id: i32) 
 }
 
 /// 静默消费授权等待态和旧提示，供 callback 刷新、命令切换和成功完成复用。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+/// - `client_id`: TDLib 客户端实例 ID
+///
+/// # 返回值
+/// - `(Option<PendingAuthInput>, bool)`: 原挂起状态及旧提示是否被成功删除
 async fn clear_pending_auth_input_silently(
     key: AuthInputKey,
     client_id: i32,
@@ -169,6 +267,14 @@ async fn clear_pending_auth_input_silently(
 }
 
 /// 清理等待态时同时移除 Telegram 原生 reply keyboard，避免旧选择器继续提交。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+/// - `client_id`: TDLib 客户端实例 ID
+/// - `notice`: 发送的通知文案
+///
+/// # 返回值
+/// - `anyhow::Result<bool>`: 若存在挂起状态并已清理返回 Ok(true)
 async fn clear_pending_auth_input_and_remove_keyboard(
     key: AuthInputKey,
     client_id: i32,
@@ -183,6 +289,11 @@ async fn clear_pending_auth_input_and_remove_keyboard(
 }
 
 /// 切换授权输入方式；只有从另一种方式切换时才额外移除旧键盘。
+///
+/// # 参数
+/// - `key`: 会话与操作者键
+/// - `next`: 下一个目标输入方式
+/// - `client_id`: TDLib 客户端实例 ID
 async fn switch_pending_auth_input_on(
     key: AuthInputKey,
     next: PendingAuthInput,
@@ -193,10 +304,12 @@ async fn switch_pending_auth_input_on(
     Ok(())
 }
 
+/// 授权命令帮助概要。
 pub(in crate::tgbot::transfer::command) fn auth_help_summary() -> &'static str {
     "交互式查看或管理管理员名单；仅 owner 可执行。"
 }
 
+/// 构造授权命令详情帮助正文。
 pub(in crate::tgbot::transfer::command) fn build_auth_help_detail_text() -> String {
     [
         "auth".to_owned(),
@@ -217,6 +330,22 @@ pub(in crate::tgbot::transfer::command) fn build_auth_help_detail_text() -> Stri
 }
 
 /// `/auth` 命令入口；仅 owner 可管理动态授权名单。
+///
+/// 支持的调用模式：
+/// - `/auth` 或 `/auth list`: 查看当前管理员列表卡片（若在群组中回复某用户消息，则直接授权该被回复用户）
+/// - `/auth add <user_id>`: 直接通过命令行授权指定 Telegram 用户
+/// - `/auth del <user_id>`: 撤销指定用户的动态授权
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `text`: 分词后的命令行参数
+/// - `config`: Bot 配置引用
+/// - `request_message`: 原始消息对象
+/// - `actor`: 请求发起者信息
+/// - `client_id`: TDLib 客户端实例 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 执行成功返回 `Ok(())`
 pub(in crate::tgbot) async fn auth_command_on(
     app: &crate::app_context::AppContext,
     text: Vec<&str>,
@@ -225,6 +354,7 @@ pub(in crate::tgbot) async fn auth_command_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 权限校验：仅允许所有者执行
     ensure_owner(config, actor)?;
     let db_conn = crate::db::get_db().await?;
     match text.get(1).copied() {
@@ -232,6 +362,7 @@ pub(in crate::tgbot) async fn auth_command_on(
             if text.len() > 2 {
                 anyhow::bail!("usage: /auth list");
             }
+            // 若为回复消息快捷授权
             if text.len() == 1 && request_message.reply_to.is_some() {
                 authorize_replied_user_on(
                     db_conn,
@@ -286,6 +417,14 @@ pub(in crate::tgbot) async fn auth_command_on(
 }
 
 /// 回复某条消息执行 `/auth` 时，从原消息读取普通用户并立即授权。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接
+/// - `app`: 全局应用上下文
+/// - `config`: Bot 配置
+/// - `request_message`: 当前指令消息
+/// - `request_chat_id`: 发送回复的目标会话
+/// - `client_id`: TDLib 客户端 ID
 async fn authorize_replied_user_on(
     db_conn: &sea_orm::DatabaseConnection,
     app: &crate::app_context::AppContext,
@@ -315,6 +454,13 @@ async fn authorize_replied_user_on(
 }
 
 /// 解析被回复消息的发送者；匿名管理员、频道身份、bot 和已删除用户都不能加入名单。
+///
+/// # 参数
+/// - `request_message`: 请求消息
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<(i64, UserProfileSnapshot)>`: 提取的目标用户 ID 与资料快照
 async fn replied_regular_user_profile(
     request_message: &tdlib_rs::types::Message,
     client_id: i32,
@@ -349,6 +495,16 @@ async fn replied_regular_user_profile(
     Ok((user_id, profile_from_user(&user)))
 }
 
+/// 从消息发送者结构体提取合法的授权用户 ID。
+///
+/// 排除发送者为 bot 自身，或使用频道/匿名管理员身份的消息。
+///
+/// # 参数
+/// - `sender`: 消息发送者枚举
+/// - `is_outgoing`: 消息是否为当前客户端发出
+///
+/// # 返回值
+/// - `anyhow::Result<i64>`: 目标 Telegram 用户 ID
 fn authorization_target_user_id(
     sender: &tdlib_rs::enums::MessageSender,
     is_outgoing: bool,
@@ -367,6 +523,17 @@ fn authorization_target_user_id(
     Ok(sender.user_id)
 }
 
+/// 写入授权用户记录及其资料快照，并同步更新内存中的权限控制缓存。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接
+/// - `app`: 全局应用上下文
+/// - `config`: Bot 配置
+/// - `user_id`: 目标用户 ID
+/// - `profile`: 用户资料快照
+///
+/// # 返回值
+/// - `anyhow::Result<(&'static str, &'static str)>`: `(状态代码, 详情说明)`
 async fn grant_authorized_user_with_profile_on(
     db_conn: &sea_orm::DatabaseConnection,
     app: &crate::app_context::AppContext,
@@ -393,6 +560,16 @@ async fn grant_authorized_user_with_profile_on(
 }
 
 /// 执行授权命令的纯业务路径；发送层只负责把返回文本发给 owner。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接
+/// - `app`: 全局应用上下文
+/// - `config`: Bot 配置
+/// - `text`: 命令行切片
+/// - `actor`: 请求发起者
+///
+/// # 返回值
+/// - `anyhow::Result<String>`: 执行结果卡片文本
 async fn execute_auth_command_on(
     db_conn: &sea_orm::DatabaseConnection,
     app: &crate::app_context::AppContext,
@@ -455,6 +632,12 @@ async fn execute_auth_command_on(
 }
 
 /// 从 TDLib 用户对象提取可持久化的轻量资料快照。
+///
+/// # 参数
+/// - `user`: TDLib 用户对象引用
+///
+/// # 返回值
+/// - `UserProfileSnapshot`: 提取的资料快照
 fn profile_from_user(user: &tdlib_rs::types::User) -> UserProfileSnapshot {
     let display_name = format_display_name(&user.first_name, &user.last_name);
     let username = user
@@ -470,6 +653,13 @@ fn profile_from_user(user: &tdlib_rs::types::User) -> UserProfileSnapshot {
 }
 
 /// 查询用户资料失败时返回空快照；管理员列表仍会显示数字 ID。
+///
+/// # 参数
+/// - `user_id`: 目标用户 ID
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `UserProfileSnapshot`: 用户资料快照
 async fn lookup_user_profile(user_id: i64, client_id: i32) -> UserProfileSnapshot {
     match tdlib_rs::functions::get_user(user_id, client_id).await {
         Ok(tdlib_rs::enums::User::User(user)) => profile_from_user(&user),
@@ -480,6 +670,14 @@ async fn lookup_user_profile(user_id: i64, client_id: i32) -> UserProfileSnapsho
     }
 }
 
+/// 格式化用户全名（名与姓拼接）。
+///
+/// # 参数
+/// - `first_name`: 名
+/// - `last_name`: 姓
+///
+/// # 返回值
+/// - `Option<String>`: 组合后的姓名字符串，两者皆空时返回 None
 fn format_display_name(first_name: &str, last_name: &str) -> Option<String> {
     let first_name = first_name.trim();
     let last_name = last_name.trim();
@@ -492,6 +690,13 @@ fn format_display_name(first_name: &str, last_name: &str) -> Option<String> {
     Some(display_name)
 }
 
+/// 从 Telegram 用户共享对象（`SharedUser`）中提取资料快照。
+///
+/// # 参数
+/// - `user`: 共享用户对象引用
+///
+/// # 返回值
+/// - `UserProfileSnapshot`: 提取的资料快照
 fn profile_from_shared_user(user: &tdlib_rs::types::SharedUser) -> UserProfileSnapshot {
     UserProfileSnapshot {
         display_name: format_display_name(&user.first_name, &user.last_name),
@@ -500,6 +705,13 @@ fn profile_from_shared_user(user: &tdlib_rs::types::SharedUser) -> UserProfileSn
     }
 }
 
+/// 格式化用户展示标签，如 `张三 (@zhangsan)` 或纯名字。
+///
+/// # 参数
+/// - `profile`: 用户资料快照引用
+///
+/// # 返回值
+/// - `String`: 组合后的展示标签
 fn format_profile_label(profile: &UserProfileSnapshot) -> String {
     let mut label = profile
         .display_name
@@ -513,12 +725,22 @@ fn format_profile_label(profile: &UserProfileSnapshot) -> String {
     label
 }
 
+/// 加载并组装所有管理员条目（所有者 + 配置文件管理员 + 数据库动态管理员）。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接
+/// - `config`: Bot 配置
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<Vec<AuthListEntry>>`: 排序排重后的管理员条目列表
 async fn load_auth_list_entries(
     db_conn: &sea_orm::DatabaseConnection,
     config: &crate::config::BotConfig,
     client_id: i32,
 ) -> anyhow::Result<Vec<AuthListEntry>> {
     let mut entries = Vec::with_capacity(config.admin_user_ids.len() + 2);
+    // 第一条固定为所有者
     let owner_profile = lookup_user_profile(config.owner_user_id, client_id).await;
     entries.push(AuthListEntry {
         role: "所有者",
@@ -528,6 +750,7 @@ async fn load_auth_list_entries(
     });
 
     let mut fixed_ids = BTreeSet::from([config.owner_user_id]);
+    // 加载配置文件中指定的静态管理员
     for user_id in &config.admin_user_ids {
         if !fixed_ids.insert(*user_id) {
             continue;
@@ -540,6 +763,7 @@ async fn load_auth_list_entries(
         });
     }
 
+    // 从数据库查询动态管理员
     for user in crate::access::list_authorized_users_on(db_conn).await? {
         if !fixed_ids.insert(user.user_id) {
             continue;
@@ -572,6 +796,15 @@ async fn load_auth_list_entries(
     Ok(entries)
 }
 
+/// 格式化授权面板卡片正文。
+///
+/// # 参数
+/// - `entries`: 管理员条目列表
+/// - `notice`: 可选通知提示
+/// - `show_commands`: 是否展开命令行用法说明
+///
+/// # 返回值
+/// - `String`: 完整卡片文本
 fn format_auth_panel_text(
     entries: &[AuthListEntry],
     notice: Option<&str>,
@@ -614,6 +847,15 @@ fn format_auth_panel_text(
     lines.join("\n")
 }
 
+/// 构造授权回调按钮工具函数。
+///
+/// # 参数
+/// - `text`: 按钮文本
+/// - `action`: 动作后缀
+/// - `style`: 按钮样式
+///
+/// # 返回值
+/// - `InlineKeyboardButton`: 内联按钮对象
 fn build_auth_callback_button(
     text: &str,
     action: &str,
@@ -622,6 +864,14 @@ fn build_auth_callback_button(
     crate::tgbot::send::build_callback_button(text, &auth_callback_data(action), style)
 }
 
+/// 构造授权主面板按钮矩阵。
+///
+/// # 参数
+/// - `entries`: 管理员条目
+/// - `show_commands`: 当前是否处于显示命令状态
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 fn build_auth_panel_rows(
     entries: &[AuthListEntry],
     show_commands: bool,
@@ -655,6 +905,17 @@ fn build_auth_panel_rows(
     rows
 }
 
+/// 发送新的授权管理面板卡片。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接
+/// - `config`: Bot 配置
+/// - `chat_id`: 目标会话 ID
+/// - `client_id`: TDLib 客户端 ID
+/// - `notice`: 可选顶部提示
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 发送成功返回 Ok(())
 async fn send_auth_panel_on(
     db_conn: &sea_orm::DatabaseConnection,
     config: &crate::config::BotConfig,
@@ -669,6 +930,10 @@ async fn send_auth_panel_on(
         .await
 }
 
+/// 添加管理员方式选项卡正文。
+///
+/// # 返回值
+/// - `String`: 选项卡提示文本
 fn build_auth_add_options_text() -> String {
     [
         "授权管理".to_owned(),
@@ -678,6 +943,10 @@ fn build_auth_add_options_text() -> String {
     .join("\n")
 }
 
+/// 添加管理员方式选项卡按钮。
+///
+/// # 返回值
+/// - `Vec<Vec<InlineKeyboardButton>>`: 内联键盘按钮矩阵
 fn build_auth_add_options_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButton>> {
     vec![
         vec![build_auth_callback_button(
@@ -701,6 +970,22 @@ fn build_auth_add_options_rows() -> Vec<Vec<tdlib_rs::types::InlineKeyboardButto
     ]
 }
 
+/// 编辑已有的授权管理面板卡片消息。
+///
+/// 当用户点击“刷新”、“查看命令”、“隐藏命令”或“删除”等按钮时，通过编辑现有消息刷新列表，
+/// 避免在聊天窗口中产生过多历史消息刷屏。
+///
+/// # 参数
+/// - `db_conn`: 数据库连接引用
+/// - `config`: Bot 配置引用
+/// - `chat_id`: 会话 ID
+/// - `message_id`: 目标消息 ID
+/// - `client_id`: TDLib 客户端 ID
+/// - `notice`: 可选的顶部提示信息（如操作成功/失败反馈）
+/// - `show_commands`: 是否展示文本命令说明
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 成功编辑返回 Ok(())
 async fn edit_auth_panel_on(
     db_conn: &sea_orm::DatabaseConnection,
     config: &crate::config::BotConfig,
@@ -710,7 +995,9 @@ async fn edit_auth_panel_on(
     notice: Option<&str>,
     show_commands: bool,
 ) -> anyhow::Result<()> {
+    // 重新从数据库与配置中加载最新的管理员与用户信息列表
     let entries = load_auth_list_entries(db_conn, config, client_id).await?;
+    // 渲染卡片正文与按钮矩阵
     let (text, keyboard) = crate::tgbot::send::ReplyPanel::card(format_auth_panel_text(
         &entries,
         notice,
@@ -718,17 +1005,30 @@ async fn edit_auth_panel_on(
     ))
     .rows(build_auth_panel_rows(&entries, show_commands))
     .into_card_parts()?;
+    // 调用接口就地更新卡片消息文本与键盘
     crate::tgbot::send::edit_card_message_with_inline_keyboard(
         text, chat_id, message_id, keyboard, client_id,
     )
     .await
 }
 
+/// 编辑现有卡片为“添加管理员方式选择”选项卡。
+///
+/// 向用户呈现“选择 Telegram 用户”和“输入用户 ID”两个分支选项。
+///
+/// # 参数
+/// - `chat_id`: 会话 ID
+/// - `message_id`: 目标卡片消息 ID
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 成功编辑返回 Ok(())
 async fn edit_auth_add_options_on(
     chat_id: i64,
     message_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 构建添加方式选项卡内容与内联键盘
     let (text, keyboard) = crate::tgbot::send::ReplyPanel::card(build_auth_add_options_text())
         .rows(build_auth_add_options_rows())
         .into_card_parts()?;
@@ -739,12 +1039,24 @@ async fn edit_auth_add_options_on(
 }
 
 /// 发送当前授权输入方式的提示和原生键盘。
+///
+/// 根据用户选择的输入模式（原生用户选择器或手动输入 ID），发送相应的提示消息和专属键盘（如 ForceReply 或 UserRequest 按钮）。
+///
+/// # 参数
+/// - `input`: 等待的授权输入类型（UserPicker 或 ManualId）
+/// - `key`: (chat_id, user_id) 复合索引
+/// - `client_id`: TDLib 客户端 ID
+/// - `note`: 补充提示说明内容
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 发送成功返回 Ok(())
 async fn send_auth_input_prompt(
     input: PendingAuthInput,
     key: AuthInputKey,
     client_id: i32,
     note: &str,
 ) -> anyhow::Result<()> {
+    // 格式化不同输入模式的卡片提示文本
     let text = match input {
         PendingAuthInput::UserPicker => [
             "授权管理".to_owned(),
@@ -759,7 +1071,9 @@ async fn send_auth_input_prompt(
         ]
         .join("\n"),
     };
+    // 发送带有特殊交互键盘的卡片消息
     let sent = match input {
+        // 用户选择器模式：发送带有原生请求用户按钮的普通键盘
         PendingAuthInput::UserPicker => {
             crate::tgbot::send::send_card_message_with_user_request_keyboard_returning(
                 text,
@@ -769,6 +1083,7 @@ async fn send_auth_input_prompt(
             )
             .await?
         }
+        // 手动 ID 模式：发送带有 ForceReply 的卡片消息强制呼出输入框
         PendingAuthInput::ManualId => {
             crate::tgbot::send::send_card_message_with_force_reply_returning(
                 text,
@@ -779,6 +1094,7 @@ async fn send_auth_input_prompt(
             .await?
         }
     };
+    // 记录本次发送的提示消息 ID，若之前有历史提示消息则将其删除，避免界面残留无效键盘
     if let Some(previous_id) = remember_auth_prompt(key, sent.id)
         && previous_id != sent.id
     {
@@ -788,14 +1104,26 @@ async fn send_auth_input_prompt(
 }
 
 /// 数据库写入失败时保留当前步骤，并重新显示可操作的输入控件。
+///
+/// # 参数
+/// - `key`: (chat_id, user_id) 会话与操作者键
+/// - `input`: 当前挂起的输入状态
+/// - `client_id`: TDLib 客户端 ID
+/// - `error`: 数据库或其他操作失败的错误信息
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 成功重新提示返回 Ok(())
 async fn report_auth_add_failure(
     key: AuthInputKey,
     input: PendingAuthInput,
     client_id: i32,
     error: anyhow::Error,
 ) -> anyhow::Result<()> {
+    // 记录错误日志
     tracing::error!(error = %error, user_id = key.1, "dynamic authorization persistence failed");
+    // 保留当前的挂起输入状态
     set_pending_auth_input(key, input);
+    // 重新发送带有错误提示的输入提示卡片
     if let Err(prompt_error) = send_auth_input_prompt(
         input,
         key,
@@ -812,7 +1140,20 @@ async fn report_auth_add_failure(
     Ok(())
 }
 
-/// 处理授权管理 inline keyboard 回调。
+/// 处理授权管理内联键盘回调查询（Inline Keyboard Callback Query）。
+///
+/// 负责响应授权面板上的所有内联按钮点击事件（如添加、选择模式、删除、查看命令、刷新、取消等）。
+/// 包含严格的操作权限校验（仅限 Owner）。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `update`: TDLib 回调查询事件
+/// - `config`: Bot 配置引用
+/// - `actor`: 当前请求的操作者信息
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 成功处理返回 Ok(())
 pub(in crate::tgbot) async fn auth_callback_query_on(
     app: &crate::app_context::AppContext,
     update: tdlib_rs::types::UpdateNewCallbackQuery,
@@ -820,6 +1161,7 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
     actor: crate::config::RequestActor,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 提取回调数据载荷
     let data = match &update.payload {
         tdlib_rs::enums::CallbackQueryPayload::Data(data) => data,
         _ => {
@@ -832,12 +1174,14 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
             return Ok(());
         }
     };
+    // 解析具体的授权操作动作
     let Some(action) = parse_auth_callback_data(&data.data) else {
         crate::tgbot::send::answer_callback_query(update.id, Some("授权按钮参数无效"), client_id)
             .await?;
         return Ok(());
     };
 
+    // 校验权限：仅 Owner 允许操作授权管理面板
     if actor.user_id != config.owner_user_id
         || actor.request_chat_id != update.chat_id
         || actor.user_id != update.sender_user_id
@@ -851,7 +1195,9 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
         return Ok(());
     }
 
+    // 根据解析出的具体动作分发处理
     match action {
+        // 点击“添加管理员”：展示方式选择卡片（选择 Telegram 用户 vs 手动输入 ID）
         AuthCallbackAction::Add => {
             crate::tgbot::send::answer_callback_query(update.id, Some("选择添加方式"), client_id)
                 .await?;
@@ -859,6 +1205,7 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
                 .await;
             edit_auth_add_options_on(update.chat_id, update.message_id, client_id).await
         }
+        // 点击“选择 Telegram 用户”：切换到 UserPicker 模式并发送原生选择器键盘
         AuthCallbackAction::PickUser => {
             switch_pending_auth_input_on(
                 (update.chat_id, update.sender_user_id),
@@ -879,7 +1226,7 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
                 clear_pending_auth_input((update.chat_id, update.sender_user_id));
                 return Err(err);
             }
-            // 新的原生用户选择器已经承载当前步骤，旧的“选择添加方式”卡片不再可用。
+            // 新的原生用户选择器已经承载当前步骤，旧的“选择添加方式”卡片不再可用，将其删除
             if let Err(error) =
                 crate::tgbot::send::delete_message(update.chat_id, update.message_id, client_id)
                     .await
@@ -893,6 +1240,7 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
             }
             Ok(())
         }
+        // 点击“输入用户 ID”：切换到 ManualId 模式并发送 ForceReply 提示卡片
         AuthCallbackAction::ManualId => {
             switch_pending_auth_input_on(
                 (update.chat_id, update.sender_user_id),
@@ -913,7 +1261,7 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
                 clear_pending_auth_input((update.chat_id, update.sender_user_id));
                 return Err(err);
             }
-            // ForceReply 已经成为唯一输入入口，删除旧选项卡避免用户重复点击旧按钮。
+            // ForceReply 已经成为唯一输入入口，删除旧选项卡避免用户重复点击旧按钮
             if let Err(error) =
                 crate::tgbot::send::delete_message(update.chat_id, update.message_id, client_id)
                     .await
@@ -927,6 +1275,7 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
             }
             Ok(())
         }
+        // 点击“查看命令”或“隐藏命令”：切换文本命令的折叠/展开显示
         toggle @ (AuthCallbackAction::ShowCommands | AuthCallbackAction::HideCommands) => {
             let show_commands = toggle == AuthCallbackAction::ShowCommands;
             crate::tgbot::send::answer_callback_query(
@@ -951,6 +1300,7 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
             )
             .await
         }
+        // 点击“刷新”：重新拉取数据库记录并就地编辑卡片
         AuthCallbackAction::Refresh => {
             crate::tgbot::send::answer_callback_query(update.id, Some("已刷新"), client_id).await?;
             clear_pending_auth_input_silently((update.chat_id, update.sender_user_id), client_id)
@@ -967,6 +1317,7 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
             )
             .await
         }
+        // 点击“取消”：终止当前添加操作，清理挂起状态并恢复列表卡片
         AuthCallbackAction::Cancel => {
             crate::tgbot::send::answer_callback_query(update.id, Some("已取消"), client_id).await?;
             let key = (update.chat_id, update.sender_user_id);
@@ -992,7 +1343,9 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
             )
             .await
         }
+        // 点击具体管理员行旁的“删除”按钮：撤销该动态管理员授权
         AuthCallbackAction::Delete(user_id) => {
+            // 静态配置文件中定义的管理员与 Owner 不允许在此处删除
             if user_id == config.owner_user_id || config.admin_user_ids.contains(&user_id) {
                 crate::tgbot::send::answer_callback_query(
                     update.id,
@@ -1005,7 +1358,9 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
             clear_pending_auth_input_silently((update.chat_id, update.sender_user_id), client_id)
                 .await;
             let db_conn = crate::db::get_db().await?;
+            // 从数据库中删除记录
             let removed = crate::access::revoke_authorized_user_on(db_conn, user_id).await?;
+            // 同步从内存白名单中撤销
             app.access_control.revoke_user(user_id);
             crate::tgbot::send::answer_callback_query(
                 update.id,
@@ -1017,6 +1372,7 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
                 client_id,
             )
             .await?;
+            // 刷新授权主面板并附带结果提示
             edit_auth_panel_on(
                 db_conn,
                 config.as_ref(),
@@ -1035,6 +1391,21 @@ pub(in crate::tgbot) async fn auth_callback_query_on(
     }
 }
 
+/// 执行并完成授权添加流程。
+///
+/// 写入数据库动态授权表、更新内存访问控制策略、清理交互提示并发送最新列表。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `config`: Bot 配置引用
+/// - `user_id`: 被授权目标用户的 ID
+/// - `profile`: 目标用户的快照画像（昵称与用户名）
+/// - `input`: 当前挂起的输入类型
+/// - `key`: (chat_id, user_id) 复合标识键
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 成功执行返回 Ok(())
 async fn complete_auth_add_on(
     app: &crate::app_context::AppContext,
     config: &crate::config::BotConfig,
@@ -1045,6 +1416,7 @@ async fn complete_auth_add_on(
     client_id: i32,
 ) -> anyhow::Result<()> {
     let request_chat_id = key.0;
+    // 校验 ID 合法性：必须大于 0
     if user_id <= 0 {
         clear_pending_auth_input(key);
         crate::tgbot::send::send_card_message_with_remove_keyboard(
@@ -1055,10 +1427,12 @@ async fn complete_auth_add_on(
         .await?;
         return Ok(());
     }
+    // 获取数据库连接
     let db_conn = match crate::db::get_db().await {
         Ok(db_conn) => db_conn,
         Err(error) => return report_auth_add_failure(key, input, client_id, error).await,
     };
+    // 写入数据库授权表并更新内存白名单
     let detail = match grant_authorized_user_with_profile_on(
         db_conn, app, config, user_id, &profile,
     )
@@ -1067,7 +1441,9 @@ async fn complete_auth_add_on(
         Ok((_, detail)) => detail,
         Err(error) => return report_auth_add_failure(key, input, client_id, error).await,
     };
+    // 清理挂起的输入状态
     clear_pending_auth_input(key);
+    // 删除输入提示卡片（如带有 ForceReply 或 UserRequest 的消息）
     if let Some(message_id) = take_auth_prompt(key) {
         delete_auth_prompt(key, message_id, client_id).await;
     }
@@ -1077,6 +1453,18 @@ async fn complete_auth_add_on(
 }
 
 /// 处理授权向导中的普通文本输入；返回 true 表示消息已被授权流程消费。
+///
+/// 当用户处于 `ManualId` 或 `UserPicker` 阶段时，发送的纯文本（用户 ID、取消等）在此拦截处理。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `text`: 接收到的文本消息
+/// - `config`: Bot 配置引用
+/// - `actor`: 发送消息的用户与会话信息
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<bool>`: 若消息被授权流程拦截消费则返回 Ok(true)，否则返回 Ok(false)
 pub(in crate::tgbot) async fn handle_auth_text_input_on(
     app: &crate::app_context::AppContext,
     text: &str,
@@ -1085,16 +1473,20 @@ pub(in crate::tgbot) async fn handle_auth_text_input_on(
     client_id: i32,
 ) -> anyhow::Result<bool> {
     let key = (actor.request_chat_id, actor.user_id);
+    // 判断当前用户是否处于授权输入等待状态
     let Some(input) = pending_auth_input(key) else {
         return Ok(false);
     };
+    // 用户输入取消指令
     if text.trim().eq_ignore_ascii_case("/cancel") || text.trim() == "取消" {
         clear_pending_auth_input_and_remove_keyboard(key, client_id, "授权添加已取消。").await?;
         return Ok(true);
     }
+    // 其它以 / 开头的斜杠命令不当作用户 ID 处理，交由通用命令分发器
     if text.trim().starts_with('/') {
         return Ok(false);
     }
+    // 解析用户输入的数字 ID
     let Ok(user_id) = text.trim().parse::<i64>() else {
         send_auth_input_prompt(
             input,
@@ -1115,6 +1507,7 @@ pub(in crate::tgbot) async fn handle_auth_text_input_on(
         .await?;
         return Ok(true);
     }
+    // 尝试查询该用户的基础画像信息（昵称和用户名）
     let profile = if matches!(
         input,
         PendingAuthInput::ManualId | PendingAuthInput::UserPicker
@@ -1123,6 +1516,7 @@ pub(in crate::tgbot) async fn handle_auth_text_input_on(
     } else {
         UserProfileSnapshot::default()
     };
+    // 完成授权添加
     complete_auth_add_on(
         app,
         config.as_ref(),
@@ -1137,6 +1531,19 @@ pub(in crate::tgbot) async fn handle_auth_text_input_on(
 }
 
 /// 处理 Telegram 原生 `messageUsersShared` 事件。
+///
+/// 当用户通过原生用户选择器按钮分享了一个或多个用户时，在此接收并处理首个用户。
+///
+/// # 参数
+/// - `app`: 全局应用上下文引用
+/// - `shared`: Telegram 原生分享的用户结构体
+/// - `config`: Bot 配置引用
+/// - `request_chat_id`: 会话 ID
+/// - `sender_user_id`: 操作者用户 ID
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<bool>`: 若事件被消费返回 Ok(true)，否则返回 Ok(false)
 pub(in crate::tgbot) async fn handle_auth_shared_user_input(
     app: &crate::app_context::AppContext,
     shared: &tdlib_rs::types::MessageUsersShared,
@@ -1145,6 +1552,7 @@ pub(in crate::tgbot) async fn handle_auth_shared_user_input(
     sender_user_id: i64,
     client_id: i32,
 ) -> anyhow::Result<bool> {
+    // 校验按钮 ID 是否匹配本授权流程所注册的特殊按钮 ID
     if shared.button_id != AUTH_USER_REQUEST_BUTTON_ID {
         return Ok(false);
     }
@@ -1159,7 +1567,7 @@ pub(in crate::tgbot) async fn handle_auth_shared_user_input(
         return Ok(true);
     };
     if input != PendingAuthInput::UserPicker {
-        // 迟到的选择结果不能清掉当前手动 ID 输入流程。
+        // 迟到的选择结果不能清掉当前手动 ID 输入流程
         return Ok(true);
     }
     let Some(user) = shared.users.first() else {
@@ -1177,7 +1585,7 @@ pub(in crate::tgbot) async fn handle_auth_shared_user_input(
         }
         return Ok(true);
     };
-    // 成功收到选择后先消费等待态，避免重复 update 重复授权；数据库失败时由完成函数恢复。
+    // 成功收到选择后先消费等待态，避免重复 update 重复授权；数据库失败时由完成函数恢复
     take_pending_auth_input(key);
     let mut profile = profile_from_shared_user(user);
     if profile.display_name.is_none() && profile.username.is_none() {
@@ -1196,7 +1604,17 @@ pub(in crate::tgbot) async fn handle_auth_shared_user_input(
     Ok(true)
 }
 
-/// `/cancel` 和新命令都应清理授权向导，避免旧键盘继续提交用户。
+/// 取消当前用户的授权向导输入流程并移除键盘。
+///
+/// 用于响应 `/cancel` 指令。
+///
+/// # 参数
+/// - `request_chat_id`: 会话 ID
+/// - `sender_user_id`: 操作者用户 ID
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<bool>`: 成功取消返回 Ok(bool)
 pub(in crate::tgbot) async fn cancel_auth_input(
     request_chat_id: i64,
     sender_user_id: i64,
@@ -1210,6 +1628,17 @@ pub(in crate::tgbot) async fn cancel_auth_input(
     .await
 }
 
+/// 当用户触发了其它新命令时，自动放弃当前授权向导输入状态。
+///
+/// 避免旧的授权原生选择键盘继续拦截用户的后续输入。
+///
+/// # 参数
+/// - `request_chat_id`: 会话 ID
+/// - `sender_user_id`: 操作者用户 ID
+/// - `client_id`: TDLib 客户端 ID
+///
+/// # 返回值
+/// - `anyhow::Result<bool>`: 若之前存在挂起输入且已被放弃返回 Ok(true)
 pub(in crate::tgbot) async fn discard_auth_input_for_command(
     request_chat_id: i64,
     sender_user_id: i64,
@@ -1228,6 +1657,14 @@ pub(in crate::tgbot) async fn discard_auth_input_for_command(
     Ok(previous.is_some())
 }
 
+/// 确保操作者具备 Owner 权限。
+///
+/// # 参数
+/// - `config`: Bot 配置引用
+/// - `actor`: 当前请求操作者
+///
+/// # 返回值
+/// - `anyhow::Result<()>`: 若不是 Owner 则抛出错误
 fn ensure_owner(
     config: &crate::config::BotConfig,
     actor: crate::config::RequestActor,
@@ -1238,6 +1675,14 @@ fn ensure_owner(
     Ok(())
 }
 
+/// 解析命令行参数中的目标用户 ID。
+///
+/// # 参数
+/// - `text`: 分词后的命令行参数片段数组
+/// - `usage`: 错误时提示的命令格式说明
+///
+/// # 返回值
+/// - `anyhow::Result<i64>`: 解析出的合法正整数用户 ID
 fn parse_user_id(text: &[&str], usage: &str) -> anyhow::Result<i64> {
     if text.len() != 3 {
         anyhow::bail!("usage: {usage}");
@@ -1251,6 +1696,15 @@ fn parse_user_id(text: &[&str], usage: &str) -> anyhow::Result<i64> {
     Ok(user_id)
 }
 
+/// 格式化授权操作结果的卡片文本。
+///
+/// # 参数
+/// - `status`: 状态标题（如 success / failed）
+/// - `user_id`: 目标用户 ID
+/// - `detail`: 详细说明或备注
+///
+/// # 返回值
+/// - `String`: 格式化后的卡片文本
 fn format_auth_result(status: &str, user_id: i64, detail: &str) -> String {
     [
         "授权管理".to_owned(),
@@ -1261,6 +1715,14 @@ fn format_auth_result(status: &str, user_id: i64, detail: &str) -> String {
     .join("\n")
 }
 
+/// 格式化文本命令形式的授权列表（`/auth list` 响应）。
+///
+/// # 参数
+/// - `config`: Bot 配置引用
+/// - `dynamic_user_ids`: 动态授权用户 ID 集合
+///
+/// # 返回值
+/// - `String`: 格式化后的授权列表文本
 fn format_auth_list(
     config: &crate::config::BotConfig,
     dynamic_user_ids: &std::collections::BTreeSet<i64>,
@@ -1318,6 +1780,7 @@ mod tests {
         take_pending_auth_input,
     };
 
+    /// 测试授权内联按钮回调数据能够正确路由到对应的交互动作。
     #[test]
     fn test_auth_callback_data_routes_interactive_actions() {
         assert_eq!(
@@ -1348,6 +1811,7 @@ mod tests {
         assert_eq!(parse_auth_callback_data("m:add"), None);
     }
 
+    /// 测试授权帮助卡片文本包含快捷回复授权的说明。
     #[test]
     fn test_auth_help_mentions_reply_shortcut() {
         let text = super::build_auth_help_detail_text();
@@ -1356,6 +1820,7 @@ mod tests {
         assert!(text.contains("/auth"));
     }
 
+    /// 测试用户画像格式化优先使用姓名并保留用户名。
     #[test]
     fn test_user_profile_prefers_name_and_keeps_username() {
         assert_eq!(format_display_name("张", "三"), Some("张 三".to_owned()));
@@ -1375,6 +1840,7 @@ mod tests {
         assert_eq!(format_profile_label(&profile), "张三 (@zhangsan)");
     }
 
+    /// 测试授权面板正确展示用户姓名、ID，且仅对动态管理员提供删除按钮。
     #[test]
     fn test_auth_panel_lists_names_ids_and_only_dynamic_delete_buttons() {
         let entries = vec![
@@ -1429,6 +1895,7 @@ mod tests {
         assert_eq!(commands_rows.last().unwrap()[0].text, "返回菜单");
     }
 
+    /// 测试挂起的授权输入状态按私聊操作者作用域严格隔离。
     #[test]
     fn test_pending_auth_input_is_scoped_to_private_actor() {
         let owner_key = (91_001, 91_001);
@@ -1449,14 +1916,19 @@ mod tests {
         );
     }
 
+    /// 测试回复消息授权仅接受个人用户消息，拒绝自身与群组频道匿名发送者。
     #[test]
     fn test_reply_authorization_accepts_only_incoming_user_messages() {
-        let user = tdlib_rs::enums::MessageSender::User(tdlib_rs::types::MessageSenderUser {
-            user_id: 123456,
-        });
-        let anonymous = tdlib_rs::enums::MessageSender::Chat(tdlib_rs::types::MessageSenderChat {
-            chat_id: -100123,
-        });
+        let user = tdlib_rs::enums::MessageSender::User(Box::new(
+            tdlib_rs::types::MessageSenderUser {
+                user_id: 123456,
+            },
+        ));
+        let anonymous = tdlib_rs::enums::MessageSender::Chat(Box::new(
+            tdlib_rs::types::MessageSenderChat {
+                chat_id: -100123,
+            },
+        ));
 
         assert_eq!(authorization_target_user_id(&user, false).unwrap(), 123456);
         assert!(
@@ -1473,7 +1945,7 @@ mod tests {
         );
     }
 
-    // owner 在任意群回复授权时只校验发送者 user_id；负数群 ID 仅作为回复位置。
+    /// 测试在群组中回复授权时，校验 Owner 权限只认 user_id，忽略负数群聊 chat_id。
     #[test]
     fn test_group_reply_owner_validation_ignores_chat_id() {
         let config = crate::config::BotConfig {

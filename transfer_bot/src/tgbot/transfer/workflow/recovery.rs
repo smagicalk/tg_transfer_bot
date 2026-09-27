@@ -13,7 +13,18 @@ use super::control::{apply_job_control, finish_skipped_by_control};
 use super::guard::acquire_job_guard;
 use super::runner::run_job_inner;
 
-/// 启动时恢复数据库里未完成任务。
+/// 启动时恢复数据库里未完成的任务，并清理收敛历史残留状态。
+///
+/// 启动执行步骤：
+/// 1. 扫描上次关机或重启前处于 `cancelling` 或 `cancel_finalizing` 的未完成任务；
+/// 2. 依次调用 `cancel_job_now` 完成取消收尾，确保占用文件的引用归零进入 GC 队列；
+/// 3. 扫描处于 `pending` 或 `running` 状态的可恢复任务；
+/// 4. 逐个调用 `spawn_recovery_job` 派发到后台异步任务流水线；
+/// 5. 按用户原请求会话（`request_chat_id`）聚合生成并发送启动恢复摘要卡片。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `client_ids`: TDLib 客户端角色分配配置。
 pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     client_ids: crate::config::TransferClientIds,
@@ -70,9 +81,20 @@ pub(in crate::tgbot::transfer) async fn recover_unfinished_jobs(
     Ok(())
 }
 
-/// 恢复单个任务：
-/// - 重新抓取 source_link
-/// - 对齐子项并执行
+/// 恢复执行单个任务：
+/// 1. 获取任务进程内排他 Guard；
+/// 2. 爬虫重新抓取源链接或消息；
+/// 3. 对齐数据库子项（`reconcile_items_for_bundle`）：新增新项、废弃缺失项、迁移文件键；
+/// 4. 重新标记状态为 `running`；
+/// 5. 调用 `run_job_inner` 进入准备、下载与发送工作流。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+/// - `job`: 待恢复的任务数据库模型。
+/// - `client_ids`: TDLib 客户端配置。
+///
+/// # 返回值
+/// - 任务最终的执行产物 `TransferOutcome`。
 pub(in crate::tgbot::transfer) async fn resume_one_job(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     job: db::transfer_job::Model,

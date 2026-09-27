@@ -11,9 +11,11 @@ use super::types::{DownloadsArgs, DownloadsFilter, parse_downloads_args};
 use crate::tgbot::transfer::store;
 use base64::{Engine as _, engine::general_purpose};
 
-// `/downloads` 支持“纯 limit”和“filter + limit”两种模式。
+/// 测试解析 `/downloads` 命令的参数切片：
+/// 支持“无参默认”、“纯 limit 数字”、“单个 filter 标签”以及“filter + limit + page”混合模式。
 #[test]
 fn test_parse_downloads_args() {
+    // 1. 无参情况：默认筛选全部，每页 8 条，第 1 页
     assert_eq!(
         parse_downloads_args(&["/downloads"]).unwrap(),
         DownloadsArgs {
@@ -22,6 +24,7 @@ fn test_parse_downloads_args() {
             page: 1,
         }
     );
+    // 2. 仅提供一个数字参数：视为 limit
     assert_eq!(
         parse_downloads_args(&["/downloads", "3"]).unwrap(),
         DownloadsArgs {
@@ -30,6 +33,7 @@ fn test_parse_downloads_args() {
             page: 1,
         }
     );
+    // 3. 仅提供筛选标签 "dl"：筛选下载中任务
     assert_eq!(
         parse_downloads_args(&["/downloads", "dl"]).unwrap(),
         DownloadsArgs {
@@ -38,6 +42,7 @@ fn test_parse_downloads_args() {
             page: 1,
         }
     );
+    // 4. 提供筛选标签 "done" 与数字 "5"：筛选已完成任务，每页 5 条
     assert_eq!(
         parse_downloads_args(&["/downloads", "done", "5"]).unwrap(),
         DownloadsArgs {
@@ -46,6 +51,7 @@ fn test_parse_downloads_args() {
             page: 1,
         }
     );
+    // 5. 提供筛选标签 "ok" 与数字 "5"：筛选成功任务
     assert_eq!(
         parse_downloads_args(&["/downloads", "ok", "5"]).unwrap(),
         DownloadsArgs {
@@ -54,6 +60,7 @@ fn test_parse_downloads_args() {
             page: 1,
         }
     );
+    // 6. 提供完整三元组 "done" "5" "2"：已完成，每页 5 条，第 2 页
     assert_eq!(
         parse_downloads_args(&["/downloads", "done", "5", "2"]).unwrap(),
         DownloadsArgs {
@@ -62,6 +69,7 @@ fn test_parse_downloads_args() {
             page: 2,
         }
     );
+    // 7. 暂停筛选 "pause"
     assert_eq!(
         parse_downloads_args(&["/downloads", "pause"]).unwrap(),
         DownloadsArgs {
@@ -70,6 +78,7 @@ fn test_parse_downloads_args() {
             page: 1,
         }
     );
+    // 8. 取消筛选 "cancel"
     assert_eq!(
         parse_downloads_args(&["/downloads", "cancel"]).unwrap(),
         DownloadsArgs {
@@ -78,6 +87,7 @@ fn test_parse_downloads_args() {
             page: 1,
         }
     );
+    // 9. 两个纯数字 "5" "2"：limit=5, page=2
     assert_eq!(
         parse_downloads_args(&["/downloads", "5", "2"]).unwrap(),
         DownloadsArgs {
@@ -86,10 +96,11 @@ fn test_parse_downloads_args() {
             page: 2,
         }
     );
+    // 10. 非法未知筛选字符，应当报错
     assert!(parse_downloads_args(&["/downloads", "abc"]).is_err());
 }
 
-// 新增的暂停/停止筛选应只命中对应任务状态。
+/// 测试状态筛选器是否能准确匹配暂停、停止中、已取消等控制状态。
 #[test]
 fn test_downloads_filter_matches_control_status() {
     let paused = snapshot_with_status("paused");
@@ -98,15 +109,19 @@ fn test_downloads_filter_matches_control_status() {
     let cancelled = snapshot_with_status("cancelled");
     let running = snapshot_with_status("running");
 
+    // 验证 Paused 匹配
     assert!(DownloadsFilter::Paused.matches(&paused));
     assert!(!DownloadsFilter::Paused.matches(&running));
+    // 验证 Cancelling 匹配
     assert!(DownloadsFilter::Cancelling.matches(&cancelling));
     assert!(DownloadsFilter::Cancelling.matches(&cancel_finalizing));
+    // 验证 Cancelled 匹配
     assert!(DownloadsFilter::Cancelled.matches(&cancelled));
+    // 验证 Finished 包含已取消状态
     assert!(DownloadsFilter::Finished.matches(&cancelled));
 }
 
-// 空列表时应该给出明确提示。
+/// 测试当任务列表为空时，富文本卡片能够给出友好的空态提示。
 #[test]
 fn test_format_downloads_text_for_empty() {
     let text = format_downloads_text(
@@ -118,12 +133,14 @@ fn test_format_downloads_text_for_empty() {
         },
         0,
     );
+    // 必须包含空提示
     assert!(text.contains("下载列表为空"));
+    // 不应出现多余的原始命令提示
     assert!(!text.contains("■ 命令"));
     assert!(!text.contains("/downloads"));
 }
 
-// 已授权用户展示全部任务。
+/// 测试普通授权用户查看列表时展示全局任务范围说明。
 #[test]
 fn test_format_downloads_text_uses_global_scope() {
     let args = DownloadsArgs {
@@ -139,7 +156,7 @@ fn test_format_downloads_text_uses_global_scope() {
     assert!(!text.contains("/downloads"));
 }
 
-// 当前页存在任务时，应为每个任务生成详情按钮。
+/// 测试当前页包含任务快照时，键盘中应为每个任务生成对应的详情跳转按钮。
 #[test]
 fn test_build_downloads_keyboard_has_job_detail_buttons() {
     let args = DownloadsArgs {
@@ -149,6 +166,7 @@ fn test_build_downloads_keyboard_has_job_detail_buttons() {
     };
     let keyboard = build_downloads_keyboard(&args, 1, &[snapshot_with_status("running")]);
 
+    // 检查第 0 行第 0 个按钮是否为详情按钮
     assert_eq!(keyboard.rows[0][0].text, "详情 #1");
     assert!(matches!(
         keyboard.rows[0][0].r#type,
@@ -156,7 +174,7 @@ fn test_build_downloads_keyboard_has_job_detail_buttons() {
     ));
 }
 
-// 任务列表只承担导航：详情按钮每行两个，暂停/恢复/停止统一进入详情页操作。
+/// 测试任务详情按钮每行最多分组 2 个，并且不在列表中塞入直接控制按钮（暂停/恢复统一在详情页做）。
 #[test]
 fn test_build_downloads_keyboard_groups_job_details_without_inline_controls() {
     let args = DownloadsArgs {
@@ -181,7 +199,7 @@ fn test_build_downloads_keyboard_groups_job_details_without_inline_controls() {
     );
 }
 
-// 运行中任务的控制统一进入详情页，列表不重复放暂停/停止。
+/// 测试运行中任务在列表中只放详情按钮，控制统一由详情页承接。
 #[test]
 fn test_build_downloads_keyboard_routes_running_controls_through_detail() {
     let args = DownloadsArgs {
@@ -196,7 +214,7 @@ fn test_build_downloads_keyboard_routes_running_controls_through_detail() {
     assert_eq!(decoded_callback_data(&keyboard.rows[0][0]), "j:st:1");
 }
 
-// 暂停任务同样只保留详情入口，恢复和停止由详情页承接。
+/// 测试暂停中的任务在列表中同样只保留详情入口。
 #[test]
 fn test_build_downloads_keyboard_routes_paused_controls_through_detail() {
     let args = DownloadsArgs {
@@ -211,7 +229,7 @@ fn test_build_downloads_keyboard_routes_paused_controls_through_detail() {
     assert_eq!(decoded_callback_data(&keyboard.rows[0][0]), "j:st:1");
 }
 
-// 已完成任务只保留详情，避免列表里出现无效控制按钮。
+/// 测试已完成任务只保留详情按钮，避免出现无效控制按钮。
 #[test]
 fn test_build_downloads_keyboard_hides_controls_for_finished_job() {
     let args = DownloadsArgs {
@@ -225,7 +243,7 @@ fn test_build_downloads_keyboard_hides_controls_for_finished_job() {
     assert_eq!(keyboard.rows[0].len(), 1);
 }
 
-// 任务详情按钮应使用短 callback payload，方便和 `/job` 统一路由。
+/// 测试详情按钮的回调 payload 格式，确认生成短协议 `j:st:1`。
 #[test]
 fn test_build_downloads_keyboard_job_detail_callback_data() {
     use base64::{Engine as _, engine::general_purpose};
@@ -246,7 +264,7 @@ fn test_build_downloads_keyboard_job_detail_callback_data() {
     assert_eq!(decoded, "j:st:1");
 }
 
-// 空列表时不应生成任务详情按钮行。
+/// 测试空列表时第一行不生成任何任务详情按钮，直接呈现筛选行。
 #[test]
 fn test_build_downloads_keyboard_empty_page_has_no_job_detail_row() {
     let args = DownloadsArgs {
@@ -260,7 +278,7 @@ fn test_build_downloads_keyboard_empty_page_has_no_job_detail_row() {
     assert_eq!(keyboard.rows[2][0].text, "刷新");
 }
 
-// 字节格式化应能覆盖整数和小数展示。
+/// 测试字节大小格式化工具：涵盖 B、KB、MB 等阶梯展示。
 #[test]
 fn test_format_bytes() {
     assert_eq!(format_bytes(100), "100 B");
@@ -268,7 +286,7 @@ fn test_format_bytes() {
     assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
 }
 
-// 翻页命令应可直接用于后续按钮回调。
+/// 测试反向构造翻页命令文本的正确性。
 #[test]
 fn test_build_downloads_page_command() {
     assert_eq!(
@@ -281,7 +299,7 @@ fn test_build_downloads_page_command() {
     );
 }
 
-// 分页按钮回调应能往返解析。
+/// 测试下载列表 callback 数据字符串的编解码往返一致性。
 #[test]
 fn test_downloads_callback_data_roundtrip() {
     let data = build_downloads_page_callback_data(DownloadsFilter::Finished, 5, 3);
@@ -296,9 +314,11 @@ fn test_downloads_callback_data_roundtrip() {
             }
         ))
     );
+    // 前缀错误或段数错误时返回 None
     assert_eq!(parse_downloads_callback_data("x:done:5:3"), None);
     assert_eq!(parse_downloads_callback_data("d:done:5:3"), None);
 
+    // 刷新动作往返解析
     assert_eq!(
         parse_downloads_callback_data("d:r:run:8:1"),
         Some((
@@ -311,6 +331,7 @@ fn test_downloads_callback_data_roundtrip() {
         ))
     );
 
+    // 筛选动作往返解析
     assert_eq!(
         parse_downloads_callback_data(&build_downloads_filter_callback_data(
             DownloadsFilter::Failed,
@@ -327,7 +348,7 @@ fn test_downloads_callback_data_roundtrip() {
     );
 }
 
-// 当前页按钮应直接刷新当前页，避免列表面板出现“只有这一格不能点”的割裂感。
+/// 测试“当前页”按钮被渲染为点击刷新的 callback，保持界面所有格子均可点。
 #[test]
 fn test_build_downloads_keyboard_current_page_is_refresh_callback() {
     let args = DownloadsArgs {
@@ -344,7 +365,7 @@ fn test_build_downloads_keyboard_current_page_is_refresh_callback() {
     ));
 }
 
-// 翻页 callback 也必须通过统一按钮入口编码，否则 TDLib 会把裸 payload 当成非法 bytes。
+/// 测试翻页 callback 数据在组装为 TDLib 按钮结构体时已进行标准 base64 编码。
 #[test]
 fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
     use base64::{Engine as _, engine::general_purpose};
@@ -365,7 +386,7 @@ fn test_build_downloads_keyboard_navigation_callback_data_is_encoded() {
     assert_eq!(decoded, "d:p:run:8:2");
 }
 
-// 列表页把“刷新 / 任务中心 / 查看命令 / 菜单”单独放一行，分页单独放一行。
+/// 测试下载列表键盘的全局功能操作行（刷新、任务中心、查看命令、菜单）。
 #[test]
 fn test_build_downloads_keyboard_has_refresh_row() {
     let args = DownloadsArgs {
@@ -394,7 +415,7 @@ fn test_build_downloads_keyboard_has_refresh_row() {
     assert_eq!(keyboard.rows[3][2].text, "末页");
 }
 
-// 列表页只保留六个高频状态筛选，细分阶段仍可通过命令访问。
+/// 测试筛选按钮的分行紧凑聚合展示。
 #[test]
 fn test_build_downloads_keyboard_uses_compact_filter_groups() {
     let args = DownloadsArgs {
@@ -422,9 +443,10 @@ fn test_build_downloads_keyboard_uses_compact_filter_groups() {
     assert_eq!(keyboard.rows[3][4].text, "末页");
 }
 
-// 边界页不展示只会刷新当前页的无效导航操作。
+/// 测试位于首页、末页或单页等边界情况下，隐藏无效的跳转按钮。
 #[test]
 fn test_build_downloads_keyboard_hides_unavailable_navigation() {
+    // 1. 处于第一页：不展示首页和上页，只展示 [1/4, 下页, 末页]
     let first_page = DownloadsArgs {
         filter: DownloadsFilter::All,
         limit: 8,
@@ -439,6 +461,7 @@ fn test_build_downloads_keyboard_hides_unavailable_navigation() {
         vec!["1/4", "下页", "末页"]
     );
 
+    // 2. 处于最后一页：展示 [首页, 上页, 4/4]，不展示下页和末页
     let last_page = DownloadsArgs {
         page: 4,
         ..first_page
@@ -452,6 +475,7 @@ fn test_build_downloads_keyboard_hides_unavailable_navigation() {
         vec!["首页", "上页", "4/4"]
     );
 
+    // 3. 仅有单页：仅保留当前页按钮 [1/1]
     let single_page = DownloadsArgs {
         page: 1,
         ..first_page
@@ -461,7 +485,7 @@ fn test_build_downloads_keyboard_hides_unavailable_navigation() {
     assert_eq!(single_keyboard.rows[3][0].text, "1/1");
 }
 
-// 构造最小任务快照，专门用于筛选器测试。
+/// 测试辅助工具：构造特定状态的最小化任务快照实例。
 fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
     let now = store::now_utc8();
     store::JobProgressSnapshot {
@@ -493,6 +517,7 @@ fn snapshot_with_status(status: &str) -> store::JobProgressSnapshot {
     }
 }
 
+/// 测试辅助工具：解码按钮中的 base64 回调数据为原始字符串。
 fn decoded_callback_data(button: &tdlib_rs::types::InlineKeyboardButton) -> String {
     let tdlib_rs::enums::InlineKeyboardButtonType::Callback(callback) = &button.r#type else {
         panic!("button must be callback");

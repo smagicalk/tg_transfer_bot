@@ -14,9 +14,17 @@ use super::super::{
 };
 use super::query::find_job;
 
-/// 将任务状态标记为 running（恢复前触发）。
+/// 将任务状态原子标记为 running（开始或恢复执行前触发）。
 ///
-/// 返回 false 表示任务已被暂停、停止或完成状态抢先占用，调用方不能继续创建子项或下载文件。
+/// 校验规则：只允许从 `pending` 或原 `running` 状态流转到 `running`；
+/// 若已被暂停（paused）、停止（cancelling）或已终态，则拒绝更新。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+///
+/// # 返回值
+/// - `true`: 成功置为 running，调用方可安全推进后续工作流；
+/// - `false`: 任务状态已被其它并发操作抢占，调用方必须停止执行。
 pub(in crate::tgbot::transfer) async fn mark_job_running(job_id: i64) -> anyhow::Result<bool> {
     let db_conn = db::get_db().await?;
     // 只允许 pending/running 进入 running，避免恢复流程覆盖暂停或停止请求。
@@ -36,7 +44,15 @@ pub(in crate::tgbot::transfer) async fn mark_job_running(job_id: i64) -> anyhow:
     Ok(rs.rows_affected > 0)
 }
 
-/// 将任务标记为暂停。
+/// 将任务标记为暂停（paused）。
+///
+/// 允许从 `pending`、`running`、`paused` 迁移；处于 cancelling 或已终态的任务不可暂停。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+///
+/// # 返回值
+/// - 更新后的 `transfer_job::Model` 数据库模型。
 pub(in crate::tgbot::transfer) async fn pause_job(
     job_id: i64,
 ) -> anyhow::Result<db::transfer_job::Model> {
@@ -79,12 +95,18 @@ pub(in crate::tgbot::transfer) async fn pause_job(
         .ok_or_else(|| anyhow::anyhow!("job not found after pause: {job_id}"))
 }
 
-/// 唤醒未完成任务。
+/// 唤醒未完成任务（恢复执行）。
 ///
-/// 语义：
-/// - paused：改回 pending，等待后台继续处理。
-/// - pending/running：任务本身可继续执行，直接返回，用于处理后台 task 丢失后的手动补派发。
-/// - finished/cancelling：拒绝恢复，避免重复释放引用或重复上传。
+/// 状态迁移语义：
+/// - `paused`: 原子更新为 `pending`，重回调度队列；
+/// - `pending` / `running`: 任务本身已在可执行状态，直接返回现有模型（用于后台协程中断后的手动补触发）；
+/// - `finished` / `cancelling`: 拒绝恢复，避免数据污染。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+///
+/// # 返回值
+/// - 唤醒后的 `transfer_job::Model`。
 pub(in crate::tgbot::transfer) async fn wake_job(
     job_id: i64,
 ) -> anyhow::Result<db::transfer_job::Model> {
@@ -124,9 +146,16 @@ pub(in crate::tgbot::transfer) async fn wake_job(
         .ok_or_else(|| anyhow::anyhow!("job not found after wake: {job_id}"))
 }
 
-/// 请求停止任务。
+/// 用户请求停止任务（协作式取消第一步）。
 ///
-/// 后台工作流会在下一个安全点调用 `cancel_job_now` 完成收尾。
+/// 将状态变更为 `cancelling`。后台正在执行的转存循环在每次循环或网络检查点
+/// 会感知到该状态，并在安全点调用 `cancel_job_now` 完成文件清理与终态收尾。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+///
+/// # 返回值
+/// - 标记为 cancelling 或最新状态的模型对象。
 pub(in crate::tgbot::transfer) async fn request_cancel_job(
     job_id: i64,
 ) -> anyhow::Result<db::transfer_job::Model> {

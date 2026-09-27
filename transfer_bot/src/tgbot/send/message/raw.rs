@@ -23,8 +23,11 @@ const EDIT_NOT_READY_RETRY_DELAYS: [Duration; 3] = [
 /// 对机器人回复来说只需要消息 ID 和发送状态，所以先解析成轻量结构，降低 worker 栈压力。
 #[derive(Debug, serde::Deserialize)]
 struct SentMessageLite {
+    /// 消息的唯一标识 ID。
     id: i64,
+    /// 消息所属的会话（chat）ID。
     chat_id: i64,
+    /// 发送状态对象；若为临时待发送状态则包含相应 JSON 对象，若已成功入库则为 None 或 null。
     #[serde(default)]
     sending_state: Option<serde_json::Value>,
 }
@@ -32,6 +35,15 @@ struct SentMessageLite {
 /// 发送文本消息并返回 TDLib 回传的消息对象。
 ///
 /// 进度面板需要拿到 `message_id`，后续才能用 `editMessageText` 原地刷新。
+///
+/// # 参数
+/// - `text`: 格式化文本对象。
+/// - `chat_id`: 目标聊天 ID。
+/// - `reply_markup`: 可选的键盘标记。
+/// - `client_id`: TDLib 客户端实例 ID。
+///
+/// # 返回值
+/// - `Ok(SentMessageReceipt)`: 包含最终消息 ID 的轻量回执。
 pub(in crate::tgbot::send::message) async fn send_formatted_text_message_returning(
     text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -49,6 +61,15 @@ pub(in crate::tgbot::send::message) async fn send_formatted_text_message_returni
 }
 
 /// 发送文本消息并允许附带 Telegram 原生回复锚点。
+///
+/// 会在发送前检查账号能力并过滤 reply_markup（普通用户账号模式下会将可复制按钮转为正文文本并移除键盘）。
+///
+/// # 参数
+/// - `text`: 待发送的富文本。
+/// - `chat_id`: 目标聊天 ID。
+/// - `reply_to`: 可选的回复锚点设置（支持同聊天回复或跨聊天引用）。
+/// - `reply_markup`: 可选键盘。
+/// - `client_id`: TDLib 客户端 ID。
 pub(in crate::tgbot::send::message) async fn send_formatted_text_message_returning_with_reply_to(
     text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -103,6 +124,12 @@ pub(in crate::tgbot::send::message) async fn send_formatted_text_message_returni
 }
 
 /// 发送文本消息，可选附带 inline keyboard。
+///
+/// # 参数
+/// - `text`: 格式化文本。
+/// - `chat_id`: 目标聊天 ID。
+/// - `reply_markup`: 可选键盘。
+/// - `client_id`: TDLib 客户端 ID。
 pub(in crate::tgbot::send::message) async fn send_formatted_text_message(
     text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -116,6 +143,15 @@ pub(in crate::tgbot::send::message) async fn send_formatted_text_message(
 /// 发送本地 PNG 照片并返回最终消息定位。
 ///
 /// 二维码需要在后续刷新时原地替换，因此只解析轻量消息定位，不反序列化完整 `Message`。
+///
+/// # 参数
+/// - `local_path`: 本地图片文件路径。
+/// - `caption`: 照片下方说明附言。
+/// - `chat_id`: 目标聊天 ID。
+/// - `client_id`: TDLib 客户端 ID。
+///
+/// # 返回值
+/// - `Ok(SentMessageReceipt)`: 包含照片消息 ID 的回执。
 pub async fn send_local_photo_returning(
     local_path: &str,
     caption: &str,
@@ -166,6 +202,13 @@ pub async fn send_local_photo_returning(
 /// 原地替换本地 PNG 照片及其说明文字。
 ///
 /// 只检查 TDLib 是否接受编辑请求，避免为二维码刷新反序列化大型媒体 `Message`。
+///
+/// # 参数
+/// - `local_path`: 新的本地图片路径。
+/// - `caption`: 新的照片说明文字。
+/// - `chat_id`: 目标聊天 ID。
+/// - `message_id`: 原照片消息 ID。
+/// - `client_id`: TDLib 客户端 ID。
 pub async fn edit_local_photo(
     local_path: &str,
     caption: &str,
@@ -208,6 +251,13 @@ pub async fn edit_local_photo(
 }
 
 /// 编辑一条文本消息，并同步刷新 inline keyboard。
+///
+/// # 参数
+/// - `text`: 新的 Markdown 格式正文。
+/// - `chat_id`: 目标聊天 ID。
+/// - `message_id`: 待编辑的消息 ID。
+/// - `keyboard`: 新的行内键盘。
+/// - `client_id`: TDLib 客户端 ID。
 pub async fn edit_markdown_message_with_inline_keyboard(
     text: String,
     chat_id: i64,
@@ -229,6 +279,13 @@ pub async fn edit_markdown_message_with_inline_keyboard(
 /// 编辑一条卡片风格文本消息，并同步刷新 inline keyboard。
 ///
 /// 卡片文本在本地转换成 TDLib `FormattedText`，用于进度面板这类需要频繁编辑的回复。
+///
+/// # 参数
+/// - `text`: 新的卡片格式正文。
+/// - `chat_id`: 目标聊天 ID。
+/// - `message_id`: 待编辑的消息 ID。
+/// - `keyboard`: 新的行内键盘。
+/// - `client_id`: TDLib 客户端 ID。
 pub async fn edit_card_message_with_inline_keyboard(
     text: String,
     chat_id: i64,
@@ -248,6 +305,10 @@ pub async fn edit_card_message_with_inline_keyboard(
 }
 
 /// 编辑一条已经构造好的 `FormattedText` 消息。
+///
+/// 具备自动容错与重试机制：
+/// 1. 若 Telegram 报错 "MESSAGE_NOT_MODIFIED"（内容与按钮未变更），作为幂等成功直接返回 `Ok(())`；
+/// 2. 若 Telegram 报错 "Message not found"，说明传入的可能是旧的临时 ID，自动等待最终消息 ID 并用新 ID 重试编辑一次。
 async fn edit_formatted_message_with_inline_keyboard(
     formatted_text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -258,7 +319,7 @@ async fn edit_formatted_message_with_inline_keyboard(
     let reply_markup_enabled = is_reply_markup_enabled();
     let (formatted_text, reply_markup) = apply_reply_markup_capability(
         formatted_text,
-        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(keyboard)),
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
         reply_markup_enabled,
         chat_id,
         Some(message_id),
@@ -325,7 +386,7 @@ async fn edit_formatted_message_with_inline_keyboard(
     Err(anyhow::Error::new(TdError(err)))
 }
 
-/// 发送 editMessageText 原始请求，调用方负责解释 TDLib response。
+/// 发送 editMessageText 原始请求，带有针对 "Message can't be edited" 短暂落服延迟的重试机制。
 async fn send_edit_message_text(
     formatted_text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -366,6 +427,13 @@ async fn send_edit_message_text(
 }
 
 /// 发送单次 editMessageText 原始请求。
+///
+/// # 参数
+/// - `formatted_text`: 新的富文本内容。
+/// - `chat_id`: 目标聊天 ID。
+/// - `message_id`: 待编辑消息 ID。
+/// - `keyboard`: 可选更新的行内键盘。
+/// - `client_id`: TDLib 客户端 ID。
 async fn send_edit_message_text_once(
     formatted_text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -374,7 +442,7 @@ async fn send_edit_message_text_once(
     client_id: i32,
 ) -> anyhow::Result<serde_json::Value> {
     let reply_markup =
-        prepare_optional_reply_markup(keyboard.map(tdlib_rs::enums::ReplyMarkup::InlineKeyboard))?;
+        prepare_optional_reply_markup(keyboard.map(|k| tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(k))))?;
     Ok(tdlib_rs::send_request(
         client_id,
         build_edit_message_text_request(formatted_text, chat_id, message_id, reply_markup),
@@ -383,6 +451,9 @@ async fn send_edit_message_text_once(
 }
 
 /// 判断 editMessageText 是否命中新消息刚落服时的短暂不可编辑窗口。
+///
+/// TDLib 在某些网络或服务端同步窗口下会返回 code=400 且 message="Message can't be edited"，
+/// 这通常只需要毫秒级退避重试即可成功。
 fn is_message_temporarily_not_editable_response(response: &serde_json::Value) -> bool {
     response["@type"] == "error"
         && response["code"].as_i64() == Some(400)
@@ -393,6 +464,12 @@ fn is_message_temporarily_not_editable_response(response: &serde_json::Value) ->
 ///
 /// 发送层显式拼 JSON，而不是把生成的 TDLib enum 直接塞进 `json!`。
 /// 这样可以把 bytes/base64、可支持按钮类型和 null 字段都集中在一个可测试边界。
+///
+/// # 参数
+/// - `text`: 格式化文本。
+/// - `chat_id`: 目标聊天 ID。
+/// - `reply_to`: 回复锚点 JSON 值。
+/// - `reply_markup`: 键盘标记 JSON 值。
 fn build_send_message_request(
     text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -411,6 +488,12 @@ fn build_send_message_request(
 }
 
 /// 构造 `editMessageText` 请求 JSON。
+///
+/// # 参数
+/// - `text`: 更新后的格式化文本。
+/// - `chat_id`: 目标聊天 ID。
+/// - `message_id`: 要编辑的消息 ID。
+/// - `reply_markup`: 更新后的键盘标记 JSON 值。
 fn build_edit_message_text_request(
     text: tdlib_rs::types::FormattedText,
     chat_id: i64,
@@ -427,6 +510,8 @@ fn build_edit_message_text_request(
 }
 
 /// 将可选 reply_markup 转成 TDLib JSON。
+///
+/// 若没有提供 reply_markup，则转为 `serde_json::Value::Null`。
 fn prepare_optional_reply_markup(
     reply_markup: Option<tdlib_rs::enums::ReplyMarkup>,
 ) -> anyhow::Result<serde_json::Value> {
@@ -440,6 +525,14 @@ fn prepare_optional_reply_markup(
 ///
 /// 用户号登录时统一丢弃 reply_markup，而不是让每个命令模块分别判断按钮是否可用。
 /// 如果按钮里有 copy/url 内容，会追加到正文，避免隐藏按钮后丢失命令和结果链接。
+///
+/// # 参数
+/// - `text`: 原格式化文本。
+/// - `reply_markup`: 计划发送的键盘。
+/// - `reply_markup_enabled`: 全局键盘使能开关。
+/// - `chat_id`: 目标聊天 ID。
+/// - `message_id`: 关联的消息 ID（若有）。
+/// - `operation`: 操作名称（用于日志追踪）。
 fn apply_reply_markup_capability(
     text: tdlib_rs::types::FormattedText,
     reply_markup: Option<tdlib_rs::enums::ReplyMarkup>,
@@ -473,6 +566,13 @@ fn apply_reply_markup_capability(
 /// 按当前账号能力过滤 reply_markup。
 ///
 /// 用户号登录时统一丢弃 reply_markup，而不是让每个命令模块分别判断按钮是否可用。
+///
+/// # 参数
+/// - `reply_markup`: 原始键盘。
+/// - `reply_markup_enabled`: 是否启用键盘。
+/// - `chat_id`: 目标聊天 ID。
+/// - `message_id`: 消息 ID。
+/// - `operation`: 操作名称。
 fn filter_reply_markup_by_capability(
     reply_markup: Option<tdlib_rs::enums::ReplyMarkup>,
     reply_markup_enabled: bool,
@@ -493,7 +593,7 @@ fn filter_reply_markup_by_capability(
     None
 }
 
-/// 从 reply_markup 里取出 inline keyboard。
+/// 从 reply_markup 枚举中提取出具体的 inline keyboard。
 fn inline_keyboard_from_reply_markup(
     reply_markup: Option<tdlib_rs::enums::ReplyMarkup>,
 ) -> Option<tdlib_rs::types::ReplyMarkupInlineKeyboard> {
@@ -501,10 +601,12 @@ fn inline_keyboard_from_reply_markup(
     let tdlib_rs::enums::ReplyMarkup::InlineKeyboard(keyboard) = reply_markup else {
         return None;
     };
-    Some(keyboard)
+    Some(*keyboard)
 }
 
 /// 将按钮里的可复制内容追加到正文，作为用户号模式的文本降级。
+///
+/// 当按钮无法显示时，将 CopyText 和 Url 类型的按钮文本及其载荷提取并附加在消息尾部。
 fn append_reply_markup_fallback_text(
     mut text: tdlib_rs::types::FormattedText,
     reply_markup: &tdlib_rs::enums::ReplyMarkup,
@@ -565,14 +667,14 @@ fn prepare_reply_markup(
 ) -> anyhow::Result<serde_json::Value> {
     match reply_markup {
         tdlib_rs::enums::ReplyMarkup::InlineKeyboard(keyboard) => {
-            build_inline_keyboard_value(keyboard)
+            build_inline_keyboard_value(*keyboard)
         }
         tdlib_rs::enums::ReplyMarkup::ForceReply(force_reply) => Ok(json!({
             "@type": "replyMarkupForceReply",
             "is_personal": force_reply.is_personal,
             "input_field_placeholder": force_reply.input_field_placeholder,
         })),
-        tdlib_rs::enums::ReplyMarkup::ShowKeyboard(keyboard) => build_show_keyboard_value(keyboard),
+        tdlib_rs::enums::ReplyMarkup::ShowKeyboard(keyboard) => build_show_keyboard_value(*keyboard),
         tdlib_rs::enums::ReplyMarkup::RemoveKeyboard(remove_keyboard) => Ok(json!({
             "@type": "replyMarkupRemoveKeyboard",
             "is_personal": remove_keyboard.is_personal,
@@ -707,6 +809,7 @@ fn build_button_style_value(style: tdlib_rs::enums::ButtonStyle) -> serde_json::
         tdlib_rs::enums::ButtonStyle::Primary => "buttonStylePrimary",
         tdlib_rs::enums::ButtonStyle::Danger => "buttonStyleDanger",
         tdlib_rs::enums::ButtonStyle::Success => "buttonStyleSuccess",
+        tdlib_rs::enums::ButtonStyle::Link => "buttonStyleLink",
     };
     json!({ "@type": style_type })
 }
@@ -748,6 +851,11 @@ fn is_message_not_modified(err: &tdlib_rs::types::Error) -> bool {
 }
 
 /// 应答按钮回调，避免 Telegram 客户端一直转圈。
+///
+/// # 参数
+/// - `callback_query_id`: 回调查询 ID。
+/// - `text`: 可选在客户端弹出的轻量提示文字（Toast/Alert）。
+/// - `client_id`: TDLib 客户端 ID。
 pub async fn answer_callback_query(
     callback_query_id: i64,
     text: Option<&str>,
@@ -857,7 +965,7 @@ mod tests {
             )],
         ]);
         let reply_markup =
-            serde_json::to_value(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(keyboard)).unwrap();
+            serde_json::to_value(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))).unwrap();
 
         let mut response: serde_json::Value = serde_json::from_str(
             r#"{
@@ -874,8 +982,9 @@ mod tests {
                 "has_timestamped_media": false,
                 "is_channel_post": false,
                 "is_paid_star_suggested_post": false,
-                "is_paid_ton_suggested_post": false,
+                "is_paid_gram_suggested_post": false,
                 "contains_unread_mention": false,
+                "contains_unread_poll_votes": false,
                 "date": 0,
                 "edit_date": 0,
                 "forward_info": null,
@@ -905,7 +1014,9 @@ mod tests {
                     "link_preview": null,
                     "link_preview_options": null
                 },
-                "reply_markup": null
+                "reply_markup": null,
+                "ephemeral_message_id": 0,
+                "chat_instance": "0"
             }"#,
         )
         .unwrap();
@@ -943,7 +1054,7 @@ mod tests {
             1,
             serde_json::Value::Null,
             prepare_optional_reply_markup(Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-                keyboard,
+                Box::new(keyboard),
             )))
             .unwrap(),
         );
@@ -962,13 +1073,14 @@ mod tests {
     // 轻量原始请求路径必须保留 Telegram 回复锚点，避免修复栈溢出后结果通知失去跳转上下文。
     #[test]
     fn test_send_message_request_preserves_reply_to() {
-        let reply_to = tdlib_rs::enums::InputMessageReplyTo::Message(
+        let reply_to = tdlib_rs::enums::InputMessageReplyTo::Message(Box::new(
             tdlib_rs::types::InputMessageReplyToMessage {
                 message_id: 734,
                 quote: None,
                 checklist_task_id: 0,
+                poll_option_id: String::new(),
             },
-        );
+        ));
         let request = build_send_message_request(
             tdlib_rs::types::FormattedText {
                 text: "转存完成".to_owned(),
@@ -996,7 +1108,7 @@ mod tests {
                     text: "选择聊天".to_owned(),
                     icon_custom_emoji_id: 0,
                     style: tdlib_rs::enums::ButtonStyle::Primary,
-                    r#type: tdlib_rs::enums::KeyboardButtonType::RequestChat(
+                    r#type: tdlib_rs::enums::KeyboardButtonType::RequestChat(Box::new(
                         tdlib_rs::types::KeyboardButtonTypeRequestChat {
                             id: 7001,
                             chat_is_channel: false,
@@ -1012,7 +1124,7 @@ mod tests {
                             request_username: false,
                             request_photo: false,
                         },
-                    ),
+                    )),
                 }],
                 vec![tdlib_rs::types::KeyboardButton {
                     text: "取消".to_owned(),
@@ -1026,6 +1138,7 @@ mod tests {
             one_time: true,
             is_personal: true,
             input_field_placeholder: "选择目标聊天".to_owned(),
+            force_reply: false,
         };
 
         let request = build_send_message_request(
@@ -1033,7 +1146,7 @@ mod tests {
             1,
             serde_json::Value::Null,
             prepare_optional_reply_markup(Some(tdlib_rs::enums::ReplyMarkup::ShowKeyboard(
-                keyboard,
+                Box::new(keyboard),
             )))
             .unwrap(),
         );
@@ -1066,7 +1179,7 @@ mod tests {
                 text: "选择用户".to_owned(),
                 icon_custom_emoji_id: 0,
                 style: tdlib_rs::enums::ButtonStyle::Primary,
-                r#type: tdlib_rs::enums::KeyboardButtonType::RequestUsers(
+                r#type: tdlib_rs::enums::KeyboardButtonType::RequestUsers(Box::new(
                     tdlib_rs::types::KeyboardButtonTypeRequestUsers {
                         id: 7003,
                         restrict_user_is_bot: true,
@@ -1078,13 +1191,14 @@ mod tests {
                         request_username: true,
                         request_photo: false,
                     },
-                ),
+                )),
             }]],
             is_persistent: false,
             resize_keyboard: true,
             one_time: true,
             is_personal: true,
             input_field_placeholder: "选择要授权的用户".to_owned(),
+            force_reply: false,
         };
 
         let request = build_send_message_request(
@@ -1092,7 +1206,7 @@ mod tests {
             1,
             serde_json::Value::Null,
             prepare_optional_reply_markup(Some(tdlib_rs::enums::ReplyMarkup::ShowKeyboard(
-                keyboard,
+                Box::new(keyboard),
             )))
             .unwrap(),
         );
@@ -1120,7 +1234,7 @@ mod tests {
             1,
             serde_json::Value::Null,
             prepare_optional_reply_markup(Some(tdlib_rs::enums::ReplyMarkup::RemoveKeyboard(
-                tdlib_rs::types::ReplyMarkupRemoveKeyboard { is_personal: true },
+                Box::new(tdlib_rs::types::ReplyMarkupRemoveKeyboard { is_personal: true }),
             )))
             .unwrap(),
         );
@@ -1143,7 +1257,7 @@ mod tests {
 
         let filtered = filter_reply_markup_by_capability(
             Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-                keyboard.clone(),
+                Box::new(keyboard.clone()),
             )),
             false,
             1,
@@ -1153,7 +1267,7 @@ mod tests {
         assert!(filtered.is_none());
 
         let kept = filter_reply_markup_by_capability(
-            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(keyboard)),
+            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
             true,
             1,
             None,
@@ -1176,7 +1290,7 @@ mod tests {
                 text: "进度".to_owned(),
                 entities: vec![],
             },
-            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(keyboard)),
+            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
             false,
             1,
             Some(100),
@@ -1191,7 +1305,7 @@ mod tests {
             1,
             100,
             prepare_optional_reply_markup(
-                filtered.map(tdlib_rs::enums::ReplyMarkup::InlineKeyboard),
+                filtered.map(|k| tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(k))),
             )
             .unwrap(),
         );
@@ -1221,7 +1335,7 @@ mod tests {
                 text: "查询结果".to_owned(),
                 entities: vec![],
             },
-            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(keyboard)),
+            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
             false,
             1,
             None,
@@ -1277,7 +1391,7 @@ mod tests {
             )],
         ]);
         let reply_markup =
-            serde_json::to_value(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(keyboard)).unwrap();
+            serde_json::to_value(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))).unwrap();
         let mut response: serde_json::Value = serde_json::from_str(
             r#"{
                 "@type": "updateMessageSendSucceeded",
@@ -1295,8 +1409,9 @@ mod tests {
                     "has_timestamped_media": false,
                     "is_channel_post": false,
                     "is_paid_star_suggested_post": false,
-                    "is_paid_ton_suggested_post": false,
+                    "is_paid_gram_suggested_post": false,
                     "contains_unread_mention": false,
+                    "contains_unread_poll_votes": false,
                     "date": 0,
                     "edit_date": 0,
                     "forward_info": null,
@@ -1326,7 +1441,9 @@ mod tests {
                         "link_preview": null,
                         "link_preview_options": null
                     },
-                    "reply_markup": null
+                    "reply_markup": null,
+                    "ephemeral_message_id": 0,
+                    "chat_instance": "0"
                 },
                 "old_message_id": -1
             }"#,

@@ -19,20 +19,35 @@ mod keyboard;
 mod tests;
 mod text;
 
-/// 恢复任务进度卡片的定位与生命周期状态。
+/// 恢复任务进度卡片的定位与生命周期状态结构体。
 pub(super) struct RecoveryProgressUpdate {
+    /// 恢复的任务唯一标识 ID
     pub(super) job_id: i64,
+    /// 任务原始源链接
     pub(super) source_link: String,
+    /// 目标聊天会话 ID
     pub(super) target_chat_id: i64,
+    /// 接收进度更新通知的会话 ID
     pub(super) notify_chat_id: i64,
+    /// 进度消息的 Telegram 消息 ID
     pub(super) message_id: i64,
+    /// TDLib 客户端实例 ID
     pub(super) client_id: i32,
+    /// 任务完成或终止的原子退出信号
     pub(super) done: Arc<AtomicBool>,
 }
 
-/// 周期性刷新 `/transfer` 的进度面板。
+/// 周期性刷新 `/transfer` 的进度面板后台轮询协程。
 ///
 /// 这里不直接参与下载/上传，只读取数据库快照；即使编辑失败，也不能影响后台转存任务。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文智能指针
+/// - `plan`: 转存规划详情
+/// - `notify_chat_id`: 目标通知会话 ID
+/// - `message_id`: 原进度卡片消息 ID
+/// - `client_id`: 客户端实例 ID
+/// - `done`: 结束信号原子标志
 pub(super) async fn update_transfer_progress_message(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     plan: types::TransferPlan,
@@ -41,12 +56,15 @@ pub(super) async fn update_transfer_progress_message(
     client_id: i32,
     done: Arc<AtomicBool>,
 ) {
+    // 缓存上一次渲染的文本，实现有变化才编辑（防 Telegram 限流）
     let mut last_text = String::new();
     loop {
+        // 检查退出信号
         if done.load(Ordering::SeqCst) {
             return;
         }
 
+        // 根据请求会话与消息 ID 查找对应的任务快照
         let snapshot =
             match store::find_job_by_request(plan.request_chat_id, plan.request_message_id).await {
                 // 每条请求消息绑定自己的 job；同源同目标的并发请求不能串看最新任务。
@@ -63,6 +81,7 @@ pub(super) async fn update_transfer_progress_message(
                 }
             };
 
+        // 渲染进度或等待提示卡片文本
         let text = match &snapshot {
             Some(snapshot) => format_transfer_progress_text(snapshot, &plan.source_link),
             None => format_transfer_waiting_text(&plan),
@@ -70,6 +89,7 @@ pub(super) async fn update_transfer_progress_message(
 
         // 文本不变时不编辑，减少无效请求和 Telegram 限流风险。
         if text != last_text {
+            // 构造进度内联键盘
             let keyboard = build_transfer_progress_keyboard(
                 snapshot.as_ref().map(|snapshot| snapshot.job.id),
                 snapshot
@@ -78,6 +98,7 @@ pub(super) async fn update_transfer_progress_message(
                 &plan.source_link,
                 plan.target_chat_id,
             );
+            // 原地编辑 Telegram 消息
             if let Err(err) = crate::tgbot::send::edit_card_message_with_inline_keyboard(
                 text.clone(),
                 notify_chat_id,
@@ -104,16 +125,22 @@ pub(super) async fn update_transfer_progress_message(
 ///
 /// 手动恢复没有新的 `/transfer` 请求，因此不能依赖 request_message_id 查找任务；
 /// 直接按 job_id 读取快照，确保暂停后恢复仍持续更新同一条消息。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文智能指针
+/// - `update`: 恢复进度卡片状态
 pub(super) async fn update_recovery_progress_message(
     app_context: std::sync::Arc<crate::app_context::AppContext>,
     update: RecoveryProgressUpdate,
 ) {
     let mut last_text = String::new();
     loop {
+        // 校验退出标志
         if update.done.load(Ordering::SeqCst) {
             return;
         }
 
+        // 直接根据 job_id 获取任务进度快照
         let snapshot = match store::get_job_progress_snapshot_with_context(
             app_context.as_ref(),
             update.job_id,
@@ -126,6 +153,7 @@ pub(super) async fn update_recovery_progress_message(
                 None
             }
         };
+        // 格式化文本
         let text = match &snapshot {
             Some(snapshot) => format_transfer_progress_text(snapshot, &update.source_link),
             None => format_transfer_control_text(
@@ -138,6 +166,7 @@ pub(super) async fn update_recovery_progress_message(
             ),
         };
 
+        // 差异化更新
         if text != last_text {
             let keyboard = build_transfer_progress_keyboard(
                 Some(update.job_id),
@@ -161,6 +190,7 @@ pub(super) async fn update_recovery_progress_message(
             last_text = text;
         }
 
+        // 读取动态配置刷新休眠间隔
         let interval = crate::tgbot::transfer::runtime_config_on(app_context.as_ref())
             .progress_edit_interval_seconds
             .max(1);
@@ -168,7 +198,15 @@ pub(super) async fn update_recovery_progress_message(
     }
 }
 
-/// 将最终执行结果写回同一条进度面板。
+/// 将最终执行结果写回同一条进度面板，替换进度状态为终态卡片。
+///
+/// # 参数
+/// - `source_link`: 转存源链接
+/// - `target_chat_id`: 目标聊天会话 ID
+/// - `result`: 执行结果引用
+/// - `notify_chat_id`: 通知目标会话 ID
+/// - `message_id`: 待编辑的原卡片消息 ID
+/// - `client_id`: 客户端实例 ID
 pub(super) async fn edit_transfer_progress_for_outcome(
     source_link: &str,
     target_chat_id: i64,
@@ -177,6 +215,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
     message_id: i64,
     client_id: i32,
 ) -> anyhow::Result<()> {
+    // 若转存成功或命中历史复用，读取已发送的结果消息列表供结果展示
     let outcome_result_messages = match result {
         Ok(workflow::TransferOutcome::Reused { job_id, link })
         | Ok(workflow::TransferOutcome::Completed { job_id, link }) => {
@@ -199,6 +238,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         _ => None,
     };
 
+    // 匹配结果类型，构造最终文本与内联键盘
     let (text, keyboard) = match result {
         Ok(workflow::TransferOutcome::Reused { job_id, link }) => (
             format_transfer_final_text_with_results(
@@ -290,6 +330,7 @@ pub(super) async fn edit_transfer_progress_for_outcome(
         ),
     };
 
+    // 编辑消息
     crate::tgbot::send::edit_card_message_with_inline_keyboard(
         text,
         notify_chat_id,

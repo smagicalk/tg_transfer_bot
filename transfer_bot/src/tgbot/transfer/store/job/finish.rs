@@ -22,6 +22,10 @@ use super::super::{
 /// 旧版本可能保存过不可点击的 `tg://openmessage` 或纯定位字符串；当重复转存
 /// 或 `/lookup` 成功用 TDLib 重新生成入口链接后，在这里写回数据库，后续命中
 /// 同一 source_link + target_chat_id 时可以直接返回可点击链接。
+///
+/// # 参数
+/// - `job_id`: 任务主键 ID。
+/// - `result_message_link`: 新解析出的可打开 URL 链接。
 pub(in crate::tgbot::transfer) async fn update_result_message_link(
     job_id: i64,
     result_message_link: String,
@@ -41,8 +45,18 @@ pub(in crate::tgbot::transfer) async fn update_result_message_link(
 
 /// 完成任务并写回汇总状态。
 ///
-/// 返回 true 表示终态写入成功；返回 false 表示任务已被停止/终止状态抢先更新，
-/// 调用方应转入控制状态处理，避免覆盖用户的停止请求。
+/// # 参数
+/// - `job`: 当前转存任务模型。
+/// - `ok_count`: 成功上传的子项条目数。
+/// - `fail_count`: 失败的子项条目数。
+/// - `last_error`: 可选的最后错误原因。
+/// - `result_message_id`: 目标首条消息 ID。
+/// - `result_message_link`: 目标消息超链接。
+/// - `delay_minutes`: 文件缓存安全延迟删除时间（分钟）。
+///
+/// # 返回值
+/// - `true`: 成功写入终态；
+/// - `false`: 任务状态在写入前已被外部抢占转为取消/暂停等控制态。
 pub(in crate::tgbot::transfer) async fn finish_job(
     job: db::transfer_job::Model,
     ok_count: i32,
@@ -74,6 +88,15 @@ pub(in crate::tgbot::transfer) async fn finish_job(
 /// 完成任务，同时在同一事务内更新一批子项状态并释放文件引用。
 ///
 /// 用于“准备失败/上传失败”等路径，避免主任务已终态但子项或引用仍未同步。
+///
+/// # 参数
+/// - `job`: 任务模型。
+/// - `summary`: 任务终态汇总数据（包含条目统计、结果定位和文件删除延迟）。
+/// - `item_updates`: 待同步更新的子项列表 `(子项ID, 新状态, 错误描述)`。
+///
+/// # 返回值
+/// - `true`: 成功提交事务并更新为终态；
+/// - `false`: 任务状态被控制态抢占。
 pub(in crate::tgbot::transfer) async fn finish_job_with_item_statuses(
     job: db::transfer_job::Model,
     summary: FinishJobSummary,
@@ -92,6 +115,18 @@ pub(in crate::tgbot::transfer) async fn finish_job_with_item_statuses(
 ///
 /// 进入这里说明目标消息已经发出，暂停/停止都无法再撤回上传结果，
 /// 因此允许从 paused/cancelling 收敛为成功，避免数据库隐藏真实已转存结果。
+///
+/// # 参数
+/// - `job`: 任务模型。
+/// - `ok_count`: 成功条目数。
+/// - `fail_count`: 失败条目数。
+/// - `last_error`: 错误信息。
+/// - `result_message_id`: 目标首条消息 ID。
+/// - `result_message_link`: 目标消息超链接。
+/// - `delay_minutes`: 文件缓存安全延迟删除分钟数。
+///
+/// # 返回值
+/// - `true` 表示终态写入成功。
 #[cfg(test)]
 pub(in crate::tgbot::transfer) async fn finish_uploaded_job(
     job: db::transfer_job::Model,
@@ -127,6 +162,14 @@ pub(in crate::tgbot::transfer) async fn finish_uploaded_job(
 }
 
 /// 上传成功后完成任务，并在同一事务内把已上传子项标记为成功。
+///
+/// # 参数
+/// - `job`: 任务模型。
+/// - `summary`: 完成摘要。
+/// - `item_updates`: 子项状态更新列表。
+///
+/// # 返回值
+/// - `true` 表示终态更新与关联表提交成功。
 pub(in crate::tgbot::transfer) async fn finish_uploaded_job_with_item_statuses(
     job: db::transfer_job::Model,
     summary: FinishJobSummary,
@@ -150,6 +193,12 @@ pub(in crate::tgbot::transfer) async fn finish_uploaded_job_with_item_statuses(
 ///
 /// 普通 finish 只允许 pending/running；上传成功后的 finish 允许更多控制态，
 /// 因为目标消息已经实际发出，数据库需要记录真实结果。
+///
+/// # 参数
+/// - `job`: 任务模型。
+/// - `summary`: 终态数据。
+/// - `item_updates`: 子项变更表。
+/// - `allowed_statuses`: 允许跃迁的前置状态切片。
 async fn finish_job_with_allowed_statuses(
     job: db::transfer_job::Model,
     summary: FinishJobSummary,

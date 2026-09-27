@@ -1,0 +1,126 @@
+{
+  // 配置文件格式版本（必须为 2，代表 Bot + User 执行器双客户端现代架构）
+  "config_version": 2,
+
+  // 静态超级管理员（Owner）的 Telegram 数字 User ID（必须大于 0）
+  // 拥有最高管理权限：管理 User 执行器登录/登出、通过 /auth 授权/撤销动态管理员、修改全部运行时配置
+  "owner_user_id": 123456789,
+
+  // 静态同权管理员的 Telegram 数字 User ID 列表（可选，默认为空 []）
+  // 拥有除 /auth 以外的所有转存与控制命令权限；动态授权管理员建议在启动后直接通过 /auth 命令在私聊中添加
+  "admin_user_ids": [],
+
+  // TDLib 底层跨客户端（Bot 和 User）共享的通用默认参数配置
+  "tdlib_defaults": {
+    // 是否连接 Telegram 官方测试数据中心（Test DC），生产环境请保持 false
+    "use_test_dc": false,
+    // Telegram API Application ID（请前往 https://my.telegram.org 申请创建应用后获取）
+    "api_id": 0,
+    // Telegram API Application Hash（与 api_id 对应，从 https://my.telegram.org 获取）
+    "api_hash": "replace_me_with_tdlib_api_hash",
+    // 客户端系统语言标识（例如 "zh-hans"、"en"）
+    "system_language_code": "zh-hans",
+    // 客户端运行设备型号标识（显示在 Telegram 活动会话列表中）
+    "device_model": "tg_transfer_bot",
+    // TDLib 客户端系统/内核版本号
+    "system_version": "1.8.62",
+    // 应用程序发布版本号
+    "application_version": "0.0.1",
+    // 是否支持端到端加密秘密聊天（转存机器人不需要秘密聊天，固定为 false）
+    "use_secret_chats": false,
+    // TDLib 底层 C++ 内核日志输出详细级别：
+    // 0 = 仅致命错误（推荐，控制台清爽无干扰）
+    // 1 = 记录常规错误；2 = 记录警告；更高数值输出更多调试信息
+    "log_verbosity_level": 0
+  },
+
+  // 机器人业务数据持久化存储配置（任务队列、文件引用计数、断点恢复、授权列表与运行时配置）
+  "storage": {
+    // 数据库连接 URL（推荐使用 SQLite 文件数据库；程序启动时会自动创建父级目录并执行版本迁移）
+    "database_url": "sqlite://tg/app/transfer.sqlite?mode=rwc"
+  },
+
+  // 双客户端实例配置（包含用户号执行器客户端与官方机器人客户端；两者的数据库与文件目录必须严格隔离）
+  "clients": {
+    // 用户号执行器（User Client）配置
+    // 默认不常驻连接，仅当转存私有频道/群组且 Bot 权限不足时由 Owner 在私聊菜单中按需拉起
+    "user": {
+      // 执行器登录鉴权方式
+      "login_info": {
+        // "OCR" 表示交互式二维码登录：由 Owner 在 Bot 私聊面板中点击登录，Bot 发送登录二维码供 Telegram App 扫码
+        "type": "OCR"
+      },
+      "tdlib": {
+        // 用户号 TDLib 本地数据库存储目录（必须与 bot 的目录不同）
+        "database_directory": "tg/user/db",
+        // 用户号 TDLib 本地下载与缓存文件目录（必须与 bot 的目录不同）
+        "files_directory": "tg/user/files",
+        // 用户号 TDLib 本地数据库加密密码（明文或 Base64 均可；留空表示不加密）
+        "database_encryption_key": "replace_me_with_plain_user_db_key",
+        // 是否启用本地文件元数据数据库以加速文件检索（推荐 true）
+        "use_file_database": true,
+        // 是否启用会话与聊天信息本地数据库（推荐 true）
+        "use_chat_info_database": true,
+        // 是否启用历史消息本地数据库（推荐 true）
+        "use_message_database": true
+      }
+    },
+
+    // 官方机器人（Bot Client）配置
+    // 常驻运行客户端，负责接收 Telegram 命令、展示交互菜单、推送转存进度卡片并承担默认文件上传
+    "bot": {
+      // 官方 Bot 的 Telegram Bot Token（由 @BotFather 获取，格式为 "<数字bot_id>:<token密钥>"）
+      "token": "1234567890:replace_me_with_bot_token",
+      "tdlib": {
+        // Bot 端 TDLib 本地数据库存储目录（必须与 user 的目录不同）
+        "database_directory": "tg/bot/db",
+        // Bot 端 TDLib 本地下载与缓存文件目录（必须与 user 的目录不同）
+        "files_directory": "tg/bot/files",
+        // Bot 端 TDLib 本地数据库加密密码（明文或 Base64 均可；留空表示不加密）
+        "database_encryption_key": "replace_me_with_plain_bot_db_key",
+        // 是否启用本地文件元数据数据库（推荐 true）
+        "use_file_database": true,
+        // 是否启用会话与聊天信息本地数据库（推荐 true）
+        "use_chat_info_database": true,
+        // 是否启用历史消息本地数据库（推荐 true）
+        "use_message_database": true
+      }
+    }
+  },
+
+  // 转存工作流角色分配配置
+  "workflow": {
+    // 负责向目标频道上传文件的客户端角色（当前固定为 "bot"，由 Bot 优先执行上传）
+    "upload_client": "bot"
+  }
+
+  // -------------------------------------------------------------------------
+  // 可选配置项（以下内容有完整默认值；启动后亦可随时在 Telegram 私聊菜单中动态配置）：
+  // -------------------------------------------------------------------------
+  //
+  // 1. 目标频道与快捷别名配置（亦可通过 /targets 命令或菜单动态配置）：
+  // "targets": {
+  //   // 未显式指定目标频道时的全局默认目标（填 0 表示默认回落到触发转存的当前私聊）
+  //   "default_chat_id": 0,
+  //   // 快捷别名映射（例如使用 "/transfer <链接> backup" 时将自动转存到对应的频道 ID）
+  //   "aliases": {
+  //     "backup": -1001234567890
+  //   }
+  // },
+  //
+  // 2. 转存调度与缓存回收配置（亦可通过 /config 命令或菜单动态配置）：
+  // "transfer_config": {
+  //   // 后台转存重任务并发数上限（默认 2）
+  //   "job_concurrency": 2,
+  //   // 本地缓存文件在任务完成且引用归零后的延迟删除缓冲时间（分钟，默认 2；避免短时间内重复转存同一文件时重复从云端下载）
+  //   "file_delete_delay_minutes": 2,
+  //   // 本地文件垃圾回收（GC）定时扫描周期（秒，默认 60）
+  //   "file_gc_interval_seconds": 60,
+  //   // 向 Telegram 编辑刷新转存进度卡片的时间间隔（秒，默认 2；避免频繁编辑触发 Telegram 限速）
+  //   "progress_edit_interval_seconds": 2,
+  //   // /downloads 任务列表命令默认单页显示条数（默认 8）
+  //   "downloads_default_page_size": 8,
+  //   // 交互式菜单等待用户输入操作的超时时间（秒，默认 600，即 10 分钟）
+  //   "menu_input_timeout_seconds": 600
+  // }
+}

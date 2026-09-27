@@ -17,9 +17,13 @@ use super::super::{
     is_text_file_key, now_utc8,
 };
 
-/// 任务完成后释放本任务引用：
-/// - active_refs 归零后进入“延迟删除队列”
-/// - delete_after = now + delay_minutes
+/// 任务完成后释放本任务持有的全部文件引用：
+/// - 扣减关联 items 对应的 file_cache `active_refs`
+/// - 若引用归零，则进入“延迟删除队列”，设置 `delete_after = now + delay_minutes`
+///
+/// # 参数
+/// - `job_id`: 目标转存任务主键 ID。
+/// - `delay_minutes`: 文件生命周期结束后的安全延迟删除时间（分钟）。
 #[cfg(test)]
 pub(in crate::tgbot::transfer) async fn release_job_file_refs(
     job_id: i64,
@@ -30,6 +34,15 @@ pub(in crate::tgbot::transfer) async fn release_job_file_refs(
 }
 
 /// 在指定连接/事务内释放任务持有的文件引用。
+///
+/// 1. 扫描该任务尚未释放引用（`file_ref_released = false`）且非纯文本占位（`!is_text_file_key`）的子项；
+/// 2. 统计各 `(owner_client_role, file_key)` 的引用计数；
+/// 3. 执行原子扣减并在扣减后把子项的 `file_ref_released` 标记为 true。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务句柄。
+/// - `job_id`: 任务 ID。
+/// - `delay_minutes`: 引用归零后的延迟删除时间（分钟）。
 pub(in crate::tgbot::transfer::store) async fn release_job_file_refs_on_conn<C>(
     conn: &C,
     job_id: i64,
@@ -72,6 +85,16 @@ where
 }
 
 /// 在指定连接/事务内按 file_key 批量扣减引用计数。
+///
+/// 使用单个 SQL UPDATE 表达式原子计算：
+/// - 若原 `active_refs > dec` 则减去 `dec`；
+/// - 若原 `active_refs <= dec` 则置为 0，并记录 `last_ref_zero_at = now` 与 `delete_after` 计划；
+/// 防止并发任务完成时出现读写覆盖（Race Condition）。
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务句柄。
+/// - `refs`: 待扣减的映射表 `(角色, 文件键) -> 扣减量`。
+/// - `delay_minutes`: 延迟删除分钟数。
 pub(in crate::tgbot::transfer::store) async fn release_file_ref_counts_on_conn<C>(
     conn: &C,
     refs: HashMap<(String, String), i32>,
@@ -124,6 +147,11 @@ where
 /// 为 file_key 增加引用计数：
 /// - 新记录：active_refs = 1
 /// - 旧记录：active_refs + 1，并清除删除计划
+///
+/// 若遇到 GC 正在删除，会轮询重试直到限制轮数。
+///
+/// # 参数
+/// - `file_key`: 文件标识键。
 #[cfg(test)]
 pub(in crate::tgbot::transfer) async fn acquire_file_ref(file_key: &str) -> anyhow::Result<()> {
     let db_conn = db::get_db().await?;
@@ -144,7 +172,18 @@ pub(in crate::tgbot::transfer) async fn acquire_file_ref(file_key: &str) -> anyh
 
 /// 尝试在指定连接/事务内增加一次文件引用。
 ///
-/// 返回 false 表示该 file_key 正被 GC 标记为 deleting，调用方应回滚并稍后重试。
+/// 使用 UPSERT 语法（ON CONFLICT DO UPDATE）：
+/// - 不存在时插入 `active_refs = 1`；
+/// - 存在且非 `deleting` 状态时，执行 `active_refs = active_refs + 1` 并重置 `delete_after = NULL`；
+///
+/// # 参数
+/// - `conn`: 数据库连接或事务上下文。
+/// - `owner_client_role`: 客户端角色。
+/// - `file_key`: 文件键。
+///
+/// # 返回值
+/// - `true`: 成功插入或成功增加引用；
+/// - `false`: 目标记录当前正处于 `deleting` 状态，调用方应等待后重试。
 pub(in crate::tgbot::transfer::store) async fn try_acquire_file_ref_on_conn<C>(
     conn: &C,
     owner_client_role: &str,

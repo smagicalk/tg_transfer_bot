@@ -3,25 +3,37 @@
 
 use super::input::{AdminInputAction, MenuJobAction};
 
-/// 菜单按钮回调前缀。
+/// 菜单按钮回调前缀标识。
 const MENU_CALLBACK_PREFIX: &str = "m:";
 
-/// 菜单页。
+/// 菜单页面枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MenuPage {
+    /// 菜单主页概览
     Home,
+    /// 任务快捷操作中心
     TasksHub,
+    /// 系统与管理入口中心
     AdminHub,
+    /// 下载任务列表筛选页
     Downloads,
+    /// 任务状态与控制页
     Jobs,
+    /// 历史转存查询页
     Lookup,
+    /// 运行配置调整页
     Config,
+    /// 目标频道与别名配置页
     Targets,
+    /// 命令与功能帮助目录页
     Help,
 }
 
 impl MenuPage {
     /// 页面标题，用于 callback 提示和文本标题。
+    ///
+    /// # 返回值
+    /// - `&'static str`: 页面中文标题
     pub(super) fn title(self) -> &'static str {
         match self {
             Self::Home => "菜单",
@@ -37,6 +49,9 @@ impl MenuPage {
     }
 
     /// 页面短编码，写进 callback payload。
+    ///
+    /// # 返回值
+    /// - `&'static str`: 短编码字符串
     fn code(self) -> &'static str {
         match self {
             Self::Home => "home",
@@ -52,6 +67,12 @@ impl MenuPage {
     }
 
     /// 从 callback 短编码解析页面。
+    ///
+    /// # 参数
+    /// - `code`: 短编码字符串切片
+    ///
+    /// # 返回值
+    /// - `Option<Self>`: 成功解析出的菜单页
     fn parse(code: &str) -> Option<Self> {
         match code {
             "home" => Some(Self::Home),
@@ -68,33 +89,61 @@ impl MenuPage {
     }
 }
 
-/// 菜单 callback 动作。
+/// 菜单 callback 动作枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MenuRequestAction {
+    /// 导航至指定菜单页
     Page(MenuPage),
+    /// 启动新转存输入流程
     NewTransfer,
+    /// 快速使用默认目标转存
     QuickTransferDefault,
+    /// 启动新查询输入流程
     NewLookup,
+    /// 快速使用默认目标查询
     QuickLookupDefault,
+    /// 选择默认转存目标
     TargetDefault,
+    /// 选择手动输入转存目标
     TargetManual,
+    /// 选择当前请求会话作为目标
     TargetRequestChat,
+    /// 选中指定别名代表的目标 chat_id
     TargetAlias(i64),
+    /// 确认执行转存草稿
     TargetConfirm,
+    /// 返回修改目标
     TargetBack,
+    /// 返回修改来源
     TargetSourceBack,
+    /// 任务操作单步 ID 输入（状态、暂停、恢复、停止）
     JobIdInput(MenuJobAction),
+    /// 管理配置单步输入
     AdminInput(AdminInputAction),
+    /// 继续当前未完成输入
     ContinueInput,
+    /// 取消当前输入流程
     CancelInput,
 }
 
 /// 判断 callback payload 是否属于 `/menu`。
+///
+/// # 参数
+/// - `data`: 回调数据字符串
+///
+/// # 返回值
+/// - `bool`: 若包含菜单回调前缀返回 true
 pub(super) fn is_menu_callback_data(data: &str) -> bool {
     data.starts_with(MENU_CALLBACK_PREFIX)
 }
 
-/// 解析菜单 callback payload。
+/// 解析菜单 callback payload 字符串为具体的菜单动作。
+///
+/// # 参数
+/// - `data`: 回调数据字符串
+///
+/// # 返回值
+/// - `Option<MenuRequestAction>`: 成功解析的菜单动作
 pub(super) fn parse_menu_callback_data(data: &str) -> Option<MenuRequestAction> {
     let payload = data.strip_prefix(MENU_CALLBACK_PREFIX)?;
     match payload {
@@ -127,76 +176,130 @@ pub(super) fn parse_menu_callback_data(data: &str) -> Option<MenuRequestAction> 
 }
 
 /// 页面导航 callback payload。
+///
+/// # 参数
+/// - `page`: 目标页面
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn menu_page_callback_data(page: MenuPage) -> String {
     menu_callback_data(page.code())
 }
 
 /// 新建转存 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn new_transfer_callback_data() -> String {
     menu_callback_data("new")
 }
 
 /// 使用默认目标快速转存 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn quick_transfer_default_callback_data() -> String {
     menu_callback_data("qtd")
 }
 
 /// 指定目标查询 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn new_lookup_callback_data() -> String {
     menu_callback_data("qlk")
 }
 
 /// 使用默认目标快速查询 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn quick_lookup_default_callback_data() -> String {
     menu_callback_data("qld")
 }
 
 /// 使用默认目标的 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn target_default_callback_data() -> String {
     menu_callback_data("td")
 }
 
 /// 进入手动输入目标的 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn target_manual_callback_data() -> String {
     menu_callback_data("tm")
 }
 
 /// 打开 Telegram 原生目标聊天选择器的 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn target_request_chat_callback_data() -> String {
     menu_callback_data("tp")
 }
 
 /// 使用某个目标 chat 的 callback payload。
+///
+/// # 参数
+/// - `chat_id`: 目标会话 ID
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn target_alias_callback_data(chat_id: i64) -> String {
     menu_callback_data(&format!("ta:{chat_id}"))
 }
 
 /// 确认执行当前草稿的 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn target_confirm_callback_data() -> String {
     menu_callback_data("tr")
 }
 
 /// 返回目标选择页的 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn target_back_callback_data() -> String {
     menu_callback_data("tb")
 }
 
 /// 返回来源输入的 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn target_source_back_callback_data() -> String {
     menu_callback_data("ts")
 }
 
 /// 继续当前输入草稿的 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn continue_input_callback_data() -> String {
     menu_callback_data("ci")
 }
 
 /// 取消当前输入草稿的 callback payload。
+///
+/// # 返回值
+/// - `String`: 回调数据字符串
 pub(super) fn cancel_input_callback_data() -> String {
     menu_callback_data("cx")
 }
 
-/// 生成菜单 callback payload。
+/// 生成带有菜单前缀的 callback payload 字符串。
+///
+/// # 参数
+/// - `action`: 动作字符串
+///
+/// # 返回值
+/// - `String`: 带前缀的回调数据
 fn menu_callback_data(action: &str) -> String {
     format!("{MENU_CALLBACK_PREFIX}{action}")
 }
@@ -205,7 +308,7 @@ fn menu_callback_data(action: &str) -> String {
 mod tests {
     use super::*;
 
-    // 菜单 callback 数据应能区分页面切换和输入流动作。
+    /// 测试菜单 callback 数据能准确区分页面切换和各类交互流动作。
     #[test]
     fn test_parse_menu_callback_data() {
         assert_eq!(
@@ -299,3 +402,4 @@ mod tests {
         assert_eq!(parse_menu_callback_data("x:new"), None);
     }
 }
+

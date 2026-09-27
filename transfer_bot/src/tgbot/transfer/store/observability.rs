@@ -15,7 +15,19 @@ use super::{
     TransferHealthSnapshot, now_utc8,
 };
 
-/// 读取转存系统健康快照。
+/// 读取转存系统的全面健康指标快照（用于 `/health` 诊断展示）。
+///
+/// 聚合查询：
+/// - 任务统计（总数、活跃中、成功、失败、已取消等）；
+/// - 子项统计（总数、正在准备、正在上传等）；
+/// - 文件缓存统计（总记录数、正被引用数、待 GC 到期数、删除失败数）；
+/// - 运行时调度器状态（并发插槽、活跃执行数、配置参数等）。
+///
+/// # 参数
+/// - `app_context`: 全局应用上下文。
+///
+/// # 返回值
+/// - 包含各项健康与性能统计数据的 `TransferHealthSnapshot` 结构体。
 pub(in crate::tgbot::transfer) async fn list_transfer_health_snapshot(
     app_context: &crate::app_context::AppContext,
 ) -> anyhow::Result<TransferHealthSnapshot> {
@@ -98,7 +110,10 @@ pub(in crate::tgbot::transfer) async fn list_transfer_health_snapshot(
     })
 }
 
-/// 读取 file_cache 按状态聚合的只读汇总。
+/// 读取 file_cache 按状态分组聚合的只读汇总（用于 `/cache` 概览）。
+///
+/// # 返回值
+/// - 包含各状态及其对应的记录数和活跃引用总量的汇总列表。
 pub(in crate::tgbot::transfer) async fn list_file_cache_status_summaries()
 -> anyhow::Result<Vec<FileCacheStatusSummary>> {
     let db_conn = db::get_db().await?;
@@ -125,7 +140,14 @@ pub(in crate::tgbot::transfer) async fn list_file_cache_status_summaries()
         .collect())
 }
 
-/// 分页读取最近更新的 file_cache 记录。
+/// 分页读取按更新时间倒序排列的最近 file_cache 记录快照。
+///
+/// # 参数
+/// - `limit`: 单页条目数（内部限制在 1..=50 范围内）。
+/// - `page`: 页码（从 1 开始）。
+///
+/// # 返回值
+/// - 该页的 `FileCacheSnapshot` 记录列表。
 pub(in crate::tgbot::transfer) async fn list_recent_file_cache_snapshots(
     limit: u64,
     page: u64,
@@ -197,7 +219,14 @@ pub(in crate::tgbot::transfer) async fn list_recent_file_cache_snapshots(
         .collect())
 }
 
-/// 统计状态命中数量。
+/// 辅助函数：统计状态列表中匹配目标状态集合的记录数量。
+///
+/// # 参数
+/// - `statuses`: 查询出的所有状态字符串列表。
+/// - `expected`: 期望匹配的目标状态集合。
+///
+/// # 返回值
+/// - 匹配项的数量。
 fn count_statuses(statuses: &[String], expected: &[&str]) -> i64 {
     statuses
         .iter()

@@ -3,21 +3,34 @@
 
 use crate::tgbot::TdError;
 
-/// 卡片字段值标记起始符。
-/// 发送前会被转换成 TDLib `textEntityTypeCode`，不会把标记本身发给用户。
+/// 卡片字段值标记起始符（‹）。
+/// 发送前会被转换成 TDLib `textEntityTypeCode` 行内等宽代码实体，不会把标记符号本身发给用户。
 pub const CARD_CODE_START: char = '‹';
-/// 卡片字段值标记结束符。
+
+/// 卡片字段值标记结束符（›）。
 pub const CARD_CODE_END: char = '›';
-/// 卡片链接标记起始符，语法：`【文本】(url)`。
+
+/// 卡片超链接标记起始符（【），卡片内嵌超链接语法：`【文本】(url)`。
 pub const CARD_LINK_TEXT_START: char = '【';
-/// 卡片链接标记结束符，语法：`【文本】(url)`。
+
+/// 卡片超链接标记结束符（】）。
 pub const CARD_LINK_TEXT_END: char = '】';
-/// 卡片多行代码块起始符。
+
+/// 卡片多行预格式化代码块起始符（«）。
 const CARD_PRE_CODE_START: char = '«';
-/// 卡片多行代码块结束符。
+
+/// 卡片多行预格式化代码块结束符（»）。
 const CARD_PRE_CODE_END: char = '»';
 
-/// 构造不带实体的普通文本。
+/// 构造不带任何富文本实体的纯文本对象。
+///
+/// 直接包裹 `text`，`entities` 列表置空。
+///
+/// # 参数
+/// - `text`: 要包装的纯字符串。
+///
+/// # 返回值
+/// - `tdlib_rs::types::FormattedText`: 格式化文本结构体。
 pub(in crate::tgbot::send::message) fn build_plain_formatted_text(
     text: String,
 ) -> tdlib_rs::types::FormattedText {
@@ -27,32 +40,54 @@ pub(in crate::tgbot::send::message) fn build_plain_formatted_text(
     }
 }
 
-/// 解析 Markdown，转成 Telegram 原生 `FormattedText`。
+/// 解析 Markdown 文本，转成 Telegram 原生 `FormattedText`。
+///
+/// 内部调用 TDLib 的 `parse_text_entities` API，采用 Telegram Bot API Markdown v1 模式：
+/// - `*bold*` -> 粗体
+/// - `` `code` `` -> 行内代码
+/// - `[text](url)` -> 超链接
+///
+/// # 参数
+/// - `text`: 包含 Markdown 标记的源文本。
+/// - `client_id`: TDLib 客户端实例 ID。
+///
+/// # 返回值
+/// - `Ok(FormattedText)`: TDLib 生成的富文本及实体偏移数组。
+/// - `Err(anyhow::Error)`: 解析失败或客户端调用异常。
 pub(in crate::tgbot::send::message) async fn parse_markdown_text(
     text: String,
     client_id: i32,
 ) -> anyhow::Result<tdlib_rs::types::FormattedText> {
     let parsed = tdlib_rs::functions::parse_text_entities(
         text,
-        tdlib_rs::enums::TextParseMode::Markdown(tdlib_rs::types::TextParseModeMarkdown {
+        tdlib_rs::enums::TextParseMode::Markdown(Box::new(tdlib_rs::types::TextParseModeMarkdown {
             // 现有文案使用 Bot API Markdown v1 风格：`*bold*`、`code`、`[text](url)`。
             version: 1,
-        }),
+        })),
         client_id,
     )
     .await
     .map_err(|e| anyhow::Error::new(TdError(e)))?;
     let tdlib_rs::enums::FormattedText::FormattedText(formatted_text) = parsed;
-    Ok(formatted_text)
+    Ok(*formatted_text)
 }
 
-/// 构造卡片风格 `FormattedText`。
+/// 构造卡片风格的 `FormattedText` 富文本。
 ///
-/// 这比 Markdown 更适合机器人固定回复：
-/// - 第一行标题和以 `■` 开头的分区标题会加粗；
-/// - `‹...›` 会变成行内代码，适合状态、ID、命令；
-/// - `【文本】(url)` 会变成原生可点击链接；
-/// - 用户输入只作为普通文本拼进去，不会破坏实体边界。
+/// 这比 Markdown 更适合机器人固定回复与交互式卡片：
+/// - 首行标题自动加粗；
+/// - 以 `■` 开头的段落标题行自动加粗；
+/// - `‹...›` 被解析为行内代码实体（`Code`），适用于展示 ID、文件哈希、命令名；
+/// - `«...»` 被解析为预格式化代码块（`PreCode`），适用于展示多行日志、错误堆栈；
+/// - `【文本】(url)` 被解析为超链接实体（`TextUrl`）；
+/// - 用户原始输入字符原样插入正文，不会因为特殊符号破坏 Markdown 解析树。
+///
+/// # 参数
+/// - `source`: 包含卡片标记的源文本。
+///
+/// # 返回值
+/// - `Ok(FormattedText)`: 构造好的 Telegram 富文本。
+/// - `Err(anyhow::Error)`: 如果字符串长度超出 UTF-16 上限等异常情况。
 pub(in crate::tgbot::send::message) fn build_card_formatted_text(
     source: String,
 ) -> anyhow::Result<tdlib_rs::types::FormattedText> {
@@ -89,9 +124,9 @@ pub(in crate::tgbot::send::message) fn build_card_formatted_text(
                 builder.push_entity_text(
                     value,
                     tdlib_rs::enums::TextEntityType::PreCode(
-                        tdlib_rs::types::TextEntityTypePreCode {
+                        Box::new(tdlib_rs::types::TextEntityTypePreCode {
                             language: "".to_owned(),
-                        },
+                        }),
                     ),
                 )?;
                 continue;
@@ -105,7 +140,7 @@ pub(in crate::tgbot::send::message) fn build_card_formatted_text(
                 builder.push_entity_text(
                     label,
                     tdlib_rs::enums::TextEntityType::TextUrl(
-                        tdlib_rs::types::TextEntityTypeTextUrl { url },
+                        Box::new(tdlib_rs::types::TextEntityTypeTextUrl { url }),
                     ),
                 )?;
                 continue;
@@ -143,7 +178,16 @@ pub(in crate::tgbot::send::message) fn build_card_formatted_text(
 }
 
 /// 构造整段可复制的等宽文本。
-/// TDLib 的 `offset` 和 `length` 均按 UTF-16 code unit 计算。
+///
+/// 使用 TDLib 的 `TextEntityType::PreCode` 实体将全文包裹为一个代码块，
+/// 允许用户点击后一键复制。注意：TDLib 的 `offset` 和 `length` 均按 UTF-16 code unit 计数。
+///
+/// # 参数
+/// - `text`: 待包裹的原始字符串。
+///
+/// # 返回值
+/// - `Ok(FormattedText)`: 包含单个 PreCode 实体的格式化文本。
+/// - `Err(anyhow::Error)`: 文本长度超过 i32 范围时报错。
 pub(in crate::tgbot::send::message) fn build_copyable_formatted_text(
     text: String,
 ) -> anyhow::Result<tdlib_rs::types::FormattedText> {
@@ -156,34 +200,49 @@ pub(in crate::tgbot::send::message) fn build_copyable_formatted_text(
             offset: 0,
             length,
             r#type: tdlib_rs::enums::TextEntityType::PreCode(
-                tdlib_rs::types::TextEntityTypePreCode {
+                Box::new(tdlib_rs::types::TextEntityTypePreCode {
                     language: "".to_owned(),
-                },
+                }),
             ),
         }],
     })
 }
 
-/// `FormattedText` 构建器，统一维护 UTF-16 offset/length。
+/// `FormattedText` 构建器，负责在字符流扫描中累积文本并统一维护 UTF-16 的 offset 与 length。
 #[derive(Default)]
 struct FormattedTextBuilder {
+    /// 累积生成的纯文本字符串。
     text: String,
+    /// 识别并累积的富文本格式化实体列表。
     entities: Vec<tdlib_rs::types::TextEntity>,
 }
 
 impl FormattedTextBuilder {
-    /// 追加一个普通字符。
+    /// 向当前构建缓冲区追加一个普通字符。
+    ///
+    /// # 参数
+    /// - `ch`: 待追加的 Unicode 字符。
     fn push_char(&mut self, ch: char) {
         self.text.push(ch);
     }
 
-    /// 返回当前文本尾部的 UTF-16 offset。
+    /// 返回当前构建缓冲区尾部对应的 UTF-16 代码单元偏移量（offset）。
+    ///
+    /// # 返回值
+    /// - `Ok(i32)`: 当前 UTF-16 代码单元计数。
+    /// - `Err(anyhow::Error)`: 溢出时返回错误。
     fn current_offset(&self) -> anyhow::Result<i32> {
         i32::try_from(self.text.encode_utf16().count())
             .map_err(|_| anyhow::anyhow!("message too long"))
     }
 
-    /// 追加一段带实体的文本。
+    /// 向缓冲区追加一段带指定实体的文本片段。
+    ///
+    /// 记录追加前后的 UTF-16 偏移并自动生成对应的 `TextEntity`。
+    ///
+    /// # 参数
+    /// - `value`: 文本内容。
+    /// - `r#type`: 实体类型（如 Code, Bold, TextUrl 等）。
     fn push_entity_text(
         &mut self,
         value: String,
@@ -200,7 +259,14 @@ impl FormattedTextBuilder {
         Ok(())
     }
 
-    /// 为已经追加的文本范围补充实体。
+    /// 为已经追加到缓冲区的文本范围补充实体。
+    ///
+    /// 适用于跨越整行或包含子实体的父级样式（例如整个标题行的加粗）。
+    ///
+    /// # 参数
+    /// - `start`: 起始 UTF-16 偏移。
+    /// - `end`: 结束 UTF-16 偏移。
+    /// - `r#type`: 实体类型。
     fn push_entity_range(&mut self, start: i32, end: i32, r#type: tdlib_rs::enums::TextEntityType) {
         let length = end.saturating_sub(start);
         if length <= 0 {
@@ -213,7 +279,12 @@ impl FormattedTextBuilder {
         });
     }
 
-    /// 输出最终 TDLib `FormattedText`。
+    /// 消费当前构建器，输出最终排好序的 TDLib `FormattedText`。
+    ///
+    /// TDLib 允许实体嵌套，按照 (offset 升序, length 降序) 排序保证外层实体排在前面。
+    ///
+    /// # 返回值
+    /// - `Ok(FormattedText)`: 组装好的格式化文本。
     fn into_formatted_text(mut self) -> anyhow::Result<tdlib_rs::types::FormattedText> {
         let _ = i32::try_from(self.text.encode_utf16().count())
             .map_err(|_| anyhow::anyhow!("message too long"))?;
@@ -228,6 +299,16 @@ impl FormattedTextBuilder {
 }
 
 /// 尝试读取卡片链接标记：`【文本】(url)`。
+///
+/// 从字符迭代器中提取 `【` 与 `】` 之间的文本作为超链接标题，
+/// 以及随后的 `(` 与 `)` 之间的字符串作为目标 URL。
+///
+/// # 参数
+/// - `chars`: 字符可预览迭代器引用。
+///
+/// # 返回值
+/// - `Some((label, url))`: 成功解析出标题与 URL。
+/// - `None`: 格式不匹配或提前遇到 EOF。
 fn take_card_link(
     chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
 ) -> Option<(String, String)> {
@@ -239,7 +320,15 @@ fn take_card_link(
     Some((label, url))
 }
 
-/// 读取到指定结束符为止；结束符不存在时返回 `None`。
+/// 从字符迭代器中持续读取字符直到指定结束字符出现为止。
+///
+/// # 参数
+/// - `chars`: 字符迭代器引用。
+/// - `end`: 目标结束字符。
+///
+/// # 返回值
+/// - `Some(String)`: 读取到的内容（不含 `end` 字符本身）。
+/// - `None`: 未遇到结束符且迭代器耗尽时返回。
 fn take_until_required(
     chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
     end: char,
