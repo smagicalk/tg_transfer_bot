@@ -32,6 +32,7 @@
 - 工作流输入升级：将 `publish-tag-release.yml` 的 `source_ref`（构建来源）以及所有打包/测试工作流（`publish-tag-release.yml`、`release-packages.yml`、`test-single-target.yml`）中的 `td_ref` 从固定下拉框（`type: choice`）升级为自由输入框（`type: string`）。
 - `td_ref` 默认值保持为 `master`，同时支持按需输入任意 Git tag、分支名或 commit hash，实现灵活自由切换。
 - 修复发布构建校验失败：将 Linux / Windows 打包脚本中的 `cargo fmt --all` 调整为 `-p transfer_bot`（与 `test` 和 `clippy` 保持一致，避免检测自动生成的 `tdlib_rs` 绑定代码），对 `transfer_bot` 全面执行 `cargo fmt` 格式化，并修复了 3 处 `clippy::doc_lazy_continuation` 文档警告。
+- 绑定层代码同步：将本地适配的新版 `tdlib_rs` 绑定层源码（支持枚举字段 Box 化、新版 Client 实例生命周期）全量提交推送到 Git 仓库，消除 CI 云端拉取代码时与 `transfer_bot` 的类型不匹配断层，并发布 `v0.0.4`。
 
 ### 业务与架构状态
 当前项目采用 owner + 静态管理员 + 数据库动态管理员模式：
