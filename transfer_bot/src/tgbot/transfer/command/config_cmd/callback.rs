@@ -18,22 +18,13 @@ pub(super) enum ConfigCallbackAction {
     /// 打开全量重置二次确认卡片
     ConfirmReset,
     /// 仅恢复特定单个字段到启动配置里的默认值
-    ResetField {
-        field: ConfigField,
-    },
+    ResetField { field: ConfigField },
     /// 查看某个具体字段的数值详情与微调面板
-    View {
-        field: ConfigField,
-    },
+    View { field: ConfigField },
     /// 触发针对某个字段的 ForceReply 文本输入修改流
-    Input {
-        field: ConfigField,
-    },
+    Input { field: ConfigField },
     /// 点击步进按钮微调某个字段的值
-    Adjust {
-        field: ConfigField,
-        direction: i8,
-    },
+    Adjust { field: ConfigField, direction: i8 },
 }
 
 impl ConfigCallbackAction {

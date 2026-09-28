@@ -324,4 +324,3 @@ pub(crate) async fn send_auto_transfer_hint_message(
     .send(chat_id, client_id)
     .await
 }
-

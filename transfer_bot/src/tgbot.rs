@@ -130,7 +130,11 @@ pub fn spawn_client_listener(
 ) -> tokio::task::JoinHandle<()> {
     let client_id = client.id();
     tokio::spawn(async move {
-        tracing::info!(client_id, role = role.as_str(), "client update stream listener started");
+        tracing::info!(
+            client_id,
+            role = role.as_str(),
+            "client update stream listener started"
+        );
         while let Some(msg_update) = client.receive().await {
             tracing::trace!(
                 client_id,
@@ -154,10 +158,13 @@ pub fn spawn_client_listener(
                 }
             });
         }
-        tracing::info!(client_id, role = role.as_str(), "client update stream listener exited");
+        tracing::info!(
+            client_id,
+            role = role.as_str(),
+            "client update stream listener exited"
+        );
     })
 }
-
 
 /// TDLib Update 核心分发路由总入口。
 ///
@@ -252,7 +259,6 @@ pub async fn handle_update(
             );
             return Ok(());
         }
-
 
         let message = update_new_message.message;
         if message.is_outgoing {
@@ -1308,7 +1314,6 @@ fn message_content_kind(content: &tdlib_rs::enums::MessageContent) -> &'static s
 /// 构造用于单元测试的模拟 `Message` 实例。
 #[cfg(test)]
 pub(crate) fn mock_message() -> tdlib_rs::types::Message {
-
     tdlib_rs::types::Message {
         id: 0,
         sender_id: tdlib_rs::enums::MessageSender::User(Box::new(
@@ -1486,11 +1491,10 @@ mod tests {
     /// 群聊回复授权必须按发送者 user_id 校验 owner，不能把负数群 ID 当成用户身份。
     #[test]
     fn test_reply_auth_request_actor_uses_sender_user_id() {
-        let sender = tdlib_rs::enums::MessageSender::User(Box::new(
-            tdlib_rs::types::MessageSenderUser {
+        let sender =
+            tdlib_rs::enums::MessageSender::User(Box::new(tdlib_rs::types::MessageSenderUser {
                 user_id: 123456,
-            },
-        ));
+            }));
 
         assert_eq!(
             reply_auth_request_actor(-100987654, &sender).unwrap(),
@@ -1504,11 +1508,10 @@ mod tests {
     /// 匿名管理员 update 只有 chat_id，没有可验证的真实用户 ID，必须给出明确操作提示。
     #[test]
     fn test_reply_auth_request_actor_rejects_anonymous_admin() {
-        let sender = tdlib_rs::enums::MessageSender::Chat(Box::new(
-            tdlib_rs::types::MessageSenderChat {
+        let sender =
+            tdlib_rs::enums::MessageSender::Chat(Box::new(tdlib_rs::types::MessageSenderChat {
                 chat_id: -100987654,
-            },
-        ));
+            }));
 
         let error = reply_auth_request_actor(-100987654, &sender).unwrap_err();
         assert!(error.to_string().contains("匿名管理员"));
@@ -1538,28 +1541,25 @@ mod tests {
     /// 群聊里只对命令回复“请私聊”，普通文本和媒体应静默忽略，避免刷屏。
     #[test]
     fn test_private_only_notice_only_for_commands() {
-        let command = tdlib_rs::enums::MessageContent::MessageText(Box::new(
-            tdlib_rs::types::MessageText {
+        let command =
+            tdlib_rs::enums::MessageContent::MessageText(Box::new(tdlib_rs::types::MessageText {
                 text: tdlib_rs::types::FormattedText {
                     text: " /menu".to_owned(),
                     entities: vec![],
                 },
                 link_preview: None,
                 link_preview_options: None,
-            },
-        ));
-        let text = tdlib_rs::enums::MessageContent::MessageText(Box::new(
-            tdlib_rs::types::MessageText {
+            }));
+        let text =
+            tdlib_rs::enums::MessageContent::MessageText(Box::new(tdlib_rs::types::MessageText {
                 text: tdlib_rs::types::FormattedText {
                     text: "hello".to_owned(),
                     entities: vec![],
                 },
                 link_preview: None,
                 link_preview_options: None,
-            },
-        ));
-        let non_text =
-            tdlib_rs::enums::MessageContent::MessageBasicGroupChatCreate(Box::default());
+            }));
+        let non_text = tdlib_rs::enums::MessageContent::MessageBasicGroupChatCreate(Box::default());
 
         assert!(should_send_private_only_notice(&command));
         assert!(!should_send_private_only_notice(&text));
@@ -1570,16 +1570,14 @@ mod tests {
     #[test]
     fn test_reply_auth_command_is_narrow_group_exception() {
         let text_content = |text: &str| {
-            tdlib_rs::enums::MessageContent::MessageText(Box::new(
-                tdlib_rs::types::MessageText {
-                    text: tdlib_rs::types::FormattedText {
-                        text: text.to_owned(),
-                        entities: vec![],
-                    },
-                    link_preview: None,
-                    link_preview_options: None,
+            tdlib_rs::enums::MessageContent::MessageText(Box::new(tdlib_rs::types::MessageText {
+                text: tdlib_rs::types::FormattedText {
+                    text: text.to_owned(),
+                    entities: vec![],
                 },
-            ))
+                link_preview: None,
+                link_preview_options: None,
+            }))
         };
 
         assert!(is_reply_auth_command(&text_content("/auth"), true));
@@ -1730,4 +1728,3 @@ mod tests {
         );
     }
 }
-

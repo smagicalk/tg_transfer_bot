@@ -366,17 +366,15 @@ async fn create_user_client(
             tracing::warn!(client_id, error = %error, "load executor tdlib version failed");
         }
     });
-    let ready_roles = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeSet::new()));
+    let ready_roles =
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::BTreeSet::new()));
     let cfg_arc = Arc::new(config.clone());
     // 启动 Update 监听循环
-    crate::tgbot::spawn_client_listener(
-        user_client,
-        ClientRole::User,
-        app,
-        cfg_arc,
-        ready_roles,
+    crate::tgbot::spawn_client_listener(user_client, ClientRole::User, app, cfg_arc, ready_roles);
+    tracing::info!(
+        client_id,
+        "executor user tdlib client created and listening"
     );
-    tracing::info!(client_id, "executor user tdlib client created and listening");
     Ok(client_id)
 }
 
@@ -530,4 +528,3 @@ mod tests {
         assert!(!text.contains("手机号"));
     }
 }
-

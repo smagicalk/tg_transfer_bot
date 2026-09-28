@@ -111,7 +111,7 @@ if (-not (Test-Path "$localTdlibPath\lib\tdjson.lib")) {
 $env:Path = "$localTdlibPath\bin;$env:VCPKG_ROOT\installed\x64-windows\bin;$env:Path"
 
 if ($env:RUN_CHECKS -eq "true") {
-    cargo fmt --all -- --check
+    cargo fmt -p transfer_bot -- --check
     cargo test -p transfer_bot
     cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
 }

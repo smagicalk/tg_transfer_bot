@@ -101,12 +101,12 @@ fn test_animation_is_transferable_and_has_file_key() {
 /// 暂不支持的消息类型不能自动进入转存队列。
 #[test]
 fn test_sticker_is_not_transferable() {
-    let message = message_with_content(tdlib_rs::enums::MessageContent::MessageSticker(
-        Box::new(tdlib_rs::types::MessageSticker {
+    let message = message_with_content(tdlib_rs::enums::MessageContent::MessageSticker(Box::new(
+        tdlib_rs::types::MessageSticker {
             sticker: test_sticker(),
             is_premium: false,
-        }),
-    ));
+        },
+    )));
 
     assert!(!is_transferable_message(&message));
 }

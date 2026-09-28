@@ -179,4 +179,3 @@ mod tests {
         assert_eq!(panel.style, ReplyPanelStyle::Card);
     }
 }
-

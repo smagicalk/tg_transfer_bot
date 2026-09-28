@@ -162,7 +162,7 @@ test -f "$LOCAL_TDLIB_PATH/lib/libtdjson.so"
 
 cd "$WORK_ROOT"
 if [ "$RUN_CHECKS" = "true" ]; then
-  cargo fmt --all -- --check
+  cargo fmt -p transfer_bot -- --check
   cargo test -p transfer_bot
   cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings
 fi

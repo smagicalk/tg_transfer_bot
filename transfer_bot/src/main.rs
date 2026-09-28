@@ -20,4 +20,3 @@ fn main() -> anyhow::Result<()> {
         // 阻塞当前主线程并驱动根异步任务 transfer_bot::run()
         .block_on(transfer_bot::run())
 }
-

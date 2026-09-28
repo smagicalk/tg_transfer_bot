@@ -77,4 +77,3 @@ mod tests {
             .expect("singleflight key should be reusable after abort");
     }
 }
-

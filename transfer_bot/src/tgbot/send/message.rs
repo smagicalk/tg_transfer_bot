@@ -105,7 +105,9 @@ pub async fn send_markdown_message_with_inline_keyboard(
     send_formatted_text_message(
         formatted_text,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+            keyboard,
+        ))),
         client_id,
     )
     .await
@@ -133,9 +135,9 @@ pub async fn send_markdown_message_with_buttons_returning(
     send_formatted_text_message_returning(
         formatted_text,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            Box::new(build_inline_keyboard(rows)),
-        )),
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+            build_inline_keyboard(rows),
+        ))),
         client_id,
     )
     .await
@@ -201,9 +203,9 @@ pub async fn send_card_message_with_remove_keyboard(
     send_formatted_text_message(
         formatted_text,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::RemoveKeyboard(
-            Box::new(tdlib_rs::types::ReplyMarkupRemoveKeyboard { is_personal: true }),
-        )),
+        Some(tdlib_rs::enums::ReplyMarkup::RemoveKeyboard(Box::new(
+            tdlib_rs::types::ReplyMarkupRemoveKeyboard { is_personal: true },
+        ))),
         client_id,
     )
     .await
@@ -265,9 +267,9 @@ pub async fn send_card_message_with_buttons(
     send_formatted_text_message(
         formatted_text,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            Box::new(build_inline_keyboard(rows)),
-        )),
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+            build_inline_keyboard(rows),
+        ))),
         client_id,
     )
     .await
@@ -301,9 +303,9 @@ pub async fn send_card_message_with_buttons_replying_to(
             target_chat_id,
             target_message_id,
         )),
-        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            Box::new(build_inline_keyboard(rows)),
-        )),
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+            build_inline_keyboard(rows),
+        ))),
         client_id,
     )
     .await
@@ -361,9 +363,9 @@ pub async fn send_card_message_with_buttons_returning(
     send_formatted_text_message_returning(
         formatted_text,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            Box::new(build_inline_keyboard(rows)),
-        )),
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+            build_inline_keyboard(rows),
+        ))),
         client_id,
     )
     .await
@@ -388,12 +390,12 @@ pub async fn send_card_message_with_force_reply_returning(
     send_formatted_text_message_returning(
         formatted_text,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::ForceReply(
-            Box::new(tdlib_rs::types::ReplyMarkupForceReply {
+        Some(tdlib_rs::enums::ReplyMarkup::ForceReply(Box::new(
+            tdlib_rs::types::ReplyMarkupForceReply {
                 is_personal: true,
                 input_field_placeholder: placeholder.chars().take(64).collect(),
-            }),
-        )),
+            },
+        ))),
         client_id,
     )
     .await
@@ -423,9 +425,9 @@ pub async fn send_card_message_with_target_chat_request_keyboard_returning(
     send_formatted_text_message_returning(
         formatted_text,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::ShowKeyboard(
-            Box::new(build_target_chat_request_keyboard(group_button_id, channel_button_id, "选择目标聊天")),
-        )),
+        Some(tdlib_rs::enums::ReplyMarkup::ShowKeyboard(Box::new(
+            build_target_chat_request_keyboard(group_button_id, channel_button_id, "选择目标聊天"),
+        ))),
         client_id,
     )
     .await
@@ -454,9 +456,9 @@ pub async fn send_card_message_with_user_request_keyboard_returning(
     send_formatted_text_message_returning(
         formatted_text,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::ShowKeyboard(
-            Box::new(build_user_request_keyboard(button_id, "选择要授权的用户")),
-        )),
+        Some(tdlib_rs::enums::ReplyMarkup::ShowKeyboard(Box::new(
+            build_user_request_keyboard(button_id, "选择要授权的用户"),
+        ))),
         client_id,
     )
     .await
@@ -491,8 +493,8 @@ fn build_target_chat_request_keyboard(
         text: text.to_owned(),
         icon_custom_emoji_id: 0,
         style: tdlib_rs::enums::ButtonStyle::Primary,
-        r#type: tdlib_rs::enums::KeyboardButtonType::RequestChat(
-            Box::new(tdlib_rs::types::KeyboardButtonTypeRequestChat {
+        r#type: tdlib_rs::enums::KeyboardButtonType::RequestChat(Box::new(
+            tdlib_rs::types::KeyboardButtonTypeRequestChat {
                 id,
                 chat_is_channel,
                 restrict_chat_is_forum: false,
@@ -506,8 +508,8 @@ fn build_target_chat_request_keyboard(
                 request_title: true,
                 request_username: true,
                 request_photo: false,
-            }),
-        ),
+            },
+        )),
     };
     let group_button = request_button("选择群组", group_button_id, false, None, None, true);
     let channel_button = request_button(
@@ -561,8 +563,8 @@ fn build_user_request_keyboard(
         text: "选择 Telegram 用户".to_owned(),
         icon_custom_emoji_id: 0,
         style: tdlib_rs::enums::ButtonStyle::Primary,
-        r#type: tdlib_rs::enums::KeyboardButtonType::RequestUsers(
-            Box::new(tdlib_rs::types::KeyboardButtonTypeRequestUsers {
+        r#type: tdlib_rs::enums::KeyboardButtonType::RequestUsers(Box::new(
+            tdlib_rs::types::KeyboardButtonTypeRequestUsers {
                 id: button_id,
                 restrict_user_is_bot: true,
                 user_is_bot: false,
@@ -572,8 +574,8 @@ fn build_user_request_keyboard(
                 request_name: true,
                 request_username: true,
                 request_photo: false,
-            }),
-        ),
+            },
+        )),
     };
     let cancel_button = tdlib_rs::types::KeyboardButton {
         text: "取消".to_owned(),
@@ -608,25 +610,25 @@ fn build_message_reply_to(
     target_message_id: i64,
 ) -> tdlib_rs::enums::InputMessageReplyTo {
     if send_chat_id == target_chat_id {
-        return tdlib_rs::enums::InputMessageReplyTo::Message(
-            Box::new(tdlib_rs::types::InputMessageReplyToMessage {
+        return tdlib_rs::enums::InputMessageReplyTo::Message(Box::new(
+            tdlib_rs::types::InputMessageReplyToMessage {
                 message_id: target_message_id,
                 quote: None,
                 checklist_task_id: 0,
                 poll_option_id: String::new(),
-            }),
-        );
+            },
+        ));
     }
 
-    tdlib_rs::enums::InputMessageReplyTo::ExternalMessage(
-        Box::new(tdlib_rs::types::InputMessageReplyToExternalMessage {
+    tdlib_rs::enums::InputMessageReplyTo::ExternalMessage(Box::new(
+        tdlib_rs::types::InputMessageReplyToExternalMessage {
             chat_id: target_chat_id,
             message_id: target_message_id,
             quote: None,
             checklist_task_id: 0,
             poll_option_id: String::new(),
-        }),
-    )
+        },
+    ))
 }
 
 /// 向指定 chat 发送便于复制的等宽文本，并附带按钮。
@@ -647,9 +649,9 @@ pub async fn send_copyable_message_with_buttons(
     send_formatted_text_message(
         build_copyable_formatted_text(text)?,
         chat_id,
-        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-            Box::new(build_inline_keyboard(rows)),
-        )),
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+            build_inline_keyboard(rows),
+        ))),
         client_id,
     )
     .await

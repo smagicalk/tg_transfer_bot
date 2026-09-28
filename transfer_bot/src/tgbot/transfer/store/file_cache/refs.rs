@@ -89,6 +89,7 @@ where
 /// 使用单个 SQL UPDATE 表达式原子计算：
 /// - 若原 `active_refs > dec` 则减去 `dec`；
 /// - 若原 `active_refs <= dec` 则置为 0，并记录 `last_ref_zero_at = now` 与 `delete_after` 计划；
+///
 /// 防止并发任务完成时出现读写覆盖（Race Condition）。
 ///
 /// # 参数
