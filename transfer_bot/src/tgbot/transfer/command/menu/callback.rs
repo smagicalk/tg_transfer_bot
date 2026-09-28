@@ -402,4 +402,3 @@ mod tests {
         assert_eq!(parse_menu_callback_data("x:new"), None);
     }
 }
-

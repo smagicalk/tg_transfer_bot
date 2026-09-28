@@ -1181,10 +1181,15 @@ mod tests {
           }
         }"#;
 
-        let config = BotConfig::from_json_str(text_with_comments).expect("must parse with comments");
+        let config =
+            BotConfig::from_json_str(text_with_comments).expect("must parse with comments");
         assert_eq!(config.owner_user_id, 1);
         assert_eq!(
-            config.runtime_client(ClientRole::Bot).unwrap().tdlib_config.api_hash,
+            config
+                .runtime_client(ClientRole::Bot)
+                .unwrap()
+                .tdlib_config
+                .api_hash,
             "hash//with-slashes"
         );
     }
@@ -1198,8 +1203,10 @@ mod tests {
             .join("config.example.json");
         let content = std::fs::read_to_string(example_path).expect("read config.example.json");
         // 确保纯原生 serde_json 也能直接解析（无任何注释）
-        let _raw: serde_json::Value = serde_json::from_str(&content).expect("raw serde_json must parse config.example.json");
-        let config = BotConfig::from_json_str(&content).expect("config.example.json must parse successfully");
+        let _raw: serde_json::Value =
+            serde_json::from_str(&content).expect("raw serde_json must parse config.example.json");
+        let config = BotConfig::from_json_str(&content)
+            .expect("config.example.json must parse successfully");
         assert_eq!(config.owner_user_id, 123456789);
         assert_eq!(config.admin_user_ids.len(), 0);
         assert_eq!(config.workflow.upload_client, ClientRole::Bot);
@@ -1213,7 +1220,8 @@ mod tests {
             .unwrap()
             .join("config.example.jsonc");
         let content = std::fs::read_to_string(example_path).expect("read config.example.jsonc");
-        let config = BotConfig::from_json_str(&content).expect("config.example.jsonc must parse successfully");
+        let config = BotConfig::from_json_str(&content)
+            .expect("config.example.jsonc must parse successfully");
         assert_eq!(config.owner_user_id, 123456789);
         assert_eq!(config.admin_user_ids.len(), 0);
         assert_eq!(config.workflow.upload_client, ClientRole::Bot);

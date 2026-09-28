@@ -9,4 +9,3 @@ mod singleflight;
 
 pub use progress::get_download_progress;
 pub use singleflight::run_singleflight;
-

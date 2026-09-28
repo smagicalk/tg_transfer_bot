@@ -319,7 +319,9 @@ async fn edit_formatted_message_with_inline_keyboard(
     let reply_markup_enabled = is_reply_markup_enabled();
     let (formatted_text, reply_markup) = apply_reply_markup_capability(
         formatted_text,
-        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
+        Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+            keyboard,
+        ))),
         reply_markup_enabled,
         chat_id,
         Some(message_id),
@@ -441,8 +443,9 @@ async fn send_edit_message_text_once(
     keyboard: Option<tdlib_rs::types::ReplyMarkupInlineKeyboard>,
     client_id: i32,
 ) -> anyhow::Result<serde_json::Value> {
-    let reply_markup =
-        prepare_optional_reply_markup(keyboard.map(|k| tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(k))))?;
+    let reply_markup = prepare_optional_reply_markup(
+        keyboard.map(|k| tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(k))),
+    )?;
     Ok(tdlib_rs::send_request(
         client_id,
         build_edit_message_text_request(formatted_text, chat_id, message_id, reply_markup),
@@ -674,7 +677,9 @@ fn prepare_reply_markup(
             "is_personal": force_reply.is_personal,
             "input_field_placeholder": force_reply.input_field_placeholder,
         })),
-        tdlib_rs::enums::ReplyMarkup::ShowKeyboard(keyboard) => build_show_keyboard_value(*keyboard),
+        tdlib_rs::enums::ReplyMarkup::ShowKeyboard(keyboard) => {
+            build_show_keyboard_value(*keyboard)
+        }
         tdlib_rs::enums::ReplyMarkup::RemoveKeyboard(remove_keyboard) => Ok(json!({
             "@type": "replyMarkupRemoveKeyboard",
             "is_personal": remove_keyboard.is_personal,
@@ -964,8 +969,10 @@ mod tests {
                 tdlib_rs::enums::ButtonStyle::Default,
             )],
         ]);
-        let reply_markup =
-            serde_json::to_value(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))).unwrap();
+        let reply_markup = serde_json::to_value(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
+            Box::new(keyboard),
+        ))
+        .unwrap();
 
         let mut response: serde_json::Value = serde_json::from_str(
             r#"{
@@ -1256,9 +1263,9 @@ mod tests {
         )]]);
 
         let filtered = filter_reply_markup_by_capability(
-            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
-                Box::new(keyboard.clone()),
-            )),
+            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+                keyboard.clone(),
+            ))),
             false,
             1,
             None,
@@ -1267,7 +1274,9 @@ mod tests {
         assert!(filtered.is_none());
 
         let kept = filter_reply_markup_by_capability(
-            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
+            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+                keyboard,
+            ))),
             true,
             1,
             None,
@@ -1290,7 +1299,9 @@ mod tests {
                 text: "进度".to_owned(),
                 entities: vec![],
             },
-            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
+            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+                keyboard,
+            ))),
             false,
             1,
             Some(100),
@@ -1335,7 +1346,9 @@ mod tests {
                 text: "查询结果".to_owned(),
                 entities: vec![],
             },
-            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))),
+            Some(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(
+                keyboard,
+            ))),
             false,
             1,
             None,
@@ -1390,8 +1403,10 @@ mod tests {
                 tdlib_rs::enums::ButtonStyle::Default,
             )],
         ]);
-        let reply_markup =
-            serde_json::to_value(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(Box::new(keyboard))).unwrap();
+        let reply_markup = serde_json::to_value(tdlib_rs::enums::ReplyMarkup::InlineKeyboard(
+            Box::new(keyboard),
+        ))
+        .unwrap();
         let mut response: serde_json::Value = serde_json::from_str(
             r#"{
                 "@type": "updateMessageSendSucceeded",

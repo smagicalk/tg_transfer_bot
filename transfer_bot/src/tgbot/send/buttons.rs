@@ -19,7 +19,10 @@ use base64::{Engine as _, engine::general_purpose};
 pub fn build_inline_keyboard(
     rows: Vec<Vec<tdlib_rs::types::InlineKeyboardButton>>,
 ) -> tdlib_rs::types::ReplyMarkupInlineKeyboard {
-    tdlib_rs::types::ReplyMarkupInlineKeyboard { rows, force_reply: false }
+    tdlib_rs::types::ReplyMarkupInlineKeyboard {
+        rows,
+        force_reply: false,
+    }
 }
 
 /// 构造一键复制文本按钮。
@@ -39,11 +42,11 @@ pub fn build_copy_button(
         text: text.to_owned(),
         icon_custom_emoji_id: 0,
         style,
-        r#type: tdlib_rs::enums::InlineKeyboardButtonType::CopyText(
-            Box::new(tdlib_rs::types::InlineKeyboardButtonTypeCopyText {
+        r#type: tdlib_rs::enums::InlineKeyboardButtonType::CopyText(Box::new(
+            tdlib_rs::types::InlineKeyboardButtonTypeCopyText {
                 text: value.to_owned(),
-            }),
-        ),
+            },
+        )),
     }
 }
 
@@ -66,9 +69,9 @@ pub fn build_callback_button(
         text: text.to_owned(),
         icon_custom_emoji_id: 0,
         style,
-        r#type: tdlib_rs::enums::InlineKeyboardButtonType::Callback(
-            Box::new(tdlib_rs::types::InlineKeyboardButtonTypeCallback { data: encoded_data }),
-        ),
+        r#type: tdlib_rs::enums::InlineKeyboardButtonType::Callback(Box::new(
+            tdlib_rs::types::InlineKeyboardButtonTypeCallback { data: encoded_data },
+        )),
     }
 }
 
@@ -87,11 +90,11 @@ pub fn build_url_button(
         text: text.to_owned(),
         icon_custom_emoji_id: 0,
         style,
-        r#type: tdlib_rs::enums::InlineKeyboardButtonType::Url(
-            Box::new(tdlib_rs::types::InlineKeyboardButtonTypeUrl {
+        r#type: tdlib_rs::enums::InlineKeyboardButtonType::Url(Box::new(
+            tdlib_rs::types::InlineKeyboardButtonTypeUrl {
                 url: url.to_owned(),
-            }),
-        ),
+            },
+        )),
     }
 }
 
@@ -141,4 +144,3 @@ mod tests {
         assert!(!is_openable_url("chat_id=-5106953357 message_id=769654784"));
     }
 }
-

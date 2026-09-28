@@ -1919,16 +1919,14 @@ mod tests {
     /// 测试回复消息授权仅接受个人用户消息，拒绝自身与群组频道匿名发送者。
     #[test]
     fn test_reply_authorization_accepts_only_incoming_user_messages() {
-        let user = tdlib_rs::enums::MessageSender::User(Box::new(
-            tdlib_rs::types::MessageSenderUser {
+        let user =
+            tdlib_rs::enums::MessageSender::User(Box::new(tdlib_rs::types::MessageSenderUser {
                 user_id: 123456,
-            },
-        ));
-        let anonymous = tdlib_rs::enums::MessageSender::Chat(Box::new(
-            tdlib_rs::types::MessageSenderChat {
+            }));
+        let anonymous =
+            tdlib_rs::enums::MessageSender::Chat(Box::new(tdlib_rs::types::MessageSenderChat {
                 chat_id: -100123,
-            },
-        ));
+            }));
 
         assert_eq!(authorization_target_user_id(&user, false).unwrap(), 123456);
         assert!(

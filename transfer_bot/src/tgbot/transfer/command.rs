@@ -403,9 +403,7 @@ mod tests {
             CallbackRoute::Unknown
         );
         assert_eq!(
-            classify_callback_route(&tdlib_rs::enums::CallbackQueryPayload::Game(
-                Box::default(),
-            )),
+            classify_callback_route(&tdlib_rs::enums::CallbackQueryPayload::Game(Box::default(),)),
             CallbackRoute::Unsupported
         );
     }

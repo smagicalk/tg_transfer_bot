@@ -41,4 +41,3 @@ impl MigrationTrait for Migration {
             .map_err(|err| DbErr::Migration(err.to_string()))
     }
 }
-

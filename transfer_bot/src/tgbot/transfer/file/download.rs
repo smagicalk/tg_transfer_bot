@@ -188,9 +188,10 @@ pub(super) async fn prepare_media_file(
         None
     };
 
-    let local_input = tdlib_rs::enums::InputFile::Local(Box::new(tdlib_rs::types::InputFileLocal {
-        path: refreshed.local.path.clone(),
-    }));
+    let local_input =
+        tdlib_rs::enums::InputFile::Local(Box::new(tdlib_rs::types::InputFileLocal {
+            path: refreshed.local.path.clone(),
+        }));
 
     Ok((
         PreparedCacheMeta {

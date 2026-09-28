@@ -133,6 +133,7 @@ pub(super) async fn update_draft_if_current(
 /// 校验数据库当前行的每个字段是否均与读取时的 `model` 一致：
 /// - 非空列：使用严格相等（`.eq(val)`）；
 /// - 可空列：若 `Some(val)` 则匹配 `.eq(val)`，若 `None` 则匹配 `.is_null()`。
+///
 /// 这种设计确保在不同数据库方言（SQLite / PostgreSQL）下空值语义统一无歧义。
 ///
 /// # 参数说明

@@ -522,7 +522,7 @@ mod tests {
         use base64::{Engine as _, engine::general_purpose};
 
         let draft = MenuDraftSummary {
-            title: "快速转存",
+            title: "快速转存"
         };
         let rows = build_menu_buttons(MenuPage::Home, &[], Some(&draft));
 
@@ -770,7 +770,8 @@ mod tests {
             .map(|button| button.text.as_str())
             .collect::<Vec<_>>();
 
-        for expected in ["运行配置", "目标配置", "运行健康", "文件缓存", "授权管理"] {
+        for expected in ["运行配置", "目标配置", "运行健康", "文件缓存", "授权管理"]
+        {
             assert!(
                 labels.contains(&expected),
                 "missing admin hub button: {expected}"

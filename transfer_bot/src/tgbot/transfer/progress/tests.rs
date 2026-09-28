@@ -325,4 +325,3 @@ fn decoded_callback_data(button: &tdlib_rs::types::InlineKeyboardButton) -> Stri
     };
     String::from_utf8(general_purpose::STANDARD.decode(&callback.data).unwrap()).unwrap()
 }
-

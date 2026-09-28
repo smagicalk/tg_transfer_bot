@@ -60,10 +60,12 @@ pub(in crate::tgbot::send::message) async fn parse_markdown_text(
 ) -> anyhow::Result<tdlib_rs::types::FormattedText> {
     let parsed = tdlib_rs::functions::parse_text_entities(
         text,
-        tdlib_rs::enums::TextParseMode::Markdown(Box::new(tdlib_rs::types::TextParseModeMarkdown {
-            // 现有文案使用 Bot API Markdown v1 风格：`*bold*`、`code`、`[text](url)`。
-            version: 1,
-        })),
+        tdlib_rs::enums::TextParseMode::Markdown(Box::new(
+            tdlib_rs::types::TextParseModeMarkdown {
+                // 现有文案使用 Bot API Markdown v1 风格：`*bold*`、`code`、`[text](url)`。
+                version: 1,
+            },
+        )),
         client_id,
     )
     .await
@@ -123,11 +125,11 @@ pub(in crate::tgbot::send::message) fn build_card_formatted_text(
                 chars = probe;
                 builder.push_entity_text(
                     value,
-                    tdlib_rs::enums::TextEntityType::PreCode(
-                        Box::new(tdlib_rs::types::TextEntityTypePreCode {
+                    tdlib_rs::enums::TextEntityType::PreCode(Box::new(
+                        tdlib_rs::types::TextEntityTypePreCode {
                             language: "".to_owned(),
-                        }),
-                    ),
+                        },
+                    )),
                 )?;
                 continue;
             }
@@ -139,9 +141,9 @@ pub(in crate::tgbot::send::message) fn build_card_formatted_text(
                 chars = probe;
                 builder.push_entity_text(
                     label,
-                    tdlib_rs::enums::TextEntityType::TextUrl(
-                        Box::new(tdlib_rs::types::TextEntityTypeTextUrl { url }),
-                    ),
+                    tdlib_rs::enums::TextEntityType::TextUrl(Box::new(
+                        tdlib_rs::types::TextEntityTypeTextUrl { url },
+                    )),
                 )?;
                 continue;
             }
@@ -199,11 +201,11 @@ pub(in crate::tgbot::send::message) fn build_copyable_formatted_text(
         entities: vec![tdlib_rs::types::TextEntity {
             offset: 0,
             length,
-            r#type: tdlib_rs::enums::TextEntityType::PreCode(
-                Box::new(tdlib_rs::types::TextEntityTypePreCode {
+            r#type: tdlib_rs::enums::TextEntityType::PreCode(Box::new(
+                tdlib_rs::types::TextEntityTypePreCode {
                     language: "".to_owned(),
-                }),
-            ),
+                },
+            )),
         }],
     })
 }

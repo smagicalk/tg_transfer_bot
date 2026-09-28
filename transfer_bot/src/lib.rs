@@ -344,4 +344,3 @@ async fn create_and_register_client(
 
     Ok(client)
 }
-

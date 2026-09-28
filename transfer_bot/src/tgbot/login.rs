@@ -143,7 +143,6 @@ pub async fn handle_authorization(
             }
         }
 
-
         // 暂未实现的认证状态：返回显式受控错误，避免 todo! 触发程序崩溃
         AuthorizationState::WaitPremiumPurchase(_) => {
             tracing::warn!(client_id, "tdlib authorization waits for premium purchase");
@@ -349,7 +348,6 @@ pub async fn handle_authorization(
         }
     }
 }
-
 
 /// 为 Bot 客户端向 Telegram 注册斜杠命令菜单。
 ///
@@ -619,4 +617,3 @@ mod tests {
         }
     }
 }
-

@@ -184,4 +184,3 @@ async fn test_table_has_column(
         backend => anyhow::bail!("unsupported database backend for test schema probe: {backend:?}"),
     }
 }
-
