@@ -2,8 +2,12 @@ name: Publish Alpine Container Image
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Publish Tag Release"]
+    types:
+      - completed
 
-run-name: Publish latest Alpine image by @${{ github.actor }}
+run-name: Publish Alpine image (${{ github.event_name == 'workflow_run' && format('workflow_run by {0}', github.event.workflow_run.event) || format('manual by @{0}', github.actor) }})
 
 permissions:
   contents: read
@@ -20,6 +24,9 @@ env:
 jobs:
   publish:
     name: Build and push Alpine image
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout container definition

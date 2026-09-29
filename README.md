@@ -142,12 +142,12 @@ cargo run -p transfer_bot -- -c config.json
 
 ## GitHub Actions
 
-仓库内提供四个手动 workflow：
+仓库内提供以下 CI/CD 发布工作流：
 
 - `release-packages.yml`：面向正式发布，手动构建全部目标系统。
 - `test-single-target.yml`：面向单系统验证，手动只构建一个目标系统。
-- `publish-tag-release.yml`：选择已有 tag 或分支，构建全部目标；tag 可继续发布为 GitHub Release。
-- `publish-alpine-image.yml`：按最新 GitHub Release 构建并推送 Alpine 容器镜像到 GHCR。
+- `publish-tag-release.yml`：支持发布新 GitHub Release 时自动触发打包并上传资产；亦支持手动触发对指定 tag 或分支进行构建。
+- `publish-alpine-image.yml`：在 `Publish Tag Release` 成功上传资产后自动链式触发，或手动触发按最新 Release 构建并推送 Alpine 容器镜像到 GHCR。
 
 ### release-packages.yml
 
@@ -163,20 +163,21 @@ cargo run -p transfer_bot -- -c config.json
 
 ### publish-tag-release.yml
 
-支持手动触发并输入任意版本参数：
-
-- `source_ref`：构建来源，可自由输入任意已有 Git tag、分支名或 commit hash（默认 `v0.0.2`）。
-- `release_mode`（下拉选择）：
-  - `build_only`：只构建并上传 workflow artifact，适合测试任意分支或 commit。
-  - `publish_release`：构建后发布 GitHub Release，要求 `source_ref` 必须是已有的 Git tag。
-- `td_ref`：TDLib 依赖版本来源，可自由输入分支、tag 或 commit hash（默认 `master`）。
-- `run_checks`（下拉选择）：选择是否先执行格式化、测试和 Clippy 检查。
-
-默认使用 `v0.0.2 + build_only`，避免测试时误创建 Release。参数采用输入框设计，打新 Tag 或使用指定 TDLib commit 时无需再修改 workflow 源码。
+- **自动触发**：在 GitHub 上发布（Publish）新 Release 时自动触发，自动使用该 Release 的 Tag 构建全平台发布包并回传附件。
+- **手动触发**：支持在 GitHub Actions 页面手动输入参数运行：
+  - `source_ref`：构建来源，可自由输入任意已有 Git tag、分支名或 commit hash（默认 `v0.0.5`）。
+  - `release_mode`（下拉选择）：
+    - `build_only`：只构建并上传 workflow artifact，适合测试任意分支或 commit。
+    - `publish_release`：构建后发布 GitHub Release，要求 `source_ref` 必须是已有的 Git tag。
+  - `td_ref`：TDLib 依赖版本来源，可自由输入分支、tag 或 commit hash（默认 `master`）。
+  - `run_checks`（下拉选择）：选择是否先执行格式化、测试和 Clippy 检查。
 
 ### publish-alpine-image.yml
 
-手动运行 `Publish Alpine Container Image` 会读取最新 GitHub Release tag，并推送：
+- **自动触发**：当 `Publish Tag Release` 成功构建并完成 Release 资产上传后，通过 `workflow_run` 自动启动。
+- **手动触发**：亦可在 GitHub Actions 页面随时手动运行。
+
+运行后会读取最新 GitHub Release tag，并推送：
 
 ```text
 ghcr.io/smagicalk/tg_transfer_bot:<release-tag>

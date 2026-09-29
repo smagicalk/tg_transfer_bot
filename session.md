@@ -95,6 +95,9 @@ cargo test -p transfer_bot
   - Debian 13（glibc 2.41）：下载 `v0.0.4` Release 包验证，运行完全正常。
   - Ubuntu 24.04（glibc 2.39）：下载 `v0.0.4` Release 包验证，运行完全正常。
 - 确认 Telegram Inline 按钮在无持久化目录下的 `Message not found` 机制：容器每次冷启动若未挂载持久化 `/app/tg` 数据目录，TDLib 本地数据库为空；点击上一轮测试遗留的历史消息内联按钮时，TDLib 因无本地消息缓存会返回 400 业务错误，在当前会话重新触发 `/menu` 发送新消息后即可正常响应交互。建议生产环境持久化挂载 `/app/tg` 目录。
+- 升级发布自动化工作流：
+  - `publish-tag-release.yml`：增加 `on.release.types: [published]` 自动触发器；当在 GitHub 发布新 Release 时，自动解析 `release.tag_name` 并启动全平台打包（Alpine、Debian、Ubuntu、Windows），自动上传资产到该 Release；原 `workflow_dispatch` 手动触发完全保留。
+  - `publish-alpine-image.yml`：增加 `on.workflow_run` 自动监听 `Publish Tag Release` 成功完成状态；一旦 Release 附件上传完毕，自动拉取新包构建 Alpine 容器镜像并推送到 GHCR；原 `workflow_dispatch` 手动触发完全保留。
 
 ## 最近更新（2026-07-26）
 
