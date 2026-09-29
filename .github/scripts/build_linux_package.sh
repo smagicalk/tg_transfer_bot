@@ -136,6 +136,9 @@ export TD_SOURCE_DIR
 export TD_BUILD_DIR
 export CARGO_TARGET_DIR
 export LD_LIBRARY_PATH="$LOCAL_TDLIB_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [ "$CI_DISTRO_ID" = "alpine-3.23" ]; then
+  export RUSTFLAGS="-C target-feature=-crt-static ${RUSTFLAGS:-}"
+fi
 
 rustc --version
 cargo --version

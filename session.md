@@ -87,6 +87,15 @@ cargo test -p transfer_bot
 
 交付检查已完成：`cargo fmt --all -- --check`、`cargo test -p transfer_bot`、`cargo clippy -p transfer_bot --all-targets --no-deps -- -D warnings`、`cargo build -p transfer_bot`、`git diff --check` 以及编码/BOM 检查均通过。
 
+## 最近更新（2026-09-29）
+
+- 修复 Alpine musl 环境下 TDLib 初始化段错误问题：Rust 在 `x86_64-unknown-linux-musl` 目标下默认启用 `+crt-static` 生成 static-pie 二进制，缺少 `PT_INTERP` 动态链接器解释器段，导致运行时未装载 `libtdjson.so`，GOT 表中外部函数指针均为 `0x0` 并触发段错误。在 `.github/scripts/build_linux_package.sh` 中针对 `alpine-3.23` 显式设置 `RUSTFLAGS="-C target-feature=-crt-static"`，使编译产物动态链接至 `libc.musl-x86_64.so.1`，已在本地 Docker 测试容器中验证稳定运行。
+- 本地 Docker 多环境验证：
+  - Alpine 3.23（动态链接 musl）：修复后成功启动 TDLib 1.8.67 并完成 Token 登录。
+  - Debian 13（glibc 2.41）：下载 `v0.0.4` Release 包验证，运行完全正常。
+  - Ubuntu 24.04（glibc 2.39）：下载 `v0.0.4` Release 包验证，运行完全正常。
+- 确认 Telegram Inline 按钮在无持久化目录下的 `Message not found` 机制：容器每次冷启动若未挂载持久化 `/app/tg` 数据目录，TDLib 本地数据库为空；点击上一轮测试遗留的历史消息内联按钮时，TDLib 因无本地消息缓存会返回 400 业务错误，在当前会话重新触发 `/menu` 发送新消息后即可正常响应交互。建议生产环境持久化挂载 `/app/tg` 目录。
+
 ## 最近更新（2026-07-26）
 
 - 转存任务在上传阶段支持真实上传进度；暂停、恢复与停止会检查运行控制状态。恢复上传前清除同任务的陈旧 file_id 与字节快照，避免进度停滞或复用旧进度。
