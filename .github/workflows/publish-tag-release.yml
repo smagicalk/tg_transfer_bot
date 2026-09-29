@@ -1,17 +1,19 @@
 name: Publish Tag Release
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       source_ref:
         description: "Git tag, branch or commit to build"
         required: true
-        default: "v0.0.2"
+        default: "v0.0.5"
         type: string
       release_mode:
         description: "Build only or publish a GitHub Release"
         required: true
-        default: "build_only"
+        default: "publish_release"
         type: choice
         options:
           - "build_only"
@@ -34,15 +36,16 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-ref-${{ inputs.source_ref }}-${{ inputs.release_mode }}
+  group: publish-ref-${{ github.event.release.tag_name || inputs.source_ref }}-${{ github.event_name == 'release' && 'publish_release' || inputs.release_mode }}
   cancel-in-progress: false
 
 env:
   ARTIFACT_PREFIX: transfer_bot
   CARGO_TERM_COLOR: always
-  SOURCE_REF: ${{ inputs.source_ref }}
-  TD_GIT_REF: ${{ inputs.td_ref }}
-  RUN_CHECKS: ${{ inputs.run_checks }}
+  SOURCE_REF: ${{ github.event.release.tag_name || inputs.source_ref }}
+  RELEASE_MODE: ${{ github.event_name == 'release' && 'publish_release' || inputs.release_mode }}
+  TD_GIT_REF: ${{ inputs.td_ref || 'master' }}
+  RUN_CHECKS: ${{ inputs.run_checks || 'true' }}
 
 jobs:
   validate-source:
@@ -52,14 +55,14 @@ jobs:
       - name: Checkout selected source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ github.event.release.tag_name || inputs.source_ref }}
           fetch-depth: 0
 
       - name: Prevent publishing a branch as a release
         shell: bash
         run: |
           set -eu
-          if [[ "${{ inputs.release_mode }}" == "publish_release" ]]; then
+          if [[ "${{ github.event_name == 'release' && 'publish_release' || inputs.release_mode }}" == "publish_release" ]]; then
             git show-ref --tags --verify --quiet "refs/tags/$SOURCE_REF" || {
               echo "GitHub Release mode requires a tag; selected ref is not a tag: $SOURCE_REF" >&2
               exit 1
@@ -90,7 +93,7 @@ jobs:
       - name: Checkout selected source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ github.event.release.tag_name || inputs.source_ref }}
           fetch-depth: 0
 
       - name: Restore Linux build cache
@@ -153,7 +156,7 @@ jobs:
       - name: Checkout selected source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ github.event.release.tag_name || inputs.source_ref }}
           fetch-depth: 0
 
       - name: Install Rust
@@ -200,7 +203,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    if: inputs.release_mode == 'publish_release'
+    if: github.event_name == 'release' || inputs.release_mode == 'publish_release'
     needs:
       - package-linux
       - package-windows
@@ -215,7 +218,7 @@ jobs:
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.source_ref }}
+          tag_name: ${{ github.event.release.tag_name || inputs.source_ref }}
           generate_release_notes: true
           files: |
             release-assets/*.tar.gz
